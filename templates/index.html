@@ -232,7 +232,7 @@
           <button class="ptab" data-period="1M" onclick="changePeriod('1M')">1M</button>
           <button class="ptab" data-period="3M" onclick="changePeriod('3M')">3M</button>
           <button class="ptab" data-period="6M" onclick="changePeriod('6M')">6M</button>
-          <button class="ptab active" data-period="1Y" onclick="changePeriod('1Y')">1Y</button>
+          <button class="ptab active" data-period="1M" onclick="changePeriod('1M')">1M</button>
         </div>
       </div>
       <div id="indicatorBar" class="indicator-bar"></div>
@@ -380,7 +380,7 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // ── State ──────────────────────────────────────────────────────────
 let currentData   = null;
-let currentPeriod = '1Y';
+let currentPeriod = '1M';
 
 // ── Entry ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -444,8 +444,8 @@ async function loadStock(ticker) {
   $('tickerInput').value = ticker;
   hide('welcome'); hide('dashboard'); hide('errorDiv');
   show('loading');
-  currentPeriod = '1Y';
-  document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.period === '1Y'));
+  currentPeriod = '1M';
+  document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.period === '1M'));
 
   try {
     const r = await fetch('/api/stock/' + ticker);
@@ -494,7 +494,17 @@ function renderDashboard(d) {
   renderConclusions(d);
   renderPerf(d);
   renderShortInfo(d);
-  renderCharts(d);
+  // Default to 1M view
+  const sl = arr => arr ? arr.slice(-21) : [];
+  const sliced1M = Object.assign({}, d, {
+    dates:     sl(d.dates),
+    ohlcv:     { open: sl(d.ohlcv.open), high: sl(d.ohlcv.high), low: sl(d.ohlcv.low), close: sl(d.ohlcv.close), volume: sl(d.ohlcv.volume) },
+    ma:        { ma5: sl(d.ma.ma5), ma20: sl(d.ma.ma20), ma60: sl(d.ma.ma60) },
+    macd:      { dif: sl(d.macd.dif), dea: sl(d.macd.dea), hist: sl(d.macd.hist) },
+    bollinger: { upper: sl(d.bollinger.upper), mid: sl(d.bollinger.mid), lower: sl(d.bollinger.lower) },
+    rsiSeries: sl(d.rsiSeries),
+  });
+  renderCharts(sliced1M);
   renderCatalysts(d);
   renderBiz(d);
   renderTechStats(d);
