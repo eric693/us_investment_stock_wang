@@ -11,7 +11,7 @@
 
 <!-- Navigation -->
 <nav class="topnav">
-  <div class="brand">📊 美股投資分析</div>
+  <div class="brand">US STOCK</div>
   <div class="search-wrap">
     <input id="tickerInput" type="text" placeholder="輸入股票代碼 (AAPL, NVDA, TSLA...)" autocomplete="off" spellcheck="false">
     <button onclick="searchStock()">查詢</button>
@@ -21,6 +21,8 @@
     <span onclick="loadStock('AAPL')">AAPL</span>
     <span onclick="loadStock('TSLA')">TSLA</span>
     <span onclick="loadStock('MSFT')">MSFT</span>
+    <span onclick="loadStock('AMZN')">AMZN</span>
+    <span onclick="loadStock('META')">META</span>
     <span onclick="loadStock('CRCL')">CRCL</span>
     <span onclick="loadStock('RKLB')">RKLB</span>
   </div>
@@ -29,14 +31,14 @@
 <!-- Welcome -->
 <div id="welcome" class="welcome-screen">
   <div class="welcome-inner">
-    <div class="welcome-icon">📈</div>
+    <div class="welcome-logo">US</div>
     <h1>美股投資分析儀表板</h1>
-    <p>輸入股票代碼，獲取完整技術分析、關鍵價位與投資策略建議</p>
+    <p>輸入股票代碼，獲取完整技術分析、財務指標、關鍵價位、策略建議與最新新聞</p>
     <div class="sample-grid">
       <div class="sample-card" onclick="loadStock('NVDA')"><div class="s-ticker">NVDA</div><div class="s-name">輝達 NVIDIA</div></div>
       <div class="sample-card" onclick="loadStock('AAPL')"><div class="s-ticker">AAPL</div><div class="s-name">蘋果 Apple</div></div>
       <div class="sample-card" onclick="loadStock('TSLA')"><div class="s-ticker">TSLA</div><div class="s-name">特斯拉 Tesla</div></div>
-      <div class="sample-card" onclick="loadStock('AMZN')"><div class="s-ticker">AMZN</div><div class="s-name">亞馬遜 Amazon</div></div>
+      <div class="sample-card" onclick="loadStock('MSFT')"><div class="s-ticker">MSFT</div><div class="s-name">微軟 Microsoft</div></div>
       <div class="sample-card" onclick="loadStock('CRCL')"><div class="s-ticker">CRCL</div><div class="s-name">Circle Internet</div></div>
       <div class="sample-card" onclick="loadStock('RKLB')"><div class="s-ticker">RKLB</div><div class="s-name">火箭實驗室</div></div>
     </div>
@@ -55,150 +57,200 @@
 <!-- Dashboard -->
 <div id="dashboard" class="dashboard hidden">
 
-  <!-- ── Stock Header ── -->
+  <!-- 0. Stock Header -->
   <div class="card stock-header">
     <div class="header-left">
       <div class="ticker-badge" id="hTicker"></div>
       <div class="header-info">
-        <div class="h-name" id="hName"></div>
+        <div class="h-name"   id="hName"></div>
         <div class="h-sector" id="hSector"></div>
-        <div class="h-desc" id="hDesc"></div>
+        <div class="h-desc"   id="hDesc"></div>
       </div>
     </div>
     <div class="header-center">
-      <div class="big-price" id="hPrice"></div>
+      <div class="big-price"   id="hPrice"></div>
       <div class="price-delta" id="hDelta"></div>
     </div>
     <div class="header-right">
-      <div class="stat-grid6">
+      <div class="stat-grid8">
         <div class="sg-item"><span class="sg-l">開盤</span><span class="sg-v" id="sOpen"></span></div>
         <div class="sg-item"><span class="sg-l">最高</span><span class="sg-v green" id="sHigh"></span></div>
-        <div class="sg-item"><span class="sg-l">最低</span><span class="sg-v red" id="sLow"></span></div>
-        <div class="sg-item"><span class="sg-l">昨收</span><span class="sg-v" id="sPrev"></span></div>
-        <div class="sg-item"><span class="sg-l">成交量</span><span class="sg-v" id="sVol"></span></div>
-        <div class="sg-item"><span class="sg-l">市值</span><span class="sg-v" id="sMktCap"></span></div>
+        <div class="sg-item"><span class="sg-l">最低</span><span class="sg-v red"   id="sLow"></span></div>
+        <div class="sg-item"><span class="sg-l">昨收</span><span class="sg-v"       id="sPrev"></span></div>
+        <div class="sg-item"><span class="sg-l">成交量</span><span class="sg-v"     id="sVol"></span></div>
+        <div class="sg-item"><span class="sg-l">市值</span><span class="sg-v"       id="sMktCap"></span></div>
+        <div class="sg-item"><span class="sg-l">Beta</span><span class="sg-v"       id="sBeta"></span></div>
+        <div class="sg-item"><span class="sg-l">殖利率</span><span class="sg-v"     id="sDiv"></span></div>
       </div>
     </div>
   </div>
 
-  <!-- ── Core Conclusions ── -->
-  <div class="card conclusions-card">
-    <div class="card-title">⭐ 投資核心結論</div>
+  <!-- 1. Core Conclusions -->
+  <div class="card">
+    <div class="card-title">投資核心結論</div>
     <div class="conclusions-row" id="conclusionsRow"></div>
   </div>
 
-  <!-- ── Main Two-Column ── -->
+  <!-- 2. Performance Returns -->
+  <div class="card">
+    <div class="card-title">報酬率統計</div>
+    <div class="perf-row" id="perfRow"></div>
+  </div>
+
+  <!-- 3. Chart + Right Panel -->
   <div class="two-col">
 
-    <!-- Left: Technical Chart -->
+    <!-- Left: Charts -->
     <div class="card chart-card">
-      <div class="card-title">一、技術面分析（日線）</div>
-      <div class="ma-pills" id="maPills"></div>
-      <div id="priceChart" style="height:360px"></div>
-      <div class="macd-header" id="macdHeader"></div>
-      <div id="macdChart" style="height:130px"></div>
+      <div class="chart-top">
+        <div class="ma-pills" id="maPills"></div>
+        <div class="period-tabs">
+          <button class="ptab" data-period="1M" onclick="changePeriod('1M')">1M</button>
+          <button class="ptab" data-period="3M" onclick="changePeriod('3M')">3M</button>
+          <button class="ptab" data-period="6M" onclick="changePeriod('6M')">6M</button>
+          <button class="ptab active" data-period="1Y" onclick="changePeriod('1Y')">1Y</button>
+        </div>
+      </div>
+      <div id="priceChart" style="height:360px;"></div>
+      <div class="macd-bar" id="macdBar"></div>
+      <div id="macdChart"  style="height:120px;"></div>
+      <div id="rsiChart"   style="height:100px; margin-top:6px;"></div>
     </div>
 
-    <!-- Right Column -->
+    <!-- Right: Catalysts + Business -->
     <div class="right-col">
-
-      <!-- Catalysts -->
       <div class="card">
         <div class="card-title">關鍵催化劑</div>
         <div id="catalysts"></div>
       </div>
-
-      <!-- Business Highlights -->
       <div class="card">
-        <div class="card-title">二、業務與財務重點</div>
+        <div class="card-title">業務與財務重點</div>
         <div id="bizHighlights"></div>
       </div>
-
     </div>
+
   </div>
 
-  <!-- ── Three-Column ── -->
+  <!-- 4. Tech Indicators + Key Levels + Analyst -->
   <div class="three-col">
 
-    <!-- Technical Indicators -->
     <div class="card">
-      <div class="card-title">三、技術指標總覽</div>
+      <div class="card-title">技術指標總覽</div>
       <div id="techStats"></div>
+      <div class="rsi-gauge-wrap" id="rsiGauge"></div>
     </div>
 
-    <!-- Key Levels -->
     <div class="card">
-      <div class="card-title">四、關鍵價位</div>
+      <div class="card-title">關鍵價位</div>
       <div id="keyLevels"></div>
     </div>
 
-    <!-- Analyst -->
     <div class="card">
-      <div class="card-title">五、分析師觀點</div>
+      <div class="card-title">分析師觀點</div>
       <div id="analystSection"></div>
     </div>
 
   </div>
 
-  <!-- ── Scenarios + Risks ── -->
-  <div class="two-col">
+  <!-- 5. Bollinger + Volume + Quarterly -->
+  <div class="three-col">
 
     <div class="card">
-      <div class="card-title">六、未來情境推演</div>
-      <div id="scenarios"></div>
+      <div class="card-title">布林通道 (Bollinger Bands)</div>
+      <div id="bollingerPanel"></div>
     </div>
 
     <div class="card">
-      <div class="card-title">七、主要風險</div>
-      <div id="risks"></div>
+      <div class="card-title">量能分析</div>
+      <div id="volumePanel"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">季度營收趨勢</div>
+      <div id="quarterlyPanel"></div>
     </div>
 
   </div>
 
-  <!-- ── Investment Strategy ── -->
-  <div class="card strategy-card">
-    <div class="card-title">八、投資策略建議</div>
+  <!-- 6. Scenarios + Risks -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">未來情境推演</div>
+      <div id="scenarios"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">主要風險</div>
+      <div id="risks"></div>
+    </div>
+  </div>
+
+  <!-- 7. Investment Strategy -->
+  <div class="card">
+    <div class="card-title">投資策略建議</div>
     <div id="strategy"></div>
   </div>
 
-  <div class="footer-note">※ 本分析為技術面自動化計算，僅供參考，投資有風險，請謹慎評估</div>
+  <!-- 8. News -->
+  <div class="card" id="newsCard">
+    <div class="news-header">
+      <div class="card-title">最新相關新聞</div>
+      <div class="news-timestamp" id="newsTimestamp"></div>
+    </div>
+    <div id="newsContainer"><div class="news-loading">新聞載入中...</div></div>
+  </div>
 
-</div><!-- end dashboard -->
+  <div class="footer-note">本分析為技術指標自動化計算，僅供參考，投資有風險，請謹慎評估</div>
+
+</div><!-- /#dashboard -->
 
 <script>
-// ── Utilities ────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────
 function fmtVol(v) {
-  if (v >= 1e8) return (v/1e8).toFixed(2) + '億';
-  if (v >= 1e4) return (v/1e4).toFixed(2) + '萬';
+  if (!v) return 'N/A';
+  if (v >= 1e8) return (v/1e8).toFixed(2) + ' 億';
+  if (v >= 1e4) return (v/1e4).toFixed(2) + ' 萬';
   return v.toLocaleString();
 }
 function fmtMktCap(v) {
   if (!v) return 'N/A';
-  if (v >= 1e12) return (v/1e12).toFixed(2) + '兆美元';
-  if (v >= 1e8)  return (v/1e8).toFixed(1) + '億美元';
-  return (v/1e6).toFixed(0) + '百萬美元';
+  if (v >= 1e12) return (v/1e12).toFixed(2) + ' 兆';
+  if (v >= 1e8)  return (v/1e8).toFixed(2) + ' 億';
+  return (v/1e6).toFixed(0) + ' 百萬';
 }
-function fmtNum(v, dp=2) {
-  if (!v || v === 0) return 'N/A';
-  return v.toFixed(dp);
+function fmtShares(v) {
+  if (!v) return 'N/A';
+  if (v >= 1e9) return (v/1e9).toFixed(2) + ' B';
+  if (v >= 1e6) return (v/1e6).toFixed(1) + ' M';
+  return v.toLocaleString();
 }
-function recText(mean) {
-  if (!mean || mean === 0) return { t: 'N/A', c: '' };
-  if (mean <= 1.5) return { t: '強力買入', c: 'green' };
-  if (mean <= 2.5) return { t: '買入', c: 'green' };
-  if (mean <= 3.5) return { t: '持有', c: 'yellow' };
-  if (mean <= 4.5) return { t: '賣出', c: 'red' };
-  return { t: '強力賣出', c: 'red' };
+function recLabel(m) {
+  if (!m) return { t: 'N/A', c: '' };
+  if (m <= 1.5) return { t: '強力買入', c: 'green' };
+  if (m <= 2.5) return { t: '買入',     c: 'green' };
+  if (m <= 3.5) return { t: '持有',     c: 'yellow' };
+  if (m <= 4.5) return { t: '賣出',     c: 'red' };
+  return              { t: '強力賣出',  c: 'red' };
 }
-function show(id)  { document.getElementById(id).classList.remove('hidden'); }
-function hide(id)  { document.getElementById(id).classList.add('hidden'); }
-function $(id)     { return document.getElementById(id); }
-function setHTML(id, html) { $(id).innerHTML = html; }
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const s = Math.floor((Date.now() - d) / 1000);
+  if (s < 60)    return s + ' 秒前';
+  if (s < 3600)  return Math.floor(s/60) + ' 分鐘前';
+  if (s < 86400) return Math.floor(s/3600) + ' 小時前';
+  return Math.floor(s/86400) + ' 天前';
+}
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function $(id)    { return document.getElementById(id); }
+function setHTML(id, h) { $(id).innerHTML = h; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-// ── State ─────────────────────────────────────────────────────────
-let currentData = null;
+// ── State ──────────────────────────────────────────────────────────
+let currentData   = null;
+let currentPeriod = '1Y';
 
-// ── Entry ─────────────────────────────────────────────────────────
+// ── Entry ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   $('tickerInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchStock(); });
 });
@@ -213,6 +265,10 @@ async function loadStock(ticker) {
   $('tickerInput').value = ticker;
   hide('welcome'); hide('dashboard'); hide('errorDiv');
   show('loading');
+  currentPeriod = '1Y';
+  document.querySelectorAll('.ptab').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === '1Y');
+  });
 
   try {
     const r = await fetch('/api/stock/' + ticker);
@@ -221,6 +277,7 @@ async function loadStock(ticker) {
     currentData = d;
     renderDashboard(d);
     hide('loading'); show('dashboard');
+    loadNews(ticker);
   } catch(e) {
     showError('網路錯誤，請稍後再試：' + e.message);
   }
@@ -228,34 +285,60 @@ async function loadStock(ticker) {
 
 function showError(msg) {
   hide('loading'); hide('dashboard');
-  $('errorDiv').textContent = '❌ ' + msg;
+  $('errorDiv').textContent = msg;
   show('errorDiv');
 }
 
-// ── Render Dashboard ──────────────────────────────────────────────
+// ── Period ─────────────────────────────────────────────────────────
+function changePeriod(period) {
+  if (!currentData) return;
+  currentPeriod = period;
+  document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.period === period));
+
+  const n = { '1M': 21, '3M': 63, '6M': 126, '1Y': 252 }[period] || 252;
+  const sl = arr => arr ? arr.slice(-n) : [];
+  const sliced = Object.assign({}, currentData, {
+    dates:  sl(currentData.dates),
+    ohlcv:  { open: sl(currentData.ohlcv.open), high: sl(currentData.ohlcv.high),
+               low: sl(currentData.ohlcv.low),  close: sl(currentData.ohlcv.close),
+               volume: sl(currentData.ohlcv.volume) },
+    ma:         { ma5: sl(currentData.ma.ma5), ma20: sl(currentData.ma.ma20), ma60: sl(currentData.ma.ma60) },
+    macd:       { dif: sl(currentData.macd.dif), dea: sl(currentData.macd.dea), hist: sl(currentData.macd.hist) },
+    bollinger:  { upper: sl(currentData.bollinger.upper), mid: sl(currentData.bollinger.mid), lower: sl(currentData.bollinger.lower) },
+    rsiSeries:  sl(currentData.rsiSeries),
+  });
+  renderCharts(sliced);
+}
+
+// ── Main Render ────────────────────────────────────────────────────
 function renderDashboard(d) {
   renderHeader(d);
   renderConclusions(d);
+  renderPerf(d);
   renderCharts(d);
   renderCatalysts(d);
   renderBiz(d);
   renderTechStats(d);
   renderKeyLevels(d);
   renderAnalyst(d);
+  renderBollinger(d);
+  renderVolume(d);
+  renderQuarterly(d);
   renderScenarios(d);
   renderRisks(d);
   renderStrategy(d);
 }
 
+// ── Header ─────────────────────────────────────────────────────────
 function renderHeader(d) {
   $('hTicker').textContent = d.ticker;
   $('hName').textContent   = d.name;
-  $('hSector').textContent = [d.sector, d.industry].filter(Boolean).join(' · ');
-  $('hDesc').textContent   = d.description ? d.description.substring(0, 120) + '...' : '';
+  $('hSector').textContent = [d.sector, d.industry, d.country].filter(Boolean).join(' · ');
+  $('hDesc').textContent   = d.description ? d.description.substring(0,130) + '...' : '';
 
-  $('hPrice').textContent  = '$' + d.price.toFixed(3);
+  $('hPrice').textContent = '$' + d.price.toFixed(3);
   const up = d.change >= 0;
-  $('hDelta').textContent  = (up ? '+' : '') + d.change.toFixed(3) + '  (' + (up ? '+' : '') + d.changePct.toFixed(2) + '%)';
+  $('hDelta').textContent  = (up?'+':'') + d.change.toFixed(3) + '  (' + (up?'+':'') + d.changePct.toFixed(2) + '%)';
   $('hDelta').className    = 'price-delta ' + (up ? 'green' : 'red');
 
   $('sOpen').textContent   = '$' + d.open;
@@ -264,82 +347,135 @@ function renderHeader(d) {
   $('sPrev').textContent   = '$' + d.prevClose;
   $('sVol').textContent    = fmtVol(d.volume);
   $('sMktCap').textContent = fmtMktCap(d.marketCap);
+  $('sBeta').textContent   = d.beta ? d.beta.toFixed(2) : 'N/A';
+  $('sDiv').textContent    = d.divYield ? d.divYield.toFixed(2) + '%' : 'N/A';
 }
 
+// ── Conclusions ────────────────────────────────────────────────────
 function renderConclusions(d) {
   setHTML('conclusionsRow', d.conclusions.map(c =>
-    `<div class="con-item"><span class="con-icon">${c.icon}</span><span class="con-text">${c.text}</span></div>`
+    `<div class="con-item ${c.type}"><span class="con-dot"></span><span class="con-text">${c.text}</span></div>`
   ).join(''));
 }
 
+// ── Performance Returns ────────────────────────────────────────────
+function renderPerf(d) {
+  const r = d.returns;
+  const chips = [
+    { label: '1 週', key: '1W' },
+    { label: '1 個月', key: '1M' },
+    { label: '3 個月', key: '3M' },
+    { label: '6 個月', key: '6M' },
+    { label: '1 年',   key: '1Y' },
+  ];
+  setHTML('perfRow', chips.map(c => {
+    const v = r[c.key];
+    const cls = v === null ? 'neu-chip' : v >= 0 ? 'pos-chip' : 'neg-chip';
+    const txt = v === null ? 'N/A' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+    const col = v === null ? '' : v >= 0 ? 'green' : 'red';
+    return `<div class="perf-chip ${cls}">
+      <span class="perf-label">${c.label}</span>
+      <span class="perf-value ${col}">${txt}</span>
+    </div>`;
+  }).join(''));
+}
+
+// ── Charts ─────────────────────────────────────────────────────────
 function renderCharts(d) {
-  // ── MA Pills ──
+  // MA pills
   setHTML('maPills',
     `<span class="pill ma5">MA5: ${d.ma5}</span>` +
     `<span class="pill ma20">MA20: ${d.ma20}</span>` +
     `<span class="pill ma60">MA60: ${d.ma60}</span>` +
-    `<span class="pill rsi">RSI: ${d.rsi}</span>`
+    `<span class="pill rsi">RSI: ${d.rsi}</span>` +
+    `<span class="pill bb">BB: ${d.bbLower} ~ ${d.bbUpper}</span>`
   );
 
   const dates = d.dates;
-  const BG = '#0d1422', GRID = '#172030';
+  const BG = '#0c1220', GRID = '#121e30';
 
-  // ── Price + Volume Chart ──
   const volColors = d.ohlcv.close.map((c, i) =>
-    i === 0 ? 'rgba(120,120,120,0.5)' :
-    c >= d.ohlcv.close[i-1] ? 'rgba(239,83,80,0.55)' : 'rgba(38,166,154,0.55)'
+    i === 0 ? 'rgba(100,130,160,0.4)' :
+    c >= d.ohlcv.close[i-1] ? 'rgba(232,70,70,0.5)' : 'rgba(0,214,143,0.5)'
   );
 
-  Plotly.newPlot('priceChart', [
+  // ── Price Chart ──
+  Plotly.react('priceChart', [
     {
-      type: 'candlestick', x: dates,
-      open: d.ohlcv.open, high: d.ohlcv.high, low: d.ohlcv.low, close: d.ohlcv.close,
-      name: d.ticker, yaxis: 'y', showlegend: false,
-      increasing: { line: { color: '#ef5350', width: 1 }, fillcolor: '#ef5350' },
-      decreasing: { line: { color: '#26a69a', width: 1 }, fillcolor: '#26a69a' },
+      type: 'candlestick', name: d.ticker,
+      x: dates, open: d.ohlcv.open, high: d.ohlcv.high, low: d.ohlcv.low, close: d.ohlcv.close,
+      increasing: { line: { color: '#e84646', width: 1 }, fillcolor: '#e84646' },
+      decreasing: { line: { color: '#00d68f', width: 1 }, fillcolor: '#00d68f' },
+      yaxis: 'y', showlegend: false,
     },
+    { type:'scatter', mode:'lines', x:dates, y:d.bollinger.upper, name:'BB上軌',
+      line:{color:'rgba(150,212,100,0.45)',width:1,dash:'dot'}, yaxis:'y', connectgaps:true, showlegend:false },
+    { type:'scatter', mode:'lines', x:dates, y:d.bollinger.lower, name:'BB下軌',
+      line:{color:'rgba(150,212,100,0.45)',width:1,dash:'dot'},
+      fill:'tonexty', fillcolor:'rgba(150,212,100,0.04)',
+      yaxis:'y', connectgaps:true, showlegend:false },
     { type:'scatter', mode:'lines', x:dates, y:d.ma.ma5,  name:'MA5',  line:{color:'#ffa000',width:1.5}, yaxis:'y', connectgaps:true },
-    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma20, name:'MA20', line:{color:'#e040fb',width:1.5}, yaxis:'y', connectgaps:true },
-    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma60, name:'MA60', line:{color:'#40c4ff',width:1.5}, yaxis:'y', connectgaps:true },
-    { type:'bar', x:dates, y:d.ohlcv.volume, name:'成交量', marker:{color:volColors}, yaxis:'y2', showlegend:false },
+    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma20, name:'MA20', line:{color:'#d94fff',width:1.5}, yaxis:'y', connectgaps:true },
+    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma60, name:'MA60', line:{color:'#36c6ff',width:1.5}, yaxis:'y', connectgaps:true },
+    { type:'bar', x:dates, y:d.ohlcv.volume, name:'成交量',
+      marker:{color:volColors}, yaxis:'y2', showlegend:false },
   ], {
     paper_bgcolor: BG, plot_bgcolor: BG,
-    font: { color:'#7a9ab5', size:11 },
+    font: { color:'#6888a0', size:11 },
     showlegend: true,
-    legend: { orientation:'h', x:0, y:1.05, bgcolor:'rgba(0,0,0,0)', font:{size:10,color:'#9ab5cc'} },
-    margin: { l:60, r:15, t:25, b:25 },
-    yaxis:  { domain:[0.22,1],  gridcolor:GRID, zerolinecolor:GRID, tickfont:{color:'#7a9ab5'}, tickformat:'.2f' },
-    yaxis2: { domain:[0,0.18],  gridcolor:GRID, tickfont:{color:'#7a9ab5',size:9} },
-    xaxis:  { rangeslider:{visible:false}, gridcolor:GRID, tickfont:{color:'#7a9ab5'} },
+    legend: { orientation:'h', x:0, y:1.04, bgcolor:'rgba(0,0,0,0)', font:{size:10,color:'#8aaabf'} },
+    margin: { l:58, r:12, t:24, b:22 },
+    yaxis:  { domain:[0.22,1],  gridcolor:GRID, zerolinecolor:GRID, tickfont:{color:'#6888a0'}, tickformat:'.2f', side:'right' },
+    yaxis2: { domain:[0,0.18],  gridcolor:GRID, tickfont:{color:'#6888a0',size:9}, side:'right' },
+    xaxis:  { rangeslider:{visible:false}, gridcolor:GRID, tickfont:{color:'#6888a0'} },
     hovermode: 'x unified',
   }, { responsive:true, displayModeBar:false });
 
-  // ── MACD Header ──
-  const macdColor = d.macdHist >= 0 ? '#ef5350' : '#26a69a';
-  setHTML('macdHeader',
-    `<span style="color:#2196f3">DIF: ${d.macdVal}</span>  ` +
-    `<span style="color:#ff9800">DEA: ${d.deaVal}</span>  ` +
-    `<span style="color:${macdColor}">MACD: ${d.macdHist}</span>`
+  // ── MACD bar ──
+  const mc = d.macdHist >= 0 ? '#e84646' : '#00d68f';
+  setHTML('macdBar',
+    `<span style="color:#3d8ef8">DIF: ${d.macdVal}</span>` +
+    `<span style="color:#e8a020">DEA: ${d.deaVal}</span>` +
+    `<span style="color:${mc}">MACD: ${d.macdHist}</span>`
   );
 
   // ── MACD Chart ──
-  const hColors = d.macd.hist.map(v => v === null ? '#888' : (v >= 0 ? 'rgba(239,83,80,0.8)' : 'rgba(38,166,154,0.8)'));
-  Plotly.newPlot('macdChart', [
-    { type:'scatter', mode:'lines', x:dates, y:d.macd.dif,  name:'DIF',  line:{color:'#2196f3',width:1.5}, connectgaps:true },
-    { type:'scatter', mode:'lines', x:dates, y:d.macd.dea,  name:'DEA',  line:{color:'#ff9800',width:1.5}, connectgaps:true },
-    { type:'bar',     x:dates,      y:d.macd.hist, name:'MACD', marker:{color:hColors} },
+  const hc = d.macd.hist.map(v => v===null?'#555':(v>=0?'rgba(232,70,70,0.75)':'rgba(0,214,143,0.75)'));
+  Plotly.react('macdChart', [
+    { type:'scatter', mode:'lines', x:dates, y:d.macd.dif,  name:'DIF',  line:{color:'#3d8ef8',width:1.5}, connectgaps:true },
+    { type:'scatter', mode:'lines', x:dates, y:d.macd.dea,  name:'DEA',  line:{color:'#e8a020',width:1.5}, connectgaps:true },
+    { type:'bar',     x:dates, y:d.macd.hist, name:'MACD',  marker:{color:hc} },
   ], {
     paper_bgcolor: BG, plot_bgcolor: BG,
-    font: { color:'#7a9ab5', size:10 },
+    font: { color:'#6888a0', size:10 },
     showlegend: true,
-    legend: { orientation:'h', x:0, y:1.1, bgcolor:'rgba(0,0,0,0)', font:{size:10,color:'#9ab5cc'} },
-    margin: { l:60, r:15, t:10, b:30 },
-    yaxis:  { gridcolor:GRID, zerolinecolor:'#2a3f55', tickfont:{color:'#7a9ab5'} },
-    xaxis:  { rangeslider:{visible:false}, gridcolor:GRID, tickfont:{color:'#7a9ab5'} },
+    legend: { orientation:'h', x:0, y:1.15, bgcolor:'rgba(0,0,0,0)', font:{size:10,color:'#8aaabf'} },
+    margin: { l:58, r:12, t:8, b:22 },
+    yaxis:  { gridcolor:GRID, zerolinecolor:'#1e3050', tickfont:{color:'#6888a0'}, side:'right' },
+    xaxis:  { rangeslider:{visible:false}, gridcolor:GRID, tickfont:{color:'#6888a0'} },
     hovermode: 'x unified',
+  }, { responsive:true, displayModeBar:false });
+
+  // ── RSI Chart ──
+  const rsiColor = d.rsiSeries.map(v => v===null?'#3d8ef8':v>70?'#e84646':v<30?'#00d68f':'#3d8ef8');
+  Plotly.react('rsiChart', [
+    { type:'scatter', mode:'lines', x:dates, y:d.rsiSeries, name:'RSI', line:{color:'#f0b429',width:1.5}, connectgaps:true, fill:'tozeroy', fillcolor:'rgba(240,180,41,0.06)' },
+    { type:'scatter', mode:'lines', x:dates, y:Array(dates.length).fill(70), name:'超買線', line:{color:'rgba(232,70,70,0.4)',width:1,dash:'dot'}, showlegend:false },
+    { type:'scatter', mode:'lines', x:dates, y:Array(dates.length).fill(30), name:'超賣線', line:{color:'rgba(0,214,143,0.4)',width:1,dash:'dot'}, showlegend:false },
+  ], {
+    paper_bgcolor: BG, plot_bgcolor: BG,
+    font: { color:'#6888a0', size:10 },
+    showlegend: false,
+    margin: { l:58, r:12, t:4, b:28 },
+    yaxis:  { gridcolor:GRID, tickfont:{color:'#6888a0'}, range:[0,100], tickvals:[0,30,50,70,100], side:'right' },
+    xaxis:  { rangeslider:{visible:false}, gridcolor:GRID, tickfont:{color:'#6888a0'} },
+    hovermode: 'x unified',
+    annotations: [{ x:1, xref:'paper', y:70, yref:'y', text:'70', showarrow:false, font:{color:'rgba(232,70,70,0.6)',size:9}, xanchor:'left' },
+                  { x:1, xref:'paper', y:30, yref:'y', text:'30', showarrow:false, font:{color:'rgba(0,214,143,0.6)',size:9}, xanchor:'left' }],
   }, { responsive:true, displayModeBar:false });
 }
 
+// ── Catalysts ──────────────────────────────────────────────────────
 function renderCatalysts(d) {
   setHTML('catalysts', d.catalysts.map(c =>
     `<div class="catalyst-item">
@@ -349,32 +485,34 @@ function renderCatalysts(d) {
   ).join(''));
 }
 
+// ── Business ────────────────────────────────────────────────────────
 function renderBiz(d) {
   const items = [
-    { icon:'💰', label:'市值', value: fmtMktCap(d.marketCap) },
-    { icon:'📊', label:'本益比 (TTM)', value: d.pe ? d.pe.toFixed(2) : 'N/A' },
-    { icon:'📊', label:'預期本益比', value: d.forwardPe ? d.forwardPe.toFixed(2) : 'N/A' },
-    { icon:'💵', label:'每股盈餘 (EPS)', value: d.eps ? '$'+d.eps.toFixed(2) : 'N/A' },
-    { icon:'📈', label:'52週最高', value: '$'+d.week52High },
-    { icon:'📉', label:'52週最低', value: '$'+d.week52Low },
+    { label: '市值',         value: fmtMktCap(d.marketCap) + ' 美元' },
+    { label: '本益比 (TTM)', value: d.pe        ? d.pe.toFixed(2)          : 'N/A' },
+    { label: '預期本益比',   value: d.forwardPe  ? d.forwardPe.toFixed(2)  : 'N/A' },
+    { label: '每股盈餘',     value: d.eps        ? '$' + d.eps.toFixed(2)  : 'N/A' },
+    { label: '52週最高',     value: '$' + d.week52High },
+    { label: '52週最低',     value: '$' + d.week52Low  },
+    { label: '流通股數',     value: fmtShares(d.sharesOut) },
+    { label: '年殖利率',     value: d.divYield   ? d.divYield + '%'        : 'N/A' },
   ];
   setHTML('bizHighlights',
     `<div class="biz-grid">${
-      items.map(i => `<div class="biz-item"><span class="biz-icon">${i.icon}</span><span class="biz-label">${i.label}</span><span class="biz-value">${i.value}</span></div>`).join('')
+      items.map(i => `<div class="biz-item"><span class="biz-label">${i.label}</span><span class="biz-value">${i.value}</span></div>`).join('')
     }</div>`
   );
 }
 
+// ── Tech Stats ─────────────────────────────────────────────────────
 function renderTechStats(d) {
   const rows = [
-    ['MA5',    '$'+d.ma5,  d.price > d.ma5  ? 'green':'red', d.price > d.ma5  ? '▲站上':'▼跌破'],
-    ['MA20',   '$'+d.ma20, d.price > d.ma20 ? 'green':'red', d.price > d.ma20 ? '▲站上':'▼跌破'],
-    ['MA60',   '$'+d.ma60, d.price > d.ma60 ? 'green':'red', d.price > d.ma60 ? '▲站上':'▼跌破'],
-    ['DIF',    d.macdVal.toFixed(2), d.macdVal > 0 ? 'green':'red', d.macdVal > 0 ? '零軸上方':'零軸下方'],
-    ['DEA',    d.deaVal.toFixed(2),  d.macdVal > d.deaVal ? 'green':'red', d.macdVal > d.deaVal ? '金叉':'死叉'],
-    ['RSI',    d.rsi.toFixed(1),     d.rsi > 70 ? 'red' : d.rsi < 30 ? 'green' : 'yellow',
-               d.rsi > 70 ? '超買' : d.rsi < 30 ? '超賣' : '正常'],
-    ['量比',   d.volRatio.toFixed(2)+'x', d.volRatio >= 1.5 ? 'green':'dim', d.volRatio >= 1.5 ? '放量':'縮量'],
+    ['MA5',   '$'+d.ma5,              d.price > d.ma5  ? 'green':'red',    d.price > d.ma5  ? '站上':'跌破'],
+    ['MA20',  '$'+d.ma20,             d.price > d.ma20 ? 'green':'red',    d.price > d.ma20 ? '站上':'跌破'],
+    ['MA60',  '$'+d.ma60,             d.price > d.ma60 ? 'green':'red',    d.price > d.ma60 ? '站上':'跌破'],
+    ['DIF',   d.macdVal.toFixed(2),   d.macdVal > 0    ? 'green':'red',    d.macdVal > 0    ? '零軸上':'零軸下'],
+    ['DEA',   d.deaVal.toFixed(2),    d.macdVal > d.deaVal ? 'green':'red', d.macdVal > d.deaVal ? '金叉':'死叉'],
+    ['量比',  d.volRatio.toFixed(2)+'x', d.volRatio >= 1.5 ? 'green':'dim', d.volRatio >= 1.5 ? '放量':'縮量'],
   ];
   setHTML('techStats',
     `<table class="tech-table">${
@@ -385,121 +523,235 @@ function renderTechStats(d) {
       </tr>`).join('')
     }</table>`
   );
-}
 
-function renderKeyLevels(d) {
-  const lv = d.levels;
-  const price = d.price;
-  const all = [lv.resistance2, lv.resistance1, price, lv.support1, lv.support2];
-  const min_ = Math.min(...all), max_ = Math.max(...all);
-  const pct = v => ((v - min_) / (max_ - min_) * 90 + 5).toFixed(1);
-
-  const items = [
-    { label:'壓力區 ②', value: lv.resistance2, cls:'resist2', tag:'歷史高點壓力' },
-    { label:'壓力區 ①', value: lv.resistance1, cls:'resist1', tag:'短期壓力' },
-    { label:'▶ 當前價格', value: price,          cls:'current',tag:'' },
-    { label:'支撐區 ①', value: lv.support1,     cls:'supp1',  tag:'短期支撐' },
-    { label:'支撐區 ②', value: lv.support2,     cls:'supp2',  tag:'強力支撐' },
-  ];
-
-  setHTML('keyLevels',
-    `<div class="levels-wrap">${
-      items.map(it =>
-        `<div class="level-row ${it.cls}">
-          <div class="lv-bar-wrap"><div class="lv-bar" style="width:${pct(it.value)}%"></div></div>
-          <div class="lv-info">
-            <span class="lv-label">${it.label}</span>
-            <span class="lv-price">$${it.value}</span>
-            ${it.tag ? `<span class="lv-tag">${it.tag}</span>` : ''}
-          </div>
-        </div>`
-      ).join('')
-    }</div>`
-  );
-}
-
-function renderAnalyst(d) {
-  const rec = recText(d.recMean);
-  const upside = d.analystTarget && d.price ? ((d.analystTarget/d.price-1)*100).toFixed(1) : null;
-  setHTML('analystSection',
-    `<div class="analyst-wrap">
-      ${d.numAnalysts > 0 ? `
-        <div class="analyst-rec ${rec.c}">評級：${rec.t}</div>
-        <div class="analyst-count">${d.numAnalysts} 位分析師</div>
-        ${d.analystTarget ? `<div class="analyst-row"><span class="ar-l">平均目標</span><span class="ar-v">$${d.analystTarget}</span></div>` : ''}
-        ${d.analystHigh   ? `<div class="analyst-row"><span class="ar-l">最高目標</span><span class="ar-v green">$${d.analystHigh}</span></div>` : ''}
-        ${d.analystLow    ? `<div class="analyst-row"><span class="ar-l">最低目標</span><span class="ar-v red">$${d.analystLow}</span></div>` : ''}
-        ${upside ? `<div class="analyst-upside ${parseFloat(upside)>=0?'green':'red'}">潛在漲幅：${upside >= 0 ? '+' : ''}${upside}%</div>` : ''}
-      ` : '<div class="no-data">分析師資料暫無</div>'}
+  // RSI gauge
+  const rsi = d.rsi;
+  const pct  = clamp(rsi, 0, 100);
+  const col  = rsi > 70 ? 'var(--red)' : rsi < 30 ? 'var(--green)' : 'var(--yellow)';
+  setHTML('rsiGauge',
+    `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--card-bd)">
+      <div style="display:flex;justify-content:space-between;font-size:0.74rem;color:var(--text-dim);margin-bottom:5px;">
+        <span>RSI 指標</span><span style="color:${col};font-weight:800;">${rsi.toFixed(1)} &nbsp; ${rsi>70?'超買':rsi<30?'超賣':'健康'}</span>
+      </div>
+      <div class="rsi-gauge-track">
+        <div class="rsi-gauge-cursor" style="left:${pct}%"></div>
+      </div>
+      <div class="rsi-gauge-labels"><span>0</span><span>超賣 30</span><span>50</span><span>超買 70</span><span>100</span></div>
     </div>`
   );
 }
 
+// ── Key Levels ─────────────────────────────────────────────────────
+function renderKeyLevels(d) {
+  const lv = d.levels, price = d.price;
+  const all = [lv.resistance2, lv.resistance1, price, lv.support1, lv.support2];
+  const mn = Math.min(...all), mx = Math.max(...all);
+  const pct = v => ((v - mn) / (mx - mn) * 88 + 6).toFixed(1);
+
+  const items = [
+    { label:'壓力區 II', value: lv.resistance2, cls:'resist2', tag:'52週高點' },
+    { label:'壓力區 I',  value: lv.resistance1, cls:'resist1', tag:'20日高點' },
+    { label:'當前價格',  value: price,           cls:'current', tag:'' },
+    { label:'支撐區 I',  value: lv.support1,    cls:'supp1',   tag:'20日低點' },
+    { label:'支撐區 II', value: lv.support2,    cls:'supp2',   tag:'60日低點' },
+  ];
+
+  setHTML('keyLevels', `<div class="levels-wrap">${
+    items.map(it =>
+      `<div class="level-row ${it.cls}">
+        <div class="lv-bar-wrap"><div class="lv-bar" style="width:${pct(it.value)}%"></div></div>
+        <div class="lv-info">
+          <span class="lv-label">${it.label}</span>
+          <span class="lv-price">$${it.value}</span>
+          ${it.tag ? `<span class="lv-tag">${it.tag}</span>` : ''}
+        </div>
+      </div>`
+    ).join('')
+  }</div>`);
+}
+
+// ── Analyst ────────────────────────────────────────────────────────
+function renderAnalyst(d) {
+  const rec = recLabel(d.recMean);
+  const up  = d.analystTarget && d.price ? ((d.analystTarget/d.price - 1)*100).toFixed(1) : null;
+  setHTML('analystSection', `<div class="analyst-wrap">
+    ${d.numAnalysts > 0 ? `
+      <div class="analyst-rec ${rec.c}">${rec.t}</div>
+      <div class="analyst-count">${d.numAnalysts} 位分析師覆蓋</div>
+      ${d.analystTarget ? `<div class="analyst-row"><span class="ar-l">平均目標價</span><span class="ar-v">$${d.analystTarget}</span></div>` : ''}
+      ${d.analystHigh   ? `<div class="analyst-row"><span class="ar-l">最高目標價</span><span class="ar-v green">$${d.analystHigh}</span></div>` : ''}
+      ${d.analystLow    ? `<div class="analyst-row"><span class="ar-l">最低目標價</span><span class="ar-v red">$${d.analystLow}</span></div>` : ''}
+      ${up ? `<div class="analyst-upside ${parseFloat(up)>=0?'green':'red'}">潛在空間：${parseFloat(up)>=0?'+':''}${up}%</div>` : ''}
+    ` : '<div class="no-data">分析師資料暫無</div>'}
+  </div>`);
+}
+
+// ── Bollinger ──────────────────────────────────────────────────────
+function renderBollinger(d) {
+  const pos  = clamp(d.bbPos, 0, 100);
+  const zone = d.bbPos > 80 ? '上軌附近，注意壓力' : d.bbPos < 20 ? '下軌附近，可能支撐' : '中軌區間整理';
+  setHTML('bollingerPanel', `
+    <div class="bb-grid">
+      <div class="bb-row"><span class="bb-l">上軌 (Upper)</span><span class="bb-v red">$${d.bbUpper}</span></div>
+      <div class="bb-row"><span class="bb-l">中軌 (Mid/MA20)</span><span class="bb-v">$${d.bbMid}</span></div>
+      <div class="bb-row"><span class="bb-l">下軌 (Lower)</span><span class="bb-v green">$${d.bbLower}</span></div>
+      <div class="bb-row"><span class="bb-l">帶寬</span><span class="bb-v yellow">${d.bbWidth}%</span></div>
+      <div class="bb-row"><span class="bb-l">位置</span><span class="bb-v">${d.bbPos}%</span></div>
+      <div class="bb-row"><span class="bb-l">研判</span><span class="bb-v dim" style="font-size:0.76rem">${zone}</span></div>
+    </div>
+    <div style="margin-top:8px;font-size:0.7rem;color:var(--text-dim);margin-bottom:5px;">股價在布林通道位置</div>
+    <div class="bb-pos-track">
+      <div class="bb-pos-cursor" style="left:${pos}%"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.62rem;color:var(--text-dim);margin-top:3px;">
+      <span>下軌 0%</span><span>中軌 50%</span><span>上軌 100%</span>
+    </div>
+  `);
+}
+
+// ── Volume Analysis ────────────────────────────────────────────────
+function renderVolume(d) {
+  const ratio = d.volRatio;
+  const ratioColor = ratio >= 2 ? 'var(--red)' : ratio >= 1.5 ? 'var(--yellow)' : ratio >= 1 ? 'var(--green)' : 'var(--text-dim)';
+  const barW = clamp(ratio / 3 * 100, 5, 100).toFixed(0);
+  const signal = ratio >= 2 ? '爆量，主力大量介入' : ratio >= 1.5 ? '放量，資金積極流入' : ratio >= 0.8 ? '正常量，市場觀望' : '縮量，市場謹慎';
+
+  setHTML('volumePanel', `
+    <div class="vol-grid">
+      <div class="vol-stat">
+        <span class="vol-label">今日成交量</span>
+        <span class="vol-value">${fmtVol(d.volume)}</span>
+        <div class="vol-bar-track"><div class="vol-bar-fill" style="width:${barW}%;background:${ratioColor}"></div></div>
+      </div>
+      <div class="vol-stat">
+        <span class="vol-label">20日均量</span>
+        <span class="vol-value">${fmtVol(d.avgVolume)}</span>
+      </div>
+      <div class="vol-stat">
+        <span class="vol-label">量比</span>
+        <span class="vol-value" style="color:${ratioColor}">${ratio.toFixed(2)}x</span>
+      </div>
+      <div class="vol-stat">
+        <span class="vol-label">量能研判</span>
+        <span class="vol-value" style="font-size:0.78rem;color:${ratioColor}">${signal}</span>
+      </div>
+    </div>
+  `);
+}
+
+// ── Quarterly ──────────────────────────────────────────────────────
+function renderQuarterly(d) {
+  const q = d.quarterly;
+  if (!q || q.length === 0) {
+    setHTML('quarterlyPanel', '<div class="no-data">季度財務資料暫無</div>');
+    return;
+  }
+  const rows = q.map((item, i) => {
+    const prev = q[i+1];
+    const chg  = prev ? ((item.revenue - prev.revenue) / prev.revenue * 100).toFixed(1) : null;
+    const cls  = chg === null ? '' : parseFloat(chg) >= 0 ? 'pos' : 'neg';
+    const sign = chg === null ? '' : parseFloat(chg) >= 0 ? '+' : '';
+    return `<tr>
+      <td>${item.period}</td>
+      <td class="q-val">$${item.revenue.toFixed(1)}M</td>
+      <td class="q-chg ${cls}">${chg !== null ? sign + chg + '%' : '--'}</td>
+    </tr>`;
+  }).join('');
+  setHTML('quarterlyPanel', `
+    <table class="qtable">
+      <thead><tr><th>季度</th><th>總收入</th><th>季增率</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+// ── Scenarios ──────────────────────────────────────────────────────
 function renderScenarios(d) {
-  const s = d.strategy;
-  const price = d.price;
-  const bullPct  = ((s.bullTarget/price-1)*100).toFixed(0);
-  const neutPct  = ((s.neutralTarget/price-1)*100).toFixed(0);
-  const bearPct  = ((s.bearTarget/price-1)*100).toFixed(0);
-  setHTML('scenarios',
-    `<div class="scenario bull-s">
-      <div class="sc-header"><span class="sc-icon">🐂</span><span class="sc-name">強勢情境</span><span class="sc-prob green">機率 40%</span></div>
-      <div class="sc-target">目標價 <span class="green">$${s.bullTarget}</span> <small class="green">(+${bullPct}%)</small></div>
+  const s = d.strategy, p = d.price;
+  const bullPct = ((s.bullTarget/p-1)*100).toFixed(0);
+  const neutPct = ((s.neutralTarget/p-1)*100).toFixed(0);
+  const bearPct = ((s.bearTarget/p-1)*100).toFixed(0);
+  setHTML('scenarios', `
+    <div class="scenario bull-s">
+      <div class="sc-header"><span class="sc-badge">BULL</span><span class="sc-name">強勢情境</span><span class="sc-prob green">機率 40%</span></div>
+      <div class="sc-target">目標價 <span class="green">$${s.bullTarget}</span>  <small class="green">(+${bullPct}%)</small></div>
       <div class="sc-cond">技術突破歷史高點，量能持續放大，基本面超預期</div>
     </div>
     <div class="scenario neut-s">
-      <div class="sc-header"><span class="sc-icon">📊</span><span class="sc-name">中性情境</span><span class="sc-prob yellow">機率 40%</span></div>
-      <div class="sc-target">目標價 <span class="yellow">$${s.neutralTarget}</span> <small class="yellow">(+${neutPct}%)</small></div>
+      <div class="sc-header"><span class="sc-badge">NEUTRAL</span><span class="sc-name">中性情境</span><span class="sc-prob yellow">機率 40%</span></div>
+      <div class="sc-target">目標價 <span class="yellow">$${s.neutralTarget}</span>  <small class="yellow">(+${neutPct}%)</small></div>
       <div class="sc-cond">維持現有趨勢穩步上漲，市場逐步消化估值</div>
     </div>
     <div class="scenario bear-s">
-      <div class="sc-header"><span class="sc-icon">🐻</span><span class="sc-name">保守情境</span><span class="sc-prob red">機率 20%</span></div>
-      <div class="sc-target">目標價 <span class="red">$${s.bearTarget}</span> <small class="red">(${bearPct}%)</small></div>
+      <div class="sc-header"><span class="sc-badge">BEAR</span><span class="sc-name">保守情境</span><span class="sc-prob red">機率 20%</span></div>
+      <div class="sc-target">目標價 <span class="red">$${s.bearTarget}</span>  <small class="red">(${bearPct}%)</small></div>
       <div class="sc-cond">法規趨嚴或市場修正，競爭加劇導致成長放緩</div>
-    </div>`
-  );
+    </div>
+  `);
 }
 
+// ── Risks ──────────────────────────────────────────────────────────
 function renderRisks(d) {
-  const icon = { high:'🔴', medium:'🟡', low:'🟢' };
   setHTML('risks', d.risks.map(r =>
-    `<div class="risk-item">
-      <span class="risk-icon">${icon[r.level]||'⚠️'}</span>
+    `<div class="risk-item ${r.level}">
+      <span class="risk-dot"></span>
       <span class="risk-text">${r.text}</span>
     </div>`
   ).join(''));
 }
 
+// ── Strategy ───────────────────────────────────────────────────────
 function renderStrategy(d) {
   const s = d.strategy;
-  setHTML('strategy',
-    `<div class="strategy-grid">
+  setHTML('strategy', `
+    <div class="strategy-grid">
       <div class="strategy-item long-t">
-        <div class="st-icon">🚀</div>
-        <div class="st-body">
-          <div class="st-type">長線投資人</div>
-          <div class="st-desc">${s.long}</div>
-        </div>
+        <span class="st-badge">長線投資人</span>
+        <div class="st-desc">${s.long}</div>
       </div>
       <div class="strategy-item swing-t">
-        <div class="st-icon">🎯</div>
-        <div class="st-body">
-          <div class="st-type">波段投資人</div>
-          <div class="st-desc">${s.swing}</div>
-        </div>
+        <span class="st-badge">波段投資人</span>
+        <div class="st-desc">${s.swing}</div>
       </div>
       <div class="strategy-item short-t">
-        <div class="st-icon">⚡</div>
-        <div class="st-body">
-          <div class="st-type">短線交易人</div>
-          <div class="st-desc">${s.short}</div>
-        </div>
+        <span class="st-badge">短線交易人</span>
+        <div class="st-desc">${s.short}</div>
       </div>
     </div>
     <div class="stop-loss-bar">
-      ⚠️ 失守風險線：<strong class="red">$${s.stopLoss}</strong>（跌破此位視為趨勢轉弱，建議出場觀望）
-    </div>`
-  );
+      失守風險線：<strong class="red">$${s.stopLoss}</strong>
+      &nbsp;—&nbsp; 跌破此位視為趨勢轉弱，建議出場觀望
+    </div>
+  `);
+}
+
+// ── News ───────────────────────────────────────────────────────────
+async function loadNews(ticker) {
+  setHTML('newsContainer', '<div class="news-loading">新聞載入中...</div>');
+  try {
+    const r = await fetch('/api/news/' + ticker);
+    const d = await r.json();
+    $('newsTimestamp').textContent = '更新時間：' + new Date().toLocaleTimeString('zh-TW');
+    if (!d.articles || d.articles.length === 0) {
+      setHTML('newsContainer', '<div class="news-empty">暫無相關新聞</div>');
+      return;
+    }
+    setHTML('newsContainer', `<div class="news-grid">${
+      d.articles.map(a => `
+        <div class="news-item">
+          <div><span class="news-pub">${a.publisher || 'Yahoo Finance'}</span></div>
+          <a class="news-title" href="${a.url}" target="_blank" rel="noopener">${a.title}</a>
+          ${a.summary ? `<div class="news-summary">${a.summary}</div>` : ''}
+          <div class="news-meta">
+            <span class="news-time">${timeAgo(a.pubTime)}</span>
+            ${a.url ? `<a class="news-link" href="${a.url}" target="_blank" rel="noopener">閱讀全文</a>` : ''}
+          </div>
+        </div>
+      `).join('')
+    }</div>`);
+  } catch(e) {
+    setHTML('newsContainer', '<div class="news-empty">新聞載入失敗，請稍後再試</div>');
+  }
 }
 </script>
 
