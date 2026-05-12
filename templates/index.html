@@ -466,6 +466,8 @@ async function loadStock(ticker) {
     currentData = d;
     renderDashboard(d);
     hide('loading'); show('dashboard');
+    // Re-render charts after dashboard is visible so Plotly gets correct container dimensions
+    setTimeout(() => changePeriod(currentPeriod), 50);
     loadNews(ticker);
     loadFundamentals(ticker, d);
   } catch(e) {
