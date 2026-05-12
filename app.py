@@ -3,9 +3,20 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import warnings
+import time
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
+
+# ── TTL Cache ─────────────────────────────────────────────────────────
+_CACHE = {}
+
+def _cache_get(key):
+    e = _CACHE.get(key)
+    return e['v'] if e and time.time() < e['t'] else None
+
+def _cache_set(key, val, ttl=300):
+    _CACHE[key] = {'v': val, 't': time.time() + ttl}
 
 # ── Helpers ───────────────────────────────────────────────────────
 def safe_float(v, default=0.0):
@@ -283,7 +294,8 @@ def index():
 
 @app.route('/api/market')
 def get_market():
-    """VIX, major indices, gold — loaded async by frontend."""
+    cached = _cache_get('market')
+    if cached: return jsonify(cached)
     syms = {
         'vix':    '^VIX',
         'sp500':  '^GSPC',
@@ -316,14 +328,16 @@ def get_market():
     else:              label, cls = '極度恐懼', 'fear-hi'
     result['vixLabel'] = label
     result['vixCls']   = cls
+    _cache_set('market', result, ttl=60)
     return jsonify(result)
 
 
 @app.route('/api/fundamentals/<ticker>')
 def get_fundamentals(ticker):
-    """Heavy financial data loaded async: cash flow, institutional, earnings."""
+    ticker = ticker.upper().strip()
+    cached = _cache_get(f'fund:{ticker}')
+    if cached: return jsonify(cached)
     try:
-        ticker = ticker.upper().strip()
         stock  = yf.Ticker(ticker)
         info   = stock.info
 
@@ -385,7 +399,7 @@ def get_fundamentals(ticker):
         price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
         pfcf = round(mktcap / fcf_val, 1) if fcf_val and fcf_val > 0 else None
 
-        return jsonify({
+        result = {
             'ticker':       ticker,
             'ocf':          round(ocf_val / 1e9, 2),
             'fcf':          round(fcf_val / 1e9, 2),
@@ -406,7 +420,9 @@ def get_fundamentals(ticker):
             'revGrowth':    round(safe_float(info.get('revenueGrowth', 0)) * 100, 1),
             'epsGrowth':    round(safe_float(info.get('earningsGrowth', 0)) * 100, 1),
             'topHolders':   top_holders,
-        })
+        }
+        _cache_set(f'fund:{ticker}', result)
+        return jsonify(result)
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -414,8 +430,10 @@ def get_fundamentals(ticker):
 
 @app.route('/api/stock/<ticker>')
 def get_stock(ticker):
+    ticker = ticker.upper().strip()
+    cached = _cache_get(f'stock:{ticker}')
+    if cached: return jsonify(cached)
     try:
-        ticker = ticker.upper().strip()
         stock  = yf.Ticker(ticker)
         info   = stock.info
         hist   = stock.history(period='1y')
@@ -526,7 +544,7 @@ def get_stock(ticker):
 
         dates = hist.index.strftime('%Y-%m-%d').tolist()
 
-        return jsonify({
+        result = {
             'ticker':       ticker,
             'name':         info.get('longName', info.get('shortName', ticker)),
             'sector':       info.get('sector', ''),
@@ -612,7 +630,9 @@ def get_stock(ticker):
                 'lower': clean(hist['BB_lower'].tolist()),
             },
             'rsiSeries': clean(hist['RSI'].tolist()),
-        })
+        }
+        _cache_set(f'stock:{ticker}', result)
+        return jsonify(result)
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -620,8 +640,11 @@ def get_stock(ticker):
 
 @app.route('/api/news/<ticker>')
 def get_news(ticker):
+    ticker = ticker.upper().strip()
+    cached = _cache_get(f'news:{ticker}')
+    if cached: return jsonify(cached)
     try:
-        stock     = yf.Ticker(ticker.upper())
+        stock     = yf.Ticker(ticker)
         raw       = stock.news or []
         articles  = []
         for item in raw[:12]:
@@ -639,9 +662,11 @@ def get_news(ticker):
                     'summary':   summary[:180],
                     'pubTime':   pub_time,
                 })
-        return jsonify({'ticker': ticker.upper(), 'articles': articles})
+        result = {'ticker': ticker, 'articles': articles}
+        _cache_set(f'news:{ticker}', result, ttl=180)
+        return jsonify(result)
     except Exception as e:
-        return jsonify({'ticker': ticker.upper(), 'articles': [], 'error': str(e)})
+        return jsonify({'ticker': ticker, 'articles': [], 'error': str(e)})
 
 
 if __name__ == '__main__':

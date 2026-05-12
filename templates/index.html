@@ -28,6 +28,12 @@
   </div>
 </nav>
 
+<!-- Watchlist Bar -->
+<div id="watchlistBar" class="watchlist-bar hidden">
+  <span class="wl-bar-label">自選股</span>
+  <div id="watchlistChips" class="watchlist-chips"></div>
+</div>
+
 <!-- Market Pulse Bar -->
 <div id="marketBar" class="market-bar">
   <div class="mb-item mb-vix" id="mb-vix">
@@ -149,10 +155,27 @@
   </div>
 </div>
 
-<!-- Loading -->
+<!-- Loading (skeleton) -->
 <div id="loading" class="loading-screen hidden">
-  <div class="spinner"></div>
-  <div class="loading-text">資料載入中...</div>
+  <div class="skel-dash">
+    <div class="skel-row"><div class="skel-block skel-shimmer" style="height:110px"></div></div>
+    <div class="skel-row"><div class="skel-block skel-shimmer" style="height:60px"></div></div>
+    <div class="skel-row4">
+      <div class="skel-block skel-shimmer" style="height:130px"></div>
+      <div class="skel-block skel-shimmer" style="height:130px"></div>
+      <div class="skel-block skel-shimmer" style="height:130px"></div>
+      <div class="skel-block skel-shimmer" style="height:130px"></div>
+    </div>
+    <div class="skel-row" style="gap:12px">
+      <div class="skel-block skel-shimmer" style="height:620px;flex:1"></div>
+      <div class="skel-block skel-shimmer" style="height:620px;flex:0 0 360px"></div>
+    </div>
+    <div class="skel-row3">
+      <div class="skel-block skel-shimmer" style="height:200px"></div>
+      <div class="skel-block skel-shimmer" style="height:200px"></div>
+      <div class="skel-block skel-shimmer" style="height:200px"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Error -->
@@ -174,6 +197,10 @@
     <div class="header-center">
       <div class="big-price"   id="hPrice"></div>
       <div class="price-delta" id="hDelta"></div>
+      <div class="header-btns">
+        <button id="watchBtn" class="watch-btn" onclick="toggleWatch()">+ 自選</button>
+        <button id="alertBtn" class="alert-btn" onclick="openAlertModal()">提醒 <span id="alertDot" class="alert-dot hidden"></span></button>
+      </div>
     </div>
     <div class="header-right">
       <div class="stat-grid8">
@@ -320,7 +347,24 @@
     <div id="strategy"></div>
   </div>
 
-  <!-- 9. News -->
+  <!-- 9. Compare -->
+  <div class="card" id="compareCard">
+    <div class="cmp-title-row">
+      <span class="card-title" style="margin:0;border:none;padding:0">股票比較</span>
+      <button class="cmp-toggle-btn" id="cmpToggleBtn" onclick="toggleComparePanel()">開啟比較模式</button>
+    </div>
+    <div id="comparePanel" class="hidden" style="margin-top:14px">
+      <div class="cmp-input-row">
+        <input id="compareInput" class="cmp-input" type="text" placeholder="輸入第二支股票代碼 (e.g. NVDA)" spellcheck="false" autocomplete="off">
+        <button class="cmp-load-btn" onclick="loadCompare()">比較</button>
+        <button class="cmp-clear-btn" onclick="clearCompare()">清除</button>
+      </div>
+      <div id="compareStatus" class="cmp-status"></div>
+      <div id="compareChart" style="height:260px;margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- 10. News -->
   <div class="card" id="newsCard">
     <div class="news-header">
       <div class="card-title">最新相關新聞</div>
@@ -332,6 +376,29 @@
   <div class="footer-note">本分析為技術指標自動化計算，僅供參考，投資有風險，請謹慎評估</div>
 
 </div><!-- /#dashboard -->
+
+<!-- Alert Modal -->
+<div id="alertModal" class="modal-overlay hidden" onclick="closeAlertModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-title">設定價格提醒 &mdash; <span id="alertModalTicker" class="gold"></span></div>
+    <div id="alertCurrentInfo" class="modal-cur-price"></div>
+    <div class="modal-row">
+      <label class="modal-lbl">漲至提醒（上限目標價）</label>
+      <input id="alertAbove" class="modal-inp" type="number" step="0.01" placeholder="留空則不設定">
+    </div>
+    <div class="modal-row">
+      <label class="modal-lbl">跌至提醒（下限止損價）</label>
+      <input id="alertBelow" class="modal-inp" type="number" step="0.01" placeholder="留空則不設定">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-save" onclick="saveAlert()">儲存</button>
+      <button class="btn-clr" onclick="clearAlert()">清除</button>
+      <button class="btn-cancel" onclick="closeAlertModal()">取消</button>
+    </div>
+    <div id="alertMsg" class="alert-msg"></div>
+  </div>
+</div>
+<div id="alertBannerWrap" class="alert-banner-wrap"></div>
 
 <script>
 // ── Utilities ──────────────────────────────────────────────────────
@@ -389,6 +456,11 @@ function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function $(id)    { return document.getElementById(id); }
 function setHTML(id, h) { const el=$(id); if(el) el.innerHTML = h; }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function fmtNA(v, suffix='', digits=null) {
+  if (v === null || v === undefined || v === 0) return '<span class="na-val">—</span>';
+  const s = digits !== null ? Number(v).toFixed(digits) : v;
+  return `${s}${suffix}`;
+}
 
 // ── State ──────────────────────────────────────────────────────────
 let currentData   = null;
@@ -399,6 +471,15 @@ document.addEventListener('DOMContentLoaded', () => {
   $('tickerInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchStock(); });
   $('heroInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchFromHero(); });
   loadMarket();
+  renderWatchlist();
+  updateAlertBadge();
+  const urlTicker = new URLSearchParams(location.search).get('ticker');
+  if (urlTicker) loadStock(urlTicker.toUpperCase());
+});
+
+window.addEventListener('popstate', e => {
+  if (e.state && e.state.ticker) loadStock(e.state.ticker);
+  else { hide('dashboard'); show('welcome'); document.title = '美股投資分析儀表板'; }
 });
 
 function searchFromHero() {
@@ -449,6 +530,7 @@ async function loadMarket() {
 
     $('mbTime').textContent = new Date().toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit'}) + ' 更新';
   } catch(e) {}
+  setTimeout(loadMarket, 60000);
 }
 
 // ── Load Stock ──────────────────────────────────────────────────────
@@ -466,8 +548,13 @@ async function loadStock(ticker) {
     currentData = d;
     renderDashboard(d);
     hide('loading'); show('dashboard');
-    // Re-render charts after dashboard is visible so Plotly gets correct container dimensions
     setTimeout(() => changePeriod(currentPeriod), 50);
+    history.pushState({ticker}, '', '?ticker=' + ticker);
+    document.title = ticker + ' — 美股投資分析';
+    const triggered = checkAlerts(ticker, d.price);
+    if (triggered.length) showAlertBanner(triggered);
+    updateWatchBtn(ticker);
+    updateAlertBadge();
     loadNews(ticker);
     loadFundamentals(ticker, d);
   } catch(e) {
@@ -500,6 +587,7 @@ function changePeriod(period) {
     rsiSeries:  sl(currentData.rsiSeries),
   });
   renderCharts(sliced);
+  if (compareData) renderCompareChart();
 }
 
 // ── Main Render ─────────────────────────────────────────────────────
@@ -797,6 +885,8 @@ function renderCharts(d) {
       {type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:30,y1:30,line:{color:'rgba(0,214,143,0.25)',width:1}},
     ],
   }, {responsive:true,displayModeBar:false});
+
+  setTimeout(setupCrosshair, 120);
 }
 
 // ── Investment Core Value ────────────────────────────────────────────
@@ -962,22 +1052,22 @@ function renderBiz(d) {
       title: '估值',
       items: [
         { label: '市值',           value: fmtMktCap(d.marketCap) + ' USD' },
-        { label: '本益比 (TTM)',   value: d.pe        ? d.pe.toFixed(1) + 'x' : 'N/A' },
-        { label: '預期本益比',     value: d.forwardPe ? d.forwardPe.toFixed(1) + 'x' : 'N/A' },
-        { label: '每股盈餘 EPS',   value: d.eps       ? '$' + d.eps.toFixed(2) : 'N/A' },
-        { label: '預期 EPS',       value: d.fwdEps    ? '$' + d.fwdEps : 'N/A' },
-        { label: '年殖利率',       value: d.divYield  ? d.divYield + '%' : 'N/A' },
+        { label: '本益比 (TTM)',   value: d.pe        ? d.pe.toFixed(1) + 'x' : '<span class="na-val">—</span>' },
+        { label: '預期本益比',     value: d.forwardPe ? d.forwardPe.toFixed(1) + 'x' : '<span class="na-val">—</span>' },
+        { label: '每股盈餘 EPS',   value: d.eps       ? '$' + d.eps.toFixed(2) : '<span class="na-val">—</span>' },
+        { label: '預期 EPS',       value: d.fwdEps    ? '$' + d.fwdEps : '<span class="na-val">—</span>' },
+        { label: '年殖利率',       value: d.divYield  ? d.divYield + '%' : '<span class="na-val">—</span>' },
       ]
     },
     {
       title: '獲利能力',
       items: [
-        { label: '毛利率',         value: d.grossMargin  ? d.grossMargin + '%'  : 'N/A', color: d.grossMargin > 40 ? 'green' : '' },
-        { label: '淨利率',         value: d.profitMargin ? d.profitMargin + '%' : 'N/A', color: d.profitMargin > 15 ? 'green' : '' },
-        { label: 'ROE 股東報酬率', value: d.roe          ? d.roe + '%'          : 'N/A', color: d.roe > 15 ? 'green' : '' },
-        { label: '負債股東權益比', value: d.debtEquity   ? d.debtEquity         : 'N/A', color: d.debtEquity > 200 ? 'red' : '' },
-        { label: '法人持股',       value: d.instPct      ? d.instPct + '%'      : 'N/A' },
-        { label: '空頭比例',       value: d.shortPct     ? d.shortPct + '%'     : 'N/A', color: d.shortPct > 15 ? 'red' : '' },
+        { label: '毛利率',         value: d.grossMargin  ? d.grossMargin + '%'  : '<span class="na-val">—</span>', color: d.grossMargin > 40 ? 'green' : '' },
+        { label: '淨利率',         value: d.profitMargin ? d.profitMargin + '%' : '<span class="na-val">—</span>', color: d.profitMargin > 15 ? 'green' : '' },
+        { label: 'ROE 股東報酬率', value: d.roe          ? d.roe + '%'          : '<span class="na-val">—</span>', color: d.roe > 15 ? 'green' : '' },
+        { label: '負債股東權益比', value: d.debtEquity   ? d.debtEquity         : '<span class="na-val">—</span>', color: d.debtEquity > 200 ? 'red' : '' },
+        { label: '法人持股',       value: d.instPct      ? d.instPct + '%'      : '<span class="na-val">—</span>' },
+        { label: '空頭比例',       value: d.shortPct     ? d.shortPct + '%'     : '<span class="na-val">—</span>', color: d.shortPct > 15 ? 'red' : '' },
       ]
     },
     {
@@ -1320,6 +1410,208 @@ function renderInstitutional(d) {
       `).join('')}
     ` : ''}
   `);
+}
+
+// ── Crosshair Sync ────────────────────────────────────────────────────
+function setupCrosshair() {
+  const ids = ['priceChart', 'volumeChart', 'macdChart', 'rsiChart'];
+  const rsiStatic = [
+    {type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:70,y1:70,line:{color:'rgba(232,70,70,0.25)',width:1}},
+    {type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:30,y1:30,line:{color:'rgba(0,214,143,0.25)',width:1}},
+  ];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || !el._fullLayout) return;
+    el.on('plotly_hover', function(evtData) {
+      const pts = evtData.points;
+      if (!pts || !pts.length) return;
+      const xVal = pts[0].x;
+      const line = {type:'line',x0:xVal,x1:xVal,xref:'x',yref:'paper',y0:0,y1:1,
+                    line:{color:'rgba(255,255,255,0.2)',width:1,dash:'dot'}};
+      ids.filter(o => o !== id).forEach(oid => {
+        Plotly.relayout(oid, {shapes: oid === 'rsiChart' ? [...rsiStatic, line] : [line]});
+      });
+    });
+    el.on('plotly_unhover', function() {
+      ids.filter(o => o !== id).forEach(oid => {
+        Plotly.relayout(oid, {shapes: oid === 'rsiChart' ? rsiStatic : []});
+      });
+    });
+  });
+}
+
+// ── Watchlist ─────────────────────────────────────────────────────────
+function getWatchlist() { return JSON.parse(localStorage.getItem('wl') || '[]'); }
+function saveWatchlist(wl) { localStorage.setItem('wl', JSON.stringify(wl)); }
+
+function toggleWatch() {
+  if (!currentData) return;
+  const ticker = currentData.ticker;
+  const wl = getWatchlist();
+  const idx = wl.indexOf(ticker);
+  if (idx >= 0) wl.splice(idx, 1); else wl.unshift(ticker);
+  saveWatchlist(wl);
+  updateWatchBtn(ticker);
+  renderWatchlist();
+}
+
+function updateWatchBtn(ticker) {
+  const btn = $('watchBtn');
+  if (!btn) return;
+  const inWl = getWatchlist().includes(ticker);
+  btn.textContent = inWl ? '★ 已自選' : '+ 自選';
+  btn.className = 'watch-btn' + (inWl ? ' watched' : '');
+}
+
+function removeFromWatchlist(ticker) {
+  saveWatchlist(getWatchlist().filter(t => t !== ticker));
+  renderWatchlist();
+  if (currentData && currentData.ticker === ticker) updateWatchBtn(ticker);
+}
+
+function renderWatchlist() {
+  const wl = getWatchlist();
+  const bar = $('watchlistBar'), chips = $('watchlistChips');
+  if (!bar || !chips) return;
+  if (wl.length === 0) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  chips.innerHTML = wl.map(t =>
+    `<span class="wl-chip" onclick="loadStock('${t}')">${t}<span class="wl-rm" onclick="event.stopPropagation();removeFromWatchlist('${t}')">×</span></span>`
+  ).join('');
+}
+
+// ── Price Alerts ──────────────────────────────────────────────────────
+function getAlerts() { return JSON.parse(localStorage.getItem('priceAlerts') || '{}'); }
+function _saveAlerts(a) { localStorage.setItem('priceAlerts', JSON.stringify(a)); }
+
+function openAlertModal() {
+  if (!currentData) return;
+  const ticker = currentData.ticker;
+  $('alertModalTicker').textContent = ticker;
+  const a = (getAlerts()[ticker] || {});
+  $('alertAbove').value = a.above || '';
+  $('alertBelow').value = a.below || '';
+  setHTML('alertCurrentInfo', `現價 <strong style="color:var(--blue)">$${currentData.price.toFixed(2)}</strong>`);
+  setHTML('alertMsg', '');
+  show('alertModal');
+}
+
+function closeAlertModal() { hide('alertModal'); }
+
+function saveAlert() {
+  if (!currentData) return;
+  const ticker = currentData.ticker;
+  const above = parseFloat($('alertAbove').value);
+  const below = parseFloat($('alertBelow').value);
+  const alerts = getAlerts();
+  alerts[ticker] = {};
+  if (!isNaN(above) && above > 0) alerts[ticker].above = above;
+  if (!isNaN(below) && below > 0) alerts[ticker].below = below;
+  _saveAlerts(alerts);
+  setHTML('alertMsg', '<span style="color:var(--green)">提醒已儲存</span>');
+  updateAlertBadge();
+  setTimeout(closeAlertModal, 900);
+}
+
+function clearAlert() {
+  if (!currentData) return;
+  const alerts = getAlerts();
+  delete alerts[currentData.ticker];
+  _saveAlerts(alerts);
+  $('alertAbove').value = ''; $('alertBelow').value = '';
+  setHTML('alertMsg', '<span style="color:var(--text-dim)">提醒已清除</span>');
+  updateAlertBadge();
+  setTimeout(closeAlertModal, 700);
+}
+
+function checkAlerts(ticker, price) {
+  const a = (getAlerts()[ticker] || {});
+  const msgs = [];
+  if (a.above && price >= a.above) msgs.push(`${ticker} 已漲至 $${price.toFixed(2)}（目標 $${a.above}）`);
+  if (a.below && price <= a.below) msgs.push(`${ticker} 已跌至 $${price.toFixed(2)}（止損 $${a.below}）`);
+  return msgs;
+}
+
+function updateAlertBadge() {
+  const count = Object.keys(getAlerts()).length;
+  const dot = $('alertDot');
+  if (!dot) return;
+  if (count > 0) dot.classList.remove('hidden'); else dot.classList.add('hidden');
+}
+
+function showAlertBanner(msgs) {
+  const wrap = $('alertBannerWrap');
+  if (!wrap) return;
+  msgs.forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'alert-banner-item';
+    el.textContent = '提醒：' + m;
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+  });
+}
+
+// ── Stock Compare ─────────────────────────────────────────────────────
+let compareData = null;
+
+function toggleComparePanel() {
+  const panel = $('comparePanel');
+  const btn = $('cmpToggleBtn');
+  const hidden = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !hidden);
+  if (btn) btn.textContent = hidden ? '關閉比較模式' : '開啟比較模式';
+  if (!hidden) { compareData = null; setHTML('compareChart', ''); setHTML('compareStatus', ''); }
+}
+
+async function loadCompare() {
+  const t = ($('compareInput').value || '').trim().toUpperCase();
+  if (!t || !currentData) return;
+  setHTML('compareStatus', '<span style="color:var(--text-dim)">載入中...</span>');
+  try {
+    const r = await fetch('/api/stock/' + t);
+    const d = await r.json();
+    if (d.error) { setHTML('compareStatus', `<span style="color:var(--red)">${d.error}</span>`); return; }
+    compareData = d;
+    setHTML('compareStatus', '');
+    renderCompareChart();
+  } catch(e) {
+    setHTML('compareStatus', '<span style="color:var(--red)">載入失敗</span>');
+  }
+}
+
+function renderCompareChart() {
+  if (!currentData || !compareData) return;
+  const n = {'1M':21,'3M':63,'6M':126,'1Y':252}[currentPeriod] || 252;
+  const dates = currentData.dates.slice(-n);
+  const c1 = currentData.ohlcv.close.slice(-n);
+  const c2 = compareData.ohlcv.close.slice(-Math.min(n, compareData.ohlcv.close.length));
+  const b1 = c1.find(v => v != null), b2 = c2.find(v => v != null);
+  if (!b1 || !b2) return;
+  const norm1 = c1.map(v => v != null ? +((v/b1-1)*100).toFixed(2) : null);
+  const norm2 = c2.map(v => v != null ? +((v/b2-1)*100).toFixed(2) : null);
+  const d2dates = compareData.dates.slice(-Math.min(n, compareData.dates.length));
+  const BG='#0c1220', GRID='#121e30';
+  Plotly.newPlot('compareChart', [
+    {type:'scatter',mode:'lines',x:dates,y:norm1,name:currentData.ticker,
+     line:{color:'#3d8ef8',width:2},connectgaps:false},
+    {type:'scatter',mode:'lines',x:d2dates,y:norm2,name:compareData.ticker,
+     line:{color:'#f0b429',width:2},connectgaps:false},
+  ], {
+    paper_bgcolor:BG, plot_bgcolor:BG,
+    font:{color:'#6888a0',size:11}, showlegend:true,
+    legend:{orientation:'h',x:0,y:1.12,bgcolor:'rgba(0,0,0,0)',font:{size:11,color:'#8aaabf'}},
+    margin:{l:60,r:8,t:28,b:30},
+    yaxis:{gridcolor:GRID,tickfont:{color:'#6888a0'},tickformat:'+.1f',ticksuffix:'%',
+           side:'left',zeroline:true,zerolinecolor:'#1e3050'},
+    xaxis:{gridcolor:GRID,tickfont:{color:'#6888a0'},rangeslider:{visible:false}},
+    hovermode:'x unified',
+  }, {responsive:true,displayModeBar:false});
+}
+
+function clearCompare() {
+  compareData = null;
+  setHTML('compareChart', ''); setHTML('compareStatus', '');
+  const inp = $('compareInput'); if (inp) inp.value = '';
 }
 
 // ── News ──────────────────────────────────────────────────────────────
