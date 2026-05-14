@@ -1615,6 +1615,8 @@ function clearCompare() {
 }
 
 // ── News ──────────────────────────────────────────────────────────────
+let _newsTimer = null;
+
 async function loadNews(ticker) {
   setHTML('newsContainer', '<div class="news-loading">新聞載入中...</div>');
   try {
@@ -1641,6 +1643,11 @@ async function loadNews(ticker) {
   } catch(e) {
     setHTML('newsContainer', '<div class="news-empty">新聞載入失敗，請稍後再試</div>');
   }
+
+  clearInterval(_newsTimer);
+  _newsTimer = setInterval(() => {
+    if (currentData) loadNews(currentData.ticker);
+  }, 15 * 60 * 1000);
 }
 </script>
 
