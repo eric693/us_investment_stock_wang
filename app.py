@@ -56,6 +56,171 @@ def calc_bollinger(close, period=20, std_dev=2):
     std = close.rolling(period).std()
     return ma + std_dev * std, ma, ma - std_dev * std
 
+def calc_gmma(close):
+    """Guppy Multiple Moving Average — returns (short_vals, long_vals) as lists"""
+    short_periods = [3, 5, 8, 10, 12, 15]
+    long_periods  = [30, 35, 40, 45, 50, 60]
+    short_vals = [safe_float(close.ewm(span=p, adjust=False).mean().iloc[-1]) for p in short_periods]
+    long_vals  = [safe_float(close.ewm(span=p, adjust=False).mean().iloc[-1]) for p in long_periods]
+    return short_vals, long_vals
+
+
+# ── Signal Engines ────────────────────────────────────────────────────
+def _aggressive_signal(stock, ticker, price, name):
+    """🔥 激進爆發型：5分K帶量突破 + MACD 放大"""
+    hist = stock.history(period='5d', interval='5m')
+    if hist.empty or len(hist) < 30:
+        return _signal_wait(ticker, name, price, 'aggressive', '盤中資料不足，無法判斷')
+
+    close  = hist['Close']
+    volume = hist['Volume']
+
+    # MACD on 5-min bars
+    macd_s, sig_s, hist_s = calc_macd(close)
+    hist_val  = safe_float(hist_s.iloc[-1])
+    hist_prev = safe_float(hist_s.iloc[-2]) if len(hist_s) > 1 else 0
+    macd_bullish = hist_val > 0 and hist_val > hist_prev
+
+    # 20-bar SMA for stop loss reference
+    ma20 = close.rolling(20).mean()
+    ma20_val = safe_float(ma20.iloc[-1])
+
+    # Breakout: price > max of last 20 bars (excluding current)
+    recent_high = safe_float(hist['High'].iloc[-21:-1].max()) if len(hist) >= 21 else safe_float(hist['High'].max())
+    is_breakout = price > recent_high
+
+    # Volume: current > 1.5x rolling 20-bar mean
+    avg_vol  = safe_float(volume.rolling(20).mean().iloc[-1])
+    curr_vol = safe_float(volume.iloc[-1])
+    vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 0
+    vol_confirmed = vol_ratio >= 1.5
+
+    stop_loss = round(ma20_val * 0.985, 2)
+    bull_count = sum([is_breakout, vol_confirmed, macd_bullish])
+
+    if bull_count >= 2:
+        action, action_cn = 'BUY', '動能追擊！建議買進'
+        conf = '高' if bull_count == 3 else '中'
+        reason = (f'5分K帶量突破盤整區（量比 {vol_ratio:.1f}x），短線動能強勁。'
+                  f'MACD 柱狀翻紅放大，此為高勝率突破訊號，請注意控制部位風險。')
+    elif is_breakout and not vol_confirmed:
+        action, action_cn = 'WATCH', '盤整突破！量能待確認'
+        conf = '低'
+        reason = (f'價格突破近期高點 {recent_high:.2f} 元，但量能不足（量比 {vol_ratio:.1f}x < 1.5x）。'
+                  f'建議等待放量確認再進場，避免假突破。')
+    else:
+        action, action_cn = 'WAIT', '持續觀望，尚未觸發'
+        conf = '-'
+        reason = (f'未出現帶量突破信號。近期高點 {recent_high:.2f} 元，'
+                  f'當前量比 {vol_ratio:.1f}x，MACD {"多頭" if hist_val > 0 else "空頭"}。')
+
+    return {
+        'ticker': ticker, 'name': name, 'price': round(price, 2),
+        'profile': 'aggressive', 'action': action, 'actionCn': action_cn,
+        'confidence': conf, 'reason': reason, 'stopLoss': stop_loss,
+        'trailingStop': f'跌破 15分K MA20（{ma20_val:.2f} 元）時建議獲利了結',
+        'details': {
+            'breakout': is_breakout, 'breakoutLevel': round(recent_high, 2),
+            'volRatio': round(vol_ratio, 2), 'volConfirmed': vol_confirmed,
+            'macdBullish': macd_bullish, 'macdHist': round(hist_val, 4),
+            'ma20': round(ma20_val, 2),
+        },
+        'timeframe': '5分K',
+        'timestamp': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+def _steady_signal(stock, ticker, price, name):
+    """🛡️ 穩健保守型：日K GMMA 支撐 + MACD 底部轉強"""
+    hist = stock.history(period='6mo', interval='1d')
+    if hist.empty or len(hist) < 60:
+        return _signal_wait(ticker, name, price, 'steady', '歷史資料不足，無法判斷')
+
+    close  = hist['Close']
+    volume = hist['Volume']
+
+    # GMMA
+    short_vals, long_vals = calc_gmma(close)
+    long_min = min(long_vals); long_max = max(long_vals)
+
+    near_support  = long_min * 0.97 <= price <= long_max * 1.08
+    above_support = price > long_min
+    broke_support = price < long_min * 0.97
+
+    # MACD daily
+    macd_s, sig_s, hist_s = calc_macd(close)
+    macd_val   = safe_float(macd_s.iloc[-1])
+    macd_prev  = safe_float(macd_s.iloc[-2])
+    sig_val    = safe_float(sig_s.iloc[-1])
+    sig_prev   = safe_float(sig_s.iloc[-2])
+    hist_val   = safe_float(hist_s.iloc[-1])
+    hist_prev  = safe_float(hist_s.iloc[-2])
+
+    golden_cross  = macd_val > sig_val and macd_prev <= sig_prev
+    macd_turning  = hist_val > hist_prev and hist_val < 0      # improving from negative
+    macd_positive = hist_val > 0
+
+    # Volume shrinking (縮量打底)
+    recent_vol = safe_float(volume.iloc[-5:].mean())
+    older_vol  = safe_float(volume.iloc[-20:-5].mean())
+    vol_shrink = recent_vol < older_vol * 0.85 if older_vol > 0 else False
+
+    # RSI
+    rsi_val = safe_float(calc_rsi(close).iloc[-1])
+    oversold = rsi_val < 40
+
+    stop_loss = round(long_min * 0.96, 2)
+
+    if (near_support or above_support) and (golden_cross or macd_positive) and vol_shrink:
+        action, action_cn = 'BUY', '安全打底！逢低佈局'
+        conf = '高' if (golden_cross and vol_shrink) else '中'
+        reason = (f'日線回測 GMMA 長期均線支撐（{long_min:.2f}~{long_max:.2f} 元）不破，'
+                  f'量縮打底，MACD {"出現黃金交叉" if golden_cross else "底部轉強"}，'
+                  f'適合做中長線的資金投入。')
+    elif near_support and (macd_turning or oversold):
+        action, action_cn = 'WATCH', '接近支撐！持續觀察'
+        conf = '低'
+        reason = (f'股價逼近 GMMA 長期均線支撐區（{long_min:.2f}~{long_max:.2f} 元）。'
+                  f'{"RSI " + str(round(rsi_val, 0)) + " 超賣，" if oversold else ""}'
+                  f'MACD 底部出現轉強跡象，若量縮確認後可逢低佈局。')
+    elif broke_support:
+        action, action_cn = 'AVOID', '趨勢偏弱，暫時迴避'
+        conf = '-'
+        reason = (f'股價跌破 GMMA 長期均線支撐（{long_min:.2f} 元），趨勢轉弱。'
+                  f'建議等待重新站回長期均線後再考慮進場。')
+    else:
+        action, action_cn = 'WAIT', '持續觀望，尚未觸發'
+        conf = '-'
+        reason = (f'股價 {price:.2f} 元，GMMA 長期支撐 {long_min:.2f}~{long_max:.2f} 元。'
+                  f'未達最佳進場條件，建議尾盤再次確認日K型態。')
+
+    return {
+        'ticker': ticker, 'name': name, 'price': round(price, 2),
+        'profile': 'steady', 'action': action, 'actionCn': action_cn,
+        'confidence': conf, 'reason': reason, 'stopLoss': stop_loss,
+        'trailingStop': f'跌破前波大頸線（{stop_loss:.2f} 元）才建議停損，給予較寬防守空間',
+        'details': {
+            'gmmaLongMin': round(long_min, 2), 'gmmaLongMax': round(long_max, 2),
+            'gmmaShortMin': round(min(short_vals), 2),
+            'nearSupport': near_support, 'brokeSupport': broke_support,
+            'goldenCross': golden_cross, 'macdTurning': macd_turning,
+            'volShrink': vol_shrink, 'rsi': round(rsi_val, 1),
+        },
+        'timeframe': '日K',
+        'timestamp': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+def _signal_wait(ticker, name, price, profile, reason):
+    return {
+        'ticker': ticker, 'name': name, 'price': round(price, 2),
+        'profile': profile, 'action': 'WAIT', 'actionCn': '持續觀望',
+        'confidence': '-', 'reason': reason, 'stopLoss': 0,
+        'trailingStop': '', 'details': {},
+        'timeframe': '5分K' if profile == 'aggressive' else '日K',
+        'timestamp': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+    }
+
 def calc_returns(hist):
     c   = hist['Close']
     cur = safe_float(c.iloc[-1])
@@ -1382,6 +1547,47 @@ def get_tw_realtime(ticker):
         }
         _cache_set(f'tw_rt:{ticker}', result, ttl=30)
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tw/signal/<ticker>')
+def get_tw_signal(ticker):
+    ticker  = tw_normalize(ticker)
+    profile = request.args.get('profile', 'steady')
+    cached  = _cache_get(f'tw_sig:{ticker}:{profile}')
+    if cached: return jsonify(cached)
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+        price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+        name  = info.get('shortName', info.get('longName', ticker))
+        result = (_aggressive_signal(stock, ticker, price, name)
+                  if profile == 'aggressive'
+                  else _steady_signal(stock, ticker, price, name))
+        _cache_set(f'tw_sig:{ticker}:{profile}', result, ttl=120)
+        return jsonify(result)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tw/notify/line', methods=['POST'])
+def send_line_notify():
+    try:
+        data    = request.json or {}
+        token   = data.get('token', '').strip()
+        message = data.get('message', '').strip()
+        if not token or not message:
+            return jsonify({'error': 'token and message required'}), 400
+        r = _requests.post(
+            'https://notify-api.line.me/api/notify',
+            headers={'Authorization': f'Bearer {token}'},
+            data={'message': '\n' + message},
+            timeout=10
+        )
+        return jsonify({'status': r.status_code, 'ok': r.status_code == 200,
+                        'msg': r.text[:200]})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

@@ -62,6 +62,67 @@
 .rt-dot { width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.5s infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 .rt-off .rt-dot { background:var(--text-dim); animation:none; }
+/* ── 智慧盯盤監控面板 ───────────────────────────────────────────── */
+.monitor-panel { display:flex; flex-direction:column; gap:14px; }
+.monitor-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.monitor-label { font-size:0.75rem; color:var(--text-dim); min-width:60px; font-weight:700; letter-spacing:.4px; }
+.mode-btn-group { display:flex; gap:6px; }
+.mode-btn { padding:5px 16px; font-size:0.78rem; font-weight:700; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); cursor:pointer; transition:all .15s; }
+.mode-btn.active { color:#fff; background:var(--accent); border-color:var(--accent); }
+.mode-btn:hover:not(.active) { border-color:var(--text-mid); color:var(--text-mid); }
+.profile-select-wrap { display:flex; gap:8px; align-items:center; animation:fadeIn .25s; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+.profile-btn { display:flex; align-items:center; gap:6px; padding:7px 18px; font-size:0.82rem; font-weight:800; border-radius:8px; border:2px solid transparent; cursor:pointer; transition:all .2s; background:rgba(255,255,255,.04); color:var(--text-dim); }
+.profile-btn.aggressive { border-color:rgba(232,70,70,.25); }
+.profile-btn.aggressive.active { background:rgba(232,70,70,.15); color:#e84646; border-color:#e84646; box-shadow:0 0 12px rgba(232,70,70,.2); }
+.profile-btn.steady     { border-color:rgba(61,142,248,.25); }
+.profile-btn.steady.active     { background:rgba(61,142,248,.15); color:#3d8ef8; border-color:#3d8ef8; box-shadow:0 0 12px rgba(61,142,248,.2); }
+.profile-btn:hover { filter:brightness(1.2); }
+.scan-btn { padding:6px 20px; font-size:0.78rem; font-weight:800; background:var(--accent); border:none; border-radius:6px; color:#fff; cursor:pointer; transition:all .15s; margin-left:auto; }
+.scan-btn:hover { filter:brightness(1.15); }
+.scan-btn:disabled { opacity:.5; cursor:not-allowed; }
+.scan-btn.scanning { animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+/* Signal card */
+.signal-card { border-radius:10px; padding:18px 20px; border:1px solid var(--card-bd); background:#060c18; margin-top:4px; }
+.signal-card.sig-buy    { border-color:rgba(0,214,143,.3); background:rgba(0,214,143,.04); }
+.signal-card.sig-watch  { border-color:rgba(240,180,41,.3); background:rgba(240,180,41,.04); }
+.signal-card.sig-wait   { border-color:rgba(100,130,160,.2); }
+.signal-card.sig-avoid  { border-color:rgba(232,70,70,.3); background:rgba(232,70,70,.04); }
+.sig-header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+.sig-icon { font-size:1.6rem; }
+.sig-title { font-size:1.05rem; font-weight:800; }
+.sig-title.sig-buy   { color:#00d68f; }
+.sig-title.sig-watch { color:#f0b429; }
+.sig-title.sig-wait  { color:var(--text-dim); }
+.sig-title.sig-avoid { color:#e84646; }
+.sig-conf-badge { padding:2px 10px; border-radius:10px; font-size:0.7rem; font-weight:800; }
+.sig-conf-hi  { background:rgba(0,214,143,.15); color:#00d68f; }
+.sig-conf-mid { background:rgba(240,180,41,.15); color:#f0b429; }
+.sig-conf-lo  { background:rgba(100,130,160,.1);  color:#8aaabf; }
+.sig-conf-na  { background:rgba(100,130,160,.1);  color:#8aaabf; }
+.sig-tf-badge { padding:2px 8px; border-radius:5px; font-size:0.7rem; background:rgba(255,255,255,.06); color:var(--text-dim); }
+.sig-time { font-size:0.7rem; color:var(--text-dim); margin-left:auto; }
+.sig-reason { font-size:0.84rem; color:var(--text-mid); line-height:1.7; margin-bottom:12px; padding:10px 14px; background:rgba(255,255,255,.03); border-radius:7px; border-left:3px solid rgba(61,142,248,.4); }
+.sig-details-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; margin-bottom:12px; }
+.sig-detail-item { background:rgba(255,255,255,.04); border-radius:6px; padding:7px 10px; }
+.sig-detail-label { font-size:0.67rem; color:var(--text-dim); margin-bottom:3px; }
+.sig-detail-val { font-size:0.84rem; font-weight:700; color:var(--text); }
+.sig-stop { display:flex; align-items:center; gap:8px; padding:8px 14px; background:rgba(232,70,70,.06); border:1px solid rgba(232,70,70,.15); border-radius:7px; font-size:0.78rem; color:var(--text-mid); margin-bottom:10px; }
+.sig-stop strong { color:#e84646; }
+.sig-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.sig-line-btn { padding:6px 16px; font-size:0.76rem; font-weight:700; background:rgba(0,214,143,.1); border:1px solid rgba(0,214,143,.3); border-radius:6px; color:#00d68f; cursor:pointer; transition:all .15s; }
+.sig-line-btn:hover { background:rgba(0,214,143,.2); }
+.sig-auto-badge { padding:5px 12px; font-size:0.72rem; color:var(--text-dim); background:rgba(255,255,255,.04); border-radius:6px; display:flex; align-items:center; gap:5px; }
+/* LINE settings */
+.line-settings-box { background:#060c18; border:1px solid var(--card-bd); border-radius:8px; padding:12px 14px; }
+.line-settings-title { font-size:0.72rem; color:var(--text-dim); font-weight:700; margin-bottom:8px; letter-spacing:.4px; }
+.line-token-row { display:flex; gap:8px; align-items:center; }
+.line-token-input { flex:1; padding:6px 10px; background:#0c1220; border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:0.78rem; }
+.line-token-input:focus { outline:none; border-color:var(--accent); }
+.line-save-btn { padding:6px 14px; background:var(--accent); border:none; border-radius:5px; color:#fff; font-size:0.76rem; font-weight:700; cursor:pointer; white-space:nowrap; }
+.line-save-btn:hover { filter:brightness(1.15); }
+.line-status { font-size:0.72rem; margin-top:5px; }
 /* ── TradingView Chart ──────────────────────────────────────────── */
 .tv-card { padding:0; overflow:hidden; border-radius:10px; }
 .tv-toolbar { display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--card-bg); border-bottom:1px solid var(--card-bd); flex-wrap:wrap; }
@@ -338,6 +399,52 @@
         <div class="sg-item"><span class="sg-l">市值</span><span class="sg-v"       id="sMktCap"></span></div>
         <div class="sg-item"><span class="sg-l">Beta</span><span class="sg-v"       id="sBeta"></span></div>
         <div class="sg-item"><span class="sg-l">殖利率</span><span class="sg-v"     id="sDiv"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MONITOR. 智慧盯盤設定 -->
+  <div class="card hidden" id="monitorCard">
+    <div class="card-title" style="display:flex;align-items:center;gap:10px">
+      智慧盯盤設定
+      <span id="monitorAutoLabel" class="rt-indicator rt-off" style="margin-left:0"><span class="rt-dot"></span><span id="monitorAutoText">已停止</span></span>
+    </div>
+    <div class="monitor-panel">
+      <!-- Row 1: Mode -->
+      <div class="monitor-row">
+        <span class="monitor-label">操作模式</span>
+        <div class="mode-btn-group">
+          <button class="mode-btn active" id="modeOff"   onclick="setMonitorMode('off')">⏸ 關閉</button>
+          <button class="mode-btn"        id="modeAuto"  onclick="setMonitorMode('auto')">🤖 智慧自動</button>
+        </div>
+      </div>
+      <!-- Row 2: Profile (only when auto) -->
+      <div class="monitor-row hidden" id="profileRow">
+        <span class="monitor-label">策略性格</span>
+        <div class="profile-select-wrap">
+          <button class="profile-btn aggressive active" id="profileAggressive" onclick="setProfile('aggressive')">
+            🔥 激進爆發型
+          </button>
+          <button class="profile-btn steady" id="profileSteady" onclick="setProfile('steady')">
+            🛡️ 穩健保守型
+          </button>
+        </div>
+        <button class="scan-btn" id="scanBtn" onclick="manualScan()">⚡ 立即掃描</button>
+      </div>
+      <!-- Row 3: Profile desc -->
+      <div id="profileDesc" class="hidden" style="font-size:0.78rem;color:var(--text-dim);padding:6px 14px;background:rgba(255,255,255,.03);border-radius:6px;line-height:1.6"></div>
+      <!-- Row 4: Signal Card -->
+      <div id="signalCard" class="hidden"></div>
+      <!-- Row 5: LINE Settings -->
+      <div id="lineSettingsWrap" class="hidden">
+        <div class="line-settings-box">
+          <div class="line-settings-title">LINE 通知設定（選填）</div>
+          <div class="line-token-row">
+            <input id="lineTokenInput" class="line-token-input" type="password" placeholder="貼上 LINE Notify Token...">
+            <button class="line-save-btn" onclick="saveLineToken()">儲存</button>
+          </div>
+          <div id="lineStatusMsg" class="line-status"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -848,6 +955,8 @@ async function loadMarket() {
 // ── Load Stock ──────────────────────────────────────────────────────
 async function loadStock(raw) {
   if (_rtEnabled) toggleRealtime();
+  clearInterval(_monitorTimer); _monitorTimer = null;
+  _monitorMode = 'off'; _lastSignal = null;
   const dispTicker = displayTW(normalizeTW(raw));
   $('tickerInput').value = dispTicker;
   hide('welcome'); hide('dashboard'); hide('errorDiv');
@@ -918,6 +1027,7 @@ function changePeriod(period) {
 // ── Main Render ─────────────────────────────────────────────────────
 function renderDashboard(d) {
   renderHeader(d);
+  renderMonitorPanel(d);
   renderConclusions(d);
   renderInvestValue(d);
   renderETF(d);
@@ -970,6 +1080,227 @@ function renderHeader(d) {
   $('sMktCap').textContent = fmtTWMktCap(d.marketCap);
   $('sBeta').textContent   = d.beta ? d.beta.toFixed(2) : 'N/A';
   $('sDiv').textContent    = d.divYield ? d.divYield.toFixed(2) + '%' : 'N/A';
+}
+
+// ── 智慧盯盤 Monitor Engine ─────────────────────────────────────────────
+let _monitorMode    = 'off';
+let _monitorProfile = 'aggressive';
+let _monitorTimer   = null;
+let _lastSignal     = null;
+
+const PROFILE_DESC = {
+  aggressive: '⚡ 採 5分K，追突破不追高點，帶量突破即刻通知。適合：00631L、00670L 等動能強標的。停利：跌破 15分K MA20。',
+  steady:     '⏰ 採日K，等回測 GMMA 長期均線支撐，量縮打底確認後才通知（通常尾盤後）。適合：0050、0056、00878 存股標的。停損：跌破前波大頸線。',
+};
+
+function renderMonitorPanel(d) {
+  show('monitorCard');
+  // Restore saved settings for this ticker
+  const saved = _loadMonitorSettings(d.ticker);
+  _monitorMode    = saved.mode    || 'off';
+  _monitorProfile = saved.profile || 'aggressive';
+  _applyModeUI();
+  _applyProfileUI();
+  // Restore LINE token display
+  const tok = _getLineToken();
+  if (tok) { $('lineTokenInput').value = tok; setHTML('lineStatusMsg', '<span style="color:var(--green)">✓ Token 已儲存</span>'); }
+}
+
+function setMonitorMode(mode) {
+  _monitorMode = mode;
+  _saveMonitorSettings(currentData.ticker, { mode, profile: _monitorProfile });
+  _applyModeUI();
+  // Start/stop auto scan
+  clearInterval(_monitorTimer); _monitorTimer = null;
+  if (mode === 'auto') {
+    _monitorTimer = setInterval(manualScan, 5 * 60 * 1000);
+    manualScan(); // immediate scan
+  } else {
+    _setAutoLabel(false);
+  }
+}
+
+function setProfile(profile) {
+  _monitorProfile = profile;
+  _saveMonitorSettings(currentData.ticker, { mode: _monitorMode, profile });
+  _applyProfileUI();
+  if (_monitorMode === 'auto') manualScan();
+}
+
+function _applyModeUI() {
+  $('modeOff').classList.toggle('active',  _monitorMode === 'off');
+  $('modeAuto').classList.toggle('active', _monitorMode === 'auto');
+  const showAuto = _monitorMode === 'auto';
+  $('profileRow').classList.toggle('hidden',       !showAuto);
+  $('profileDesc').classList.toggle('hidden',      !showAuto);
+  $('lineSettingsWrap').classList.toggle('hidden', !showAuto);
+  if (!showAuto) { hide('signalCard'); $('signalCard').innerHTML = ''; _setAutoLabel(false); }
+}
+
+function _applyProfileUI() {
+  $('profileAggressive').classList.toggle('active', _monitorProfile === 'aggressive');
+  $('profileSteady').classList.toggle('active',     _monitorProfile === 'steady');
+  setHTML('profileDesc', PROFILE_DESC[_monitorProfile] || '');
+}
+
+function _setAutoLabel(on, text='') {
+  const ind = $('monitorAutoLabel'), lbl = $('monitorAutoText');
+  if (on) { ind.classList.remove('rt-off'); lbl.textContent = text || '掃描中'; }
+  else     { ind.classList.add('rt-off');   lbl.textContent = '已停止'; }
+}
+
+async function manualScan() {
+  if (!currentData) return;
+  const btn = $('scanBtn');
+  if (btn) { btn.disabled = true; btn.classList.add('scanning'); btn.textContent = '掃描中...'; }
+  _setAutoLabel(true, '掃描中...');
+  try {
+    const ticker = currentData.ticker;
+    const r = await fetch(`/api/tw/signal/${encodeURIComponent(ticker)}?profile=${_monitorProfile}`);
+    const sig = await r.json();
+    if (sig.error) throw new Error(sig.error);
+    _lastSignal = sig;
+    _renderSignalCard(sig);
+    _setAutoLabel(true, new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}) + ' 掃描');
+    // Auto-notify if BUY signal
+    if (sig.action === 'BUY' && _getLineToken()) {
+      _autoLineNotify(sig);
+    }
+  } catch(e) {
+    _setAutoLabel(false);
+    show('signalCard');
+    setHTML('signalCard', `<div class="signal-card sig-wait"><div style="color:var(--red);font-size:0.82rem">掃描失敗：${e.message}</div></div>`);
+  }
+  if (btn) { btn.disabled = false; btn.classList.remove('scanning'); btn.textContent = '⚡ 立即掃描'; }
+}
+
+function _renderSignalCard(sig) {
+  const card = $('signalCard');
+  card.classList.remove('hidden');
+
+  const profileIcon = sig.profile === 'aggressive' ? '🔥' : '🛡️';
+  const profileName = sig.profile === 'aggressive' ? '激進爆發型' : '穩健保守型';
+  const actionCls   = {BUY:'sig-buy', WATCH:'sig-watch', WAIT:'sig-wait', AVOID:'sig-avoid'}[sig.action] || 'sig-wait';
+  const confCls     = {高:'sig-conf-hi', 中:'sig-conf-mid', 低:'sig-conf-lo'}[sig.confidence] || 'sig-conf-na';
+
+  // Build details grid
+  const det = sig.details || {};
+  const detRows = sig.profile === 'aggressive' ? [
+    { label:'近期盤整高點', val: det.breakoutLevel ? det.breakoutLevel + ' 元' : 'N/A' },
+    { label:'帶量突破',     val: det.breakout ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--red)">✗ 否</span>' },
+    { label:'量比',         val: det.volRatio ? det.volRatio + 'x' : 'N/A', color: det.volConfirmed ? 'var(--green)' : '' },
+    { label:'MACD 柱狀',   val: det.macdHist !== undefined ? det.macdHist : 'N/A', color: det.macdHist > 0 ? 'var(--green)' : 'var(--red)' },
+    { label:'MA20（止損參考）', val: det.ma20 ? det.ma20 + ' 元' : 'N/A' },
+  ] : [
+    { label:'GMMA 長期支撐', val: det.gmmaLongMin ? det.gmmaLongMin + '~' + det.gmmaLongMax + ' 元' : 'N/A' },
+    { label:'GMMA 短期均',   val: det.gmmaShortMin ? det.gmmaShortMin + ' 元' : 'N/A' },
+    { label:'在支撐區',      val: det.nearSupport ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--text-dim)">否</span>' },
+    { label:'MACD 黃金交叉', val: det.goldenCross ? '<span style="color:var(--green)">✓ 出現</span>' : '<span style="color:var(--text-dim)">未出現</span>' },
+    { label:'量縮打底',      val: det.volShrink ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--text-dim)">否</span>' },
+    { label:'RSI',           val: det.rsi !== undefined ? det.rsi : 'N/A', color: det.rsi < 40 ? 'var(--green)' : det.rsi > 70 ? 'var(--red)' : '' },
+  ];
+
+  const detHTML = detRows.map(d => `
+    <div class="sig-detail-item">
+      <div class="sig-detail-label">${d.label}</div>
+      <div class="sig-detail-val" ${d.color ? `style="color:${d.color}"` : ''}>${d.val}</div>
+    </div>`).join('');
+
+  card.innerHTML = `
+    <div class="signal-card ${actionCls}">
+      <div class="sig-header">
+        <span class="sig-icon">${profileIcon}</span>
+        <div>
+          <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:2px">AI 智慧交易建議 · ${profileName}</div>
+          <div class="sig-title ${actionCls}">${sig.actionCn}</div>
+        </div>
+        <span class="sig-conf-badge ${confCls}">信心：${sig.confidence === '-' ? 'N/A' : sig.confidence}</span>
+        <span class="sig-tf-badge">${sig.timeframe}</span>
+        <span class="sig-time">${sig.timestamp}</span>
+      </div>
+      <div class="sig-reason">${sig.reason}</div>
+      <div class="sig-details-grid">${detHTML}</div>
+      ${sig.stopLoss > 0 ? `
+      <div class="sig-stop">
+        🛑 <div><strong>移動停利/停損：</strong>${sig.trailingStop || '止損 ' + sig.stopLoss + ' 元'}</div>
+      </div>` : ''}
+      <div class="sig-actions">
+        <button class="sig-line-btn" onclick="sendSignalToLine()">📲 發送 LINE 通知</button>
+        <div class="sig-auto-badge">
+          <span class="rt-dot ${_monitorMode === 'auto' ? '' : 'rt-off'}"></span>
+          ${_monitorMode === 'auto' ? '自動掃描每 5 分鐘' : '手動掃描模式'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function sendSignalToLine() {
+  if (!_lastSignal) return;
+  const tok = _getLineToken();
+  if (!tok) {
+    alert('請先在下方設定 LINE Notify Token'); return;
+  }
+  _sendLine(tok, _formatLineMsg(_lastSignal));
+}
+
+async function _autoLineNotify(sig) {
+  const tok = _getLineToken();
+  if (!tok) return;
+  await _sendLine(tok, _formatLineMsg(sig));
+}
+
+async function _sendLine(token, message) {
+  try {
+    const r = await fetch('/api/tw/notify/line', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ token, message }),
+    });
+    const d = await r.json();
+    const el = $('lineStatusMsg');
+    if (d.ok) {
+      if (el) setHTML('lineStatusMsg', '<span style="color:var(--green)">✓ LINE 通知已發送</span>');
+    } else {
+      if (el) setHTML('lineStatusMsg', `<span style="color:var(--red)">發送失敗：${d.msg || d.error || '未知錯誤'}</span>`);
+    }
+  } catch(e) {
+    const el = $('lineStatusMsg');
+    if (el) setHTML('lineStatusMsg', `<span style="color:var(--red)">網路錯誤：${e.message}</span>`);
+  }
+}
+
+function _formatLineMsg(sig) {
+  const icon = sig.profile === 'aggressive' ? '🔥' : '🛡️';
+  const profileName = sig.profile === 'aggressive' ? '激進爆發型' : '穩健保守型';
+  return `🤖 【AI 智慧交易建議 - ${icon}${profileName}】
+標的：${sig.displayTicker || sig.ticker.replace('.TW','').replace('.TWO','')} ${sig.name}
+現價：${sig.price} 元
+建議動作：【${sig.actionCn}】
+系統判定：${sig.reason}
+止損參考：${sig.stopLoss > 0 ? sig.stopLoss + ' 元' : 'N/A'}
+⏰ 掃描時間：${sig.timestamp}
+—— 僅供參考，投資有風險 ——`;
+}
+
+function saveLineToken() {
+  const tok = ($('lineTokenInput').value || '').trim();
+  localStorage.setItem('line_notify_token', tok);
+  setHTML('lineStatusMsg', tok
+    ? '<span style="color:var(--green)">✓ Token 已儲存（本機）</span>'
+    : '<span style="color:var(--text-dim)">Token 已清除</span>');
+}
+
+function _getLineToken() { return localStorage.getItem('line_notify_token') || ''; }
+
+function _saveMonitorSettings(ticker, settings) {
+  const all = JSON.parse(localStorage.getItem('monitor_settings') || '{}');
+  all[ticker] = settings;
+  localStorage.setItem('monitor_settings', JSON.stringify(all));
+}
+
+function _loadMonitorSettings(ticker) {
+  const all = JSON.parse(localStorage.getItem('monitor_settings') || '{}');
+  return all[ticker] || { mode: 'off', profile: 'aggressive' };
 }
 
 // ── TradingView Chart ───────────────────────────────────────────────────
