@@ -7,6 +7,7 @@ import time
 import requests as _requests
 from xml.etree import ElementTree as ET
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
@@ -283,81 +284,116 @@ def gen_conclusions(price, ma5, ma20, ma60, macd, dea, rsi, vol_ratio):
 
 def gen_catalysts(price, ma5, ma20, ma60, macd, dea, rsi, vol_ratio, week52h, info):
     cats = []
+
+    # ── Technical catalysts (objective, data-driven) ──
     if price >= week52h * 0.97:
-        cats.append({'num': 1, 'text': '突破或接近52週高點，歷史強勢突破信號',
-                     'sub': '價格創新高，市場認可度顯著提升'})
+        cats.append({'num': 1, 'text': '突破或接近52週高點，強勢創高訊號',
+                     'sub': '價格創歷史新高，市場認可度顯著提升，突破後動能往往延續'})
     if macd > dea and macd > 0:
-        cats.append({'num': len(cats)+1, 'text': 'MACD 技術面轉強，動能向上',
-                     'sub': '金叉在零軸上方，短中期均偏多'})
+        cats.append({'num': len(cats)+1, 'text': 'MACD 金叉且在零軸上方，多頭動能確立',
+                     'sub': '短中期均偏多，技術訊號轉強，趨勢延續性高'})
     if vol_ratio >= 1.5:
-        cats.append({'num': len(cats)+1, 'text': f'成交量異常放大（{vol_ratio:.1f}x 均量）',
-                     'sub': '機構資金積極布局跡象明顯'})
+        cats.append({'num': len(cats)+1, 'text': f'成交量放大 {vol_ratio:.1f}x，資金積極進場',
+                     'sub': '量能配合價格上漲，籌碼結構改善，機構介入意願增強'})
     if price > ma5 > ma20 > ma60:
-        cats.append({'num': len(cats)+1, 'text': '均線多頭排列完整，趨勢強勢',
-                     'sub': '短中長期均線支撐，回撤布局機會'})
+        cats.append({'num': len(cats)+1, 'text': '均線多頭排列完整，中長期趨勢向上',
+                     'sub': '短中長期均線同向支撐，回撤即布局機會，趨勢延續性高'})
     target = safe_float(info.get('targetMeanPrice', 0))
     if target > price * 1.1:
-        cats.append({'num': len(cats)+1, 'text': f'分析師目標價 ${target:.2f}，具上漲空間',
-                     'sub': f'較現價有 {(target/price-1)*100:.0f}% 潛在漲幅'})
-    sector    = info.get('sector', '')
-    industry  = info.get('industry', '')
-    # US stocks: yfinance returns dividendYield as decimal (0.0665 = 6.65%)
-    div_yield = safe_float(info.get('dividendYield', 0)) * 100
-    inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
+        upside = (target / price - 1) * 100
+        cats.append({'num': len(cats)+1,
+                     'text': f'分析師共識目標 ${target:.2f}（潛在漲幅 +{upside:.0f}%）',
+                     'sub': '華爾街分析師看好後市，平均目標價相對現價仍有顯著上漲空間'})
+
+    # ── Fundamental catalysts — only include when data is genuinely positive ──
+    sector     = info.get('sector', '')
+    industry   = info.get('industry', '')
+    div_yield  = safe_float(info.get('dividendYield', 0)) * 100   # decimal → %
+    inst_pct   = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
     rev_growth = round(safe_float(info.get('revenueGrowth', 0)) * 100, 1)
+    fwd_pe     = safe_float(info.get('forwardPE', 0))
+    pe         = safe_float(info.get('trailingPE', 0))
+    rec        = info.get('recommendationKey', '')
+    beta       = safe_float(info.get('beta', 0))
 
+    extras = []
+
+    # Sector — neutral, fact-based description (no macro timing claims)
     if 'Semiconductor' in industry or 'Technology' in sector:
-        item_sector = {'text': 'AI / 半導體週期上行，需求能見度高',
-                       'sub':  '全球 AI 基建需求強勁，數據中心與邊緣運算訂單持續擴大'}
+        extras.append({'text': 'AI / 半導體長期成長邏輯清晰，產業地位穩固',
+                       'sub':  '受惠全球算力需求擴張，數據中心與終端裝置需求雙驅動'})
     elif 'Health' in sector:
-        item_sector = {'text': '生技醫療長期趨勢受益，研發管線具催化潛力',
-                       'sub':  '老齡化人口驅動需求，創新藥品審批進程順利'}
+        extras.append({'text': '醫療健康產業具防禦特性，長期成長確定',
+                       'sub':  '老齡化社會驅動醫療支出長期成長，研發管線具催化潛力'})
     elif 'Financial' in sector:
-        item_sector = {'text': '高利率環境有利淨利差，金融股盈利能力強',
-                       'sub':  '利率高位支撐銀行息差收益，貸款品質穩健'}
+        extras.append({'text': '金融業務多元化，利差與手續費收入組合穩定',
+                       'sub':  '業務橫跨零售銀行、財富管理、資本市場，收入來源分散'})
     elif 'Energy' in sector:
-        item_sector = {'text': '能源供需緊張，盈利與現金流充裕',
-                       'sub':  '原油/天然氣高位，公司資本回報計畫積極'}
+        extras.append({'text': '能源公司現金流充沛，資本回報計畫積極',
+                       'sub':  '高自由現金流支撐股票回購與股息計畫，股東回報率具競爭力'})
     elif 'Consumer' in sector:
-        item_sector = {'text': '消費需求韌性佳，定價能力與市佔率穩固',
-                       'sub':  '消費者支出維持正成長，品牌護城河保護利潤率'}
-    else:
-        item_sector = {'text': '產業趨勢受益，長期成長邏輯明確',
-                       'sub':  '市場份額持續擴大，商業模式優化'}
+        extras.append({'text': '品牌護城河穩固，定價能力強',
+                       'sub':  '高品牌忠誠度保護利潤率，消費者支出需求具韌性'})
+    elif 'Communication' in sector:
+        extras.append({'text': '平台效應顯著，用戶黏著度高',
+                       'sub':  '數位廣告市場份額持續擴大，AI 整合提升商業化效率'})
 
-    if rev_growth > 15:
-        item_growth = {'text': f'營收年增 {rev_growth:.0f}%，業績動能強勁',
-                       'sub':  '財報持續超預期，機構法人上調目標價，成長確定性高'}
+    # Revenue growth — only if genuinely positive
+    if rev_growth > 20:
+        extras.append({'text': f'營收年增 {rev_growth:.0f}%，業績高速成長',
+                       'sub':  '高速成長印證商業模式可行，機構法人持續上調目標價'})
+    elif rev_growth > 5:
+        extras.append({'text': f'營收成長 {rev_growth:.0f}%，基本面持續改善',
+                       'sub':  '成長軌道持續，盈利品質穩定，估值有基本面支撐'})
     elif rev_growth > 0:
-        item_growth = {'text': f'營收穩健成長 {rev_growth:.0f}%，基本面支撐',
-                       'sub':  '成長軌道持續，估值有基本面背書'}
-    else:
-        item_growth = {'text': '技術面關鍵位置蓄積，突破動能累積',
-                       'sub':  '觀察成交量配合情況確認突破方向'}
+        extras.append({'text': f'營收小幅成長 {rev_growth:.1f}%，業績逐步回穩',
+                       'sub':  '成長動能初步回升，若下季加速將成強力催化劑'})
+    # rev_growth <= 0：不加入，負成長不是催化劑
 
+    # Institutional holdings — only if meaningfully high
     if inst_pct >= 60:
-        item_inst = {'text': f'機構持股 {inst_pct:.0f}%，主力資金深度佈局',
-                     'sub':  '大型機構長線持有，護盤意願強，籌碼結構穩定'}
-    elif inst_pct >= 30:
-        item_inst = {'text': f'機構持股 {inst_pct:.0f}%，法人籌碼穩固',
-                     'sub':  '機構積極佈局，長線資金介入增強價格支撐'}
-    else:
-        item_inst = {'text': '法人持股動向值得關注，持續觀察籌碼面',
-                     'sub':  '留意機構大額進出異動，籌碼面變化影響短期走勢'}
+        extras.append({'text': f'機構持股 {inst_pct:.0f}%，主力資金深度佈局',
+                       'sub':  '大型機構長線持有，籌碼結構穩定，護盤意願強'})
+    elif inst_pct >= 40:
+        extras.append({'text': f'機構持股 {inst_pct:.0f}%，法人籌碼穩固',
+                       'sub':  '機構持倉比重高，短期賣壓有限，股價支撐較強'})
+    # inst_pct < 40：不加入，低機構持股不是催化劑
 
+    # Dividend — only if actually paying
     if div_yield >= 4:
-        item_div = {'text': f'高殖利率 {div_yield:.1f}%，防禦配置首選',
-                    'sub':  '高股息提供下跌緩衝，適合穩健型投資人'}
+        extras.append({'text': f'高殖利率 {div_yield:.1f}%，現金流收益豐厚',
+                       'sub':  '穩定高股息提供下跌緩衝，吸引退休金與長線存股資金'})
     elif div_yield >= 1:
-        item_div = {'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
-                    'sub':  '定期現金股利，顯示公司財務健康與回饋股東意願'}
-    else:
-        item_div = {'text': '成長型公司，資本優先投入業務擴張',
-                    'sub':  '公司將資本配置於高回報成長項目，追求 EPS 長期提升'}
+        extras.append({'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
+                       'sub':  '定期現金股利顯示公司財務健康，長線資金偏好'})
+    # div_yield < 1：不加入，無配息不是催化劑
 
-    extras = [item_sector, item_growth, item_inst, item_div]
-    while len(cats) < 4:
-        cats.append({'num': len(cats)+1, **extras[len(cats) % len(extras)]})
+    # Valuation — only if forward PE is attractive
+    if 0 < fwd_pe < 18 and (pe <= 0 or fwd_pe < pe * 0.85):
+        extras.append({'text': f'預估本益比 {fwd_pe:.1f}x，估值具吸引力',
+                       'sub':  '前瞻本益比相對合理，盈利成長空間尚未完全被市場定價'})
+    elif rec in ('buy', 'strong_buy'):
+        extras.append({'text': '分析師評級偏向買進，市場共識看好後市',
+                       'sub':  '主流券商維持或上調評級，基本面與技術面催化劑逐步匯聚'})
+
+    # Fill to 4 using genuine positives
+    for item in extras:
+        if len(cats) >= 4:
+            break
+        cats.append({'num': len(cats) + 1, **item})
+
+    # Fallback: add factual items if still short (avoid fake positives)
+    if len(cats) < 2:
+        ref_pe = fwd_pe if fwd_pe > 0 else pe
+        if ref_pe > 0:
+            cats.append({'num': len(cats)+1,
+                         'text': f'本益比 {ref_pe:.1f}x，與同業比較評估合理性',
+                         'sub':  '建議對照產業平均本益比，判斷當前估值是否具佈局價值'})
+        if beta > 0 and len(cats) < 2:
+            cats.append({'num': len(cats)+1,
+                         'text': f'Beta {beta:.2f}，{"波動低於大盤，適合穩健布局" if beta < 1 else "波動高於大盤，適合積極型投資人"}',
+                         'sub':  '波動性數據有助於評估個股在投資組合中的風險貢獻'})
+
     return cats[:4]
 
 def gen_investment_value(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
@@ -1155,63 +1191,80 @@ def gen_tw_catalysts(price, ma5, ma20, ma60, macd, dea, rsi,
 
         extras = [item0, item1, item2, item3]
     else:
-        sector    = info.get('sector', '')
-        industry  = info.get('industry', '')
-        # yfinance returns dividendYield as a percentage for TW tickers
-        div_yield = safe_float(info.get('dividendYield', 0))
-        inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
+        sector     = info.get('sector', '')
+        industry   = info.get('industry', '')
+        div_yield  = safe_float(info.get('dividendYield', 0))   # TW: already %
+        inst_pct   = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
         rev_growth = round(safe_float(info.get('revenueGrowth', 0)) * 100, 1)
+        target     = safe_float(info.get('targetMeanPrice', 0))
 
-        # Sector-specific item
+        extras = []
+
+        # Analyst target — only if meaningful upside
+        if target > price * 1.1:
+            upside = (target / price - 1) * 100
+            extras.append({'text': f'分析師共識目標 ${target:.1f}（潛在漲幅 +{upside:.0f}%）',
+                           'sub':  '券商看好後市，平均目標價相對現價仍有顯著上漲空間'})
+
+        # Sector — neutral, fact-based (no macro timing claims)
         if 'Semiconductor' in industry or 'Electronic' in industry or 'Technology' in sector:
-            item_sector = {'text': 'AI 供應鏈受惠，半導體需求強勁',
-                           'sub':  '全球 AI 基礎建設需求旺盛，台廠訂單能見度高'}
+            extras.append({'text': 'AI / 半導體供應鏈長期成長邏輯清晰',
+                           'sub':  '受惠全球算力與終端裝置需求擴張，台廠在供應鏈中地位穩固'})
         elif 'Financial' in sector or 'Insurance' in industry or 'Bank' in industry:
-            item_sector = {'text': '金融股防禦特性佳，利差與費用收入穩定',
-                           'sub':  '息差收益穩健，高股息特性吸引長線資金'}
+            extras.append({'text': '金融業務多元化，利差與手續費收入組合穩定',
+                           'sub':  '業務涵蓋零售銀行、壽險、財管等，收入結構分散'})
         elif 'Basic Materials' in sector or 'Chemical' in industry or 'Steel' in industry:
-            item_sector = {'text': '原材料需求回升，景氣循環支撐股價',
-                           'sub':  '下游需求復甦，庫存去化完成，產品報價趨穩'}
+            extras.append({'text': '原材料產業具景氣循環特性，現金流相對充沛',
+                           'sub':  '景氣回升期間受惠產品報價上漲，自由現金流改善'})
         elif 'Consumer' in sector:
-            item_sector = {'text': '內需消費持穩，品牌護城河優勢明顯',
-                           'sub':  '消費需求具韌性，市佔率穩固，定價能力強'}
-        else:
-            item_sector = {'text': '產業趨勢受益，長期成長邏輯明確',
-                           'sub':  '市場份額持續擴大，商業模式優化'}
+            extras.append({'text': '品牌護城河穩固，定價能力強',
+                           'sub':  '高品牌忠誠度保護利潤率，消費需求具韌性'})
 
-        # Revenue growth item
+        # Revenue growth — only when positive
         if rev_growth > 15:
-            item_growth = {'text': f'營收年增 {rev_growth:.0f}%，業績動能強勁',
-                           'sub':  '財報持續超預期，機構上調目標價，成長確定性高'}
+            extras.append({'text': f'營收年增 {rev_growth:.0f}%，業績高速成長',
+                           'sub':  '高速成長印證商業模式可行，機構法人持續上調目標價'})
+        elif rev_growth > 5:
+            extras.append({'text': f'營收成長 {rev_growth:.0f}%，基本面持續改善',
+                           'sub':  '成長軌道持續，盈利品質穩定，本益比有基本面支撐'})
         elif rev_growth > 0:
-            item_growth = {'text': f'營收穩健成長 {rev_growth:.0f}%，基本面支撐',
-                           'sub':  '財報品質穩定，成長軌道持續，本益比有支撐'}
-        else:
-            item_growth = {'text': '技術面關鍵位置蓄積，突破動能累積中',
-                           'sub':  '等待成交量配合確認方向，突破後上漲空間可期'}
+            extras.append({'text': f'營收小幅成長 {rev_growth:.1f}%，業績逐步回穩',
+                           'sub':  '成長動能初步回升，若下季加速將成更強力催化劑'})
+        # rev_growth <= 0：不加，負成長不是催化劑
 
-        # Institutional holding item
+        # Institutional holding — only if meaningfully high
         if inst_pct >= 30:
-            item_inst = {'text': f'外資持股 {inst_pct:.0f}%，法人籌碼穩固',
-                         'sub':  '機構長線佈局，籌碼結構改善，護盤意願強'}
-        else:
-            item_inst = {'text': '三大法人動向值得關注，籌碼面持續觀察',
-                         'sub':  '法人進出影響短期走勢，留意大額異動訊號'}
+            extras.append({'text': f'外資持股 {inst_pct:.0f}%，法人籌碼穩固',
+                           'sub':  '機構長線佈局，籌碼結構穩定，護盤意願強'})
 
-        # Dividend item
-        if div_yield >= 4:
-            item_div = {'text': f'高殖利率 {div_yield:.1f}%，現金流豐厚',
-                        'sub':  '高股息防禦特性，適合存股族長期持有'}
-        elif div_yield >= 1:
-            item_div = {'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
-                        'sub':  '定期現金回報，股東回饋政策明確'}
-        else:
-            item_div = {'text': '成長型標的，以資本增值為主要報酬來源',
-                        'sub':  '公司優先將資金投入業務擴張，追求 EPS 長期成長'}
+        # Dividend — only if actually paying a meaningful yield
+        if div_yield >= 5:
+            extras.append({'text': f'高殖利率 {div_yield:.1f}%，現金流豐厚',
+                           'sub':  '高股息防禦特性，適合存股族，配息穩定提供抗跌保護'})
+        elif div_yield >= 2:
+            extras.append({'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
+                           'sub':  '定期現金股利，配息政策明確，適合長線持有'})
 
-        extras = [item_sector, item_growth, item_inst, item_div]
-    while len(cats) < 4:
-        cats.append({'num': len(cats)+1, **extras[len(cats) % len(extras)]})
+    for item in extras:
+        if len(cats) >= 4:
+            break
+        cats.append({'num': len(cats) + 1, **item})
+
+    # Fallback: factual items to avoid faking positives
+    if len(cats) < 2:
+        fwd_pe = safe_float(info.get('forwardPE', 0))
+        pe     = safe_float(info.get('trailingPE', 0))
+        beta   = safe_float(info.get('beta', 0))
+        ref_pe = fwd_pe if fwd_pe > 0 else pe
+        if ref_pe > 0:
+            cats.append({'num': len(cats)+1,
+                         'text': f'本益比 {ref_pe:.1f}x，評估當前估值合理性',
+                         'sub':  '建議與同業及歷史均值比較，判斷是否仍有布局價值'})
+        if beta > 0 and len(cats) < 2:
+            cats.append({'num': len(cats)+1,
+                         'text': f'Beta {beta:.2f}，{"波動低於大盤，適合穩健布局" if beta < 1 else "波動較高，適合積極型投資人"}',
+                         'sub':  '了解個股波動性有助於設定適當部位與停損點'})
+
     return cats[:4]
 
 
@@ -1852,6 +1905,108 @@ def get_tw_intraday(ticker):
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ── Smart Monitor ─────────────────────────────────────────────────────
+def _quick_signal(stock, ticker, price, name, profile='steady'):
+    """Lightweight daily-bar signal for monitor scanning."""
+    try:
+        hist = stock.history(period='3mo', interval='1d')
+        if hist.empty or len(hist) < 15:
+            return {'action': 'WAIT', 'actionCn': '資料不足', 'confidence': '-',
+                    'reason': '歷史資料不足，無法分析', 'stopLoss': 0}
+        close = hist['Close']
+        n     = len(close)
+        ma20  = safe_float(close.rolling(min(20, n)).mean().iloc[-1])
+        ma60  = safe_float(close.rolling(min(60, n)).mean().iloc[-1])
+        rsi   = safe_float(calc_rsi(close).iloc[-1])
+        macd_s, sig_s, hist_s = calc_macd(close)
+        macd_v  = safe_float(macd_s.iloc[-1])
+        sig_v   = safe_float(sig_s.iloc[-1])
+        hist_v  = safe_float(hist_s.iloc[-1])
+        hist_pv = safe_float(hist_s.iloc[-2]) if n > 1 else 0
+        avg_vol  = safe_float(hist['Volume'].rolling(min(20, n)).mean().iloc[-1])
+        curr_vol = safe_float(hist['Volume'].iloc[-1])
+        vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
+        stop = round(ma20 * 0.97, 2)
+
+        bull = bear = 0
+        if price > ma20: bull += 1
+        else:            bear += 1
+        if price > ma60: bull += 1
+        else:            bear += 1
+        if macd_v > sig_v and hist_v > hist_pv:   bull += 1
+        elif macd_v < sig_v and hist_v < hist_pv: bear += 1
+        if rsi < 40:   bull += 1
+        elif rsi > 75: bear += 1
+        if vol_ratio > 1.5 and price > ma20: bull += 1
+
+        if bull >= 4:   action, cn, conf = 'BUY',  '強烈買進', '高'
+        elif bull >= 3: action, cn, conf = 'BUY',  '建議買進', '中'
+        elif bear >= 4: action, cn, conf = 'SELL', '建議賣出', '高'
+        elif bear >= 3: action, cn, conf = 'SELL', '考慮賣出', '中'
+        elif bull >= 2: action, cn, conf = 'WATCH','接近買點', '低'
+        else:           action, cn, conf = 'HOLD', '持續觀望', '-'
+
+        parts = []
+        parts.append(f'{"站穩" if price > ma20 else "跌破"} MA20(${ma20:.1f})')
+        parts.append(f'RSI {rsi:.0f}')
+        parts.append(f'MACD {"金叉" if macd_v > sig_v else "死叉"}')
+        if vol_ratio >= 1.5: parts.append(f'量比 {vol_ratio:.1f}x')
+        return {'action': action, 'actionCn': cn, 'confidence': conf,
+                'reason': ' | '.join(parts), 'stopLoss': stop}
+    except Exception as e:
+        return {'action': 'WAIT', 'actionCn': '分析失敗', 'confidence': '-',
+                'reason': str(e)[:60], 'stopLoss': 0}
+
+
+@app.route('/api/monitor/scan', methods=['POST'])
+def monitor_scan():
+    data    = request.json or {}
+    tickers = [t.upper().strip() for t in data.get('tickers', []) if str(t).strip()][:10]
+    profile = data.get('profile', 'steady')
+    if not tickers:
+        return jsonify([])
+
+    def fetch_one(ticker):
+        cache_key = f'mon:{ticker}:{profile}'
+        cached = _cache_get(cache_key)
+        if cached:
+            return cached
+        try:
+            stock  = yf.Ticker(ticker)
+            info   = stock.info
+            price  = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+            if price == 0:
+                h2 = stock.history(period='2d')
+                if not h2.empty: price = safe_float(h2['Close'].iloc[-1])
+            prev    = safe_float(info.get('previousClose', info.get('regularMarketPreviousClose', 0)))
+            change  = price - prev
+            chg_pct = change / prev * 100 if prev else 0
+            name    = (info.get('shortName') or info.get('longName') or ticker)[:25]
+            sig     = _quick_signal(stock, ticker, price, name, profile)
+            entry   = {
+                'ticker':    ticker,
+                'name':      name,
+                'price':     round(price, 2),
+                'change':    round(change, 2),
+                'changePct': round(chg_pct, 2),
+                **sig,
+            }
+            _cache_set(cache_key, entry, ttl=90)
+            return entry
+        except Exception as e:
+            return {'ticker': ticker, 'name': ticker, 'price': 0, 'change': 0,
+                    'changePct': 0, 'action': 'ERR', 'actionCn': '載入失敗',
+                    'confidence': '-', 'reason': str(e)[:60], 'stopLoss': 0}
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(fetch_one, t): t for t in tickers}
+        results_map = {}
+        for f in as_completed(futures):
+            results_map[futures[f]] = f.result()
+
+    return jsonify([results_map[t] for t in tickers if t in results_map])
 
 
 if __name__ == '__main__':

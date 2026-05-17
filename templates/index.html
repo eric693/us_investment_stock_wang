@@ -31,6 +31,10 @@
 <nav class="topnav">
   <div class="brand">US<span>STOCK</span></div>
   <a class="market-switch" href="/tw">台股 →</a>
+  <button class="mon-nav-btn" onclick="toggleMonitorPanel()" title="智能即時監控">
+    監控
+    <span id="monitorBadge" class="mon-badge hidden">0</span>
+  </button>
   <div class="search-wrap">
     <input id="tickerInput" type="text" placeholder="輸入股票代碼 (AAPL, NVDA, TSLA...)" autocomplete="off" spellcheck="false">
     <button onclick="searchStock()">查詢</button>
@@ -51,6 +55,68 @@
 <div id="watchlistBar" class="watchlist-bar hidden">
   <span class="wl-bar-label">自選股</span>
   <div id="watchlistChips" class="watchlist-chips"></div>
+</div>
+
+<!-- Smart Monitor Panel -->
+<div id="monitorPanel" class="monitor-panel hidden">
+  <div class="mon-header">
+    <div class="mon-title-row">
+      <span class="mon-title">智能即時監控</span>
+      <span id="monRefreshStatus" class="mon-status-txt">--</span>
+      <div class="mon-header-acts">
+        <button class="mon-refresh-btn" onclick="monitorScanNow()">立即更新</button>
+        <button class="mon-close-btn" onclick="toggleMonitorPanel()">收起</button>
+      </div>
+    </div>
+    <div class="mon-add-row">
+      <input id="monTickerIn" class="mon-inp" type="text" placeholder="股票代碼 AAPL / ETF" maxlength="10"
+             onkeydown="if(event.key==='Enter')addToMonitor()">
+      <input id="monSharesIn" class="mon-inp mon-inp-sm" type="number" min="0" step="1" placeholder="持股數 (選填)">
+      <input id="monCostIn"   class="mon-inp mon-inp-sm" type="number" min="0" step="0.01" placeholder="均價 (選填)">
+      <button class="mon-add-btn" onclick="addToMonitor()">+ 加入監控</button>
+      <span id="monLimitNote" class="mon-limit-note hidden">最多 10 支</span>
+    </div>
+    <div class="mon-hint">每 60 秒自動更新 · 最多監控 10 支 · 輸入股數與均價可自動計算損益</div>
+  </div>
+  <div id="monitorTableWrap">
+    <div id="monitorEmptyHint" class="mon-empty">尚未加入任何標的，請在上方輸入股票代碼</div>
+    <table id="monitorTable" class="mon-table hidden">
+      <thead>
+        <tr>
+          <th>股票</th>
+          <th>現價</th>
+          <th>今日漲跌</th>
+          <th>損益 (持股)</th>
+          <th>訊號</th>
+          <th>分析摘要</th>
+          <th>止損參考</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="monitorTbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Holdings Edit Modal -->
+<div id="holdingsModal" class="modal-overlay hidden" onclick="if(event.target===this)closeHoldingsModal()">
+  <div class="modal-box">
+    <div class="modal-title">持股設定 — <span id="holdingsTicker"></span></div>
+    <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:14px">輸入你的持有數量與均價，系統將自動計算損益並在判斷買賣時納入考量</p>
+    <div class="modal-row">
+      <label class="modal-lbl">持有股數</label>
+      <input id="holdingsShares" class="modal-inp" type="number" min="0" step="1" placeholder="例如：100">
+    </div>
+    <div class="modal-row">
+      <label class="modal-lbl">平均成本（每股均價 $）</label>
+      <input id="holdingsCost" class="modal-inp" type="number" min="0" step="0.01" placeholder="例如：150.00">
+    </div>
+    <div class="modal-actions">
+      <button class="mon-add-btn" onclick="saveHoldings()">儲存</button>
+      <button class="mon-clear-btn" onclick="clearHoldings()">清除持股</button>
+      <button class="cmp-clear-btn" onclick="closeHoldingsModal()">取消</button>
+    </div>
+  </div>
 </div>
 
 <!-- Market Pulse Bar -->
@@ -1731,6 +1797,227 @@ function clearCompare() {
   setHTML('compareChart', ''); setHTML('compareStatus', '');
   const inp = $('compareInput'); if (inp) inp.value = '';
 }
+
+// ── Smart Monitor ──────────────────────────────────────────────────────
+let _monitorInterval = null;
+let _monitorData     = {};  // ticker → latest API result
+let _prevSignals     = {};  // ticker → last action (for change detection)
+let _editHoldingsTk  = '';
+
+function getMonitorList() {
+  return JSON.parse(localStorage.getItem('monitorList') || '[]');
+}
+function _saveMonitorList(list) {
+  localStorage.setItem('monitorList', JSON.stringify(list));
+}
+
+function toggleMonitorPanel() {
+  const p = $('monitorPanel');
+  const wasHidden = p.classList.contains('hidden');
+  p.classList.toggle('hidden', !wasHidden);
+  if (wasHidden) {
+    renderMonitorTable();
+    monitorScanNow();
+    startMonitorLoop();
+  } else {
+    clearInterval(_monitorInterval);
+  }
+}
+
+function addToMonitor() {
+  const ticker  = ($('monTickerIn').value || '').trim().toUpperCase();
+  if (!ticker) { $('monTickerIn').focus(); return; }
+  const shares  = parseFloat($('monSharesIn').value) || 0;
+  const avgCost = parseFloat($('monCostIn').value)   || 0;
+
+  const list = getMonitorList();
+  const existing = list.findIndex(e => e.ticker === ticker);
+  if (existing >= 0) {
+    list[existing].shares  = shares;
+    list[existing].avgCost = avgCost;
+  } else {
+    if (list.length >= 10) { show('monLimitNote'); return; }
+    list.push({ticker, shares, avgCost});
+  }
+  hide('monLimitNote');
+  _saveMonitorList(list);
+  $('monTickerIn').value = '';
+  $('monSharesIn').value = '';
+  $('monCostIn').value   = '';
+  updateMonitorBadge(list.length);
+  renderMonitorTable();
+  monitorScanNow();
+}
+
+function removeFromMonitor(ticker) {
+  _saveMonitorList(getMonitorList().filter(e => e.ticker !== ticker));
+  delete _monitorData[ticker];
+  delete _prevSignals[ticker];
+  const list = getMonitorList();
+  updateMonitorBadge(list.length);
+  renderMonitorTable();
+}
+
+function openHoldingsModal(ticker) {
+  const entry = getMonitorList().find(e => e.ticker === ticker);
+  if (!entry) return;
+  _editHoldingsTk = ticker;
+  $('holdingsTicker').textContent  = ticker;
+  $('holdingsShares').value = entry.shares  || '';
+  $('holdingsCost').value   = entry.avgCost || '';
+  show('holdingsModal');
+}
+
+function saveHoldings() {
+  const list = getMonitorList();
+  const idx  = list.findIndex(e => e.ticker === _editHoldingsTk);
+  if (idx < 0) return;
+  list[idx].shares  = parseFloat($('holdingsShares').value) || 0;
+  list[idx].avgCost = parseFloat($('holdingsCost').value)   || 0;
+  _saveMonitorList(list);
+  closeHoldingsModal();
+  renderMonitorTable();
+}
+
+function clearHoldings() {
+  const list = getMonitorList();
+  const idx  = list.findIndex(e => e.ticker === _editHoldingsTk);
+  if (idx >= 0) { list[idx].shares = 0; list[idx].avgCost = 0; }
+  _saveMonitorList(list);
+  closeHoldingsModal();
+  renderMonitorTable();
+}
+
+function closeHoldingsModal() { hide('holdingsModal'); }
+
+function updateMonitorBadge(count) {
+  const badge = $('monitorBadge');
+  if (!badge) return;
+  if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+  else badge.classList.add('hidden');
+}
+
+function _sigBadgeClass(action) {
+  return {BUY:'sig-buy', SELL:'sig-sell', WATCH:'sig-watch',
+          HOLD:'sig-hold', WAIT:'sig-wait', ERR:'sig-wait'}[action] || 'sig-wait';
+}
+
+function renderMonitorTable() {
+  const list  = getMonitorList();
+  const tbody = $('monitorTbody');
+  const table = $('monitorTable');
+  const empty = $('monitorEmptyHint');
+  if (!tbody) return;
+
+  if (list.length === 0) {
+    if (empty) empty.style.display = '';
+    if (table) table.classList.add('hidden');
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (table) table.classList.remove('hidden');
+
+  tbody.innerHTML = list.map(entry => {
+    const d      = _monitorData[entry.ticker];
+    const price  = d ? d.price     : 0;
+    const chgPct = d ? d.changePct : 0;
+    const action = d ? d.action    : 'WAIT';
+    const actionCn = d ? d.actionCn : '載入中...';
+    const reason   = d ? (d.reason || '') : '';
+    const stopLoss = d ? d.stopLoss : 0;
+
+    // P&L column
+    let plHtml = '<span class="dim">--</span>';
+    if (entry.shares > 0 && entry.avgCost > 0 && price > 0) {
+      const pl    = (price - entry.avgCost) * entry.shares;
+      const plPct = (price / entry.avgCost - 1) * 100;
+      const cls   = pl >= 0 ? 'green' : 'red';
+      plHtml = `<span class="${cls}">${pl >= 0 ? '+' : ''}$${Math.abs(pl).toFixed(0)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)</span>
+                <br><small class="dim">${entry.shares}股 @$${entry.avgCost}</small>`;
+    } else if (entry.shares > 0 || entry.avgCost > 0) {
+      const parts = [];
+      if (entry.shares > 0)  parts.push(entry.shares + ' 股');
+      if (entry.avgCost > 0) parts.push('@$' + entry.avgCost);
+      plHtml = `<span class="dim" style="font-size:0.75rem">${parts.join(' ')}<br>(等待價格)</span>`;
+    }
+
+    const priceHtml = price > 0
+      ? `<strong>$${price.toFixed(2)}</strong>`
+      : '<span class="dim">載入中...</span>';
+    const chgCls  = chgPct >= 0 ? 'green' : 'red';
+    const chgHtml = d
+      ? `<span class="${chgCls}">${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%</span>`
+      : '<span class="dim">--</span>';
+
+    return `<tr class="mon-row">
+      <td>
+        <span class="mon-sym" onclick="loadStock('${entry.ticker}')">${entry.ticker}</span>
+        <br><small class="dim">${d ? (d.name || '') : ''}</small>
+      </td>
+      <td>${priceHtml}</td>
+      <td>${chgHtml}</td>
+      <td>${plHtml}</td>
+      <td><span class="sig-badge ${_sigBadgeClass(action)}">${actionCn}</span></td>
+      <td class="mon-reason">${reason || (d ? '' : '<span class="dim">--</span>')}</td>
+      <td>${stopLoss > 0 ? '<span class="dim">$</span>' + stopLoss.toFixed(2) : '<span class="dim">--</span>'}</td>
+      <td class="mon-acts">
+        <button class="mon-edit-btn" onclick="openHoldingsModal('${entry.ticker}')">持股</button>
+        <button class="mon-rm-btn"   onclick="removeFromMonitor('${entry.ticker}')">×</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function monitorScanNow() {
+  const list = getMonitorList();
+  if (list.length === 0) return;
+  const status = $('monRefreshStatus');
+  if (status) status.textContent = '掃描中...';
+
+  try {
+    const r = await fetch('/api/monitor/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tickers: list.map(e => e.ticker), profile: 'steady'})
+    });
+    const results = await r.json();
+
+    const changed = [];
+    results.forEach(d => {
+      const prev = _prevSignals[d.ticker];
+      if (prev && prev !== d.action && (d.action === 'BUY' || d.action === 'SELL')) {
+        changed.push(d);
+      }
+      if (d.action !== 'ERR' && d.action !== 'WAIT') _prevSignals[d.ticker] = d.action;
+      _monitorData[d.ticker] = d;
+    });
+
+    renderMonitorTable();
+
+    if (status) {
+      const t = new Date().toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      status.textContent = '更新: ' + t;
+    }
+
+    if (changed.length > 0) {
+      showAlertBanner(changed.map(d =>
+        `[${d.ticker}] 訊號變化 → ${d.actionCn}　${d.reason}`
+      ));
+    }
+  } catch(e) {
+    if (status) status.textContent = '更新失敗，請稍後再試';
+  }
+}
+
+function startMonitorLoop() {
+  clearInterval(_monitorInterval);
+  _monitorInterval = setInterval(monitorScanNow, 60000);
+}
+
+// init badge on load
+window.addEventListener('DOMContentLoaded', () => {
+  updateMonitorBadge(getMonitorList().length);
+});
 
 // ── News ──────────────────────────────────────────────────────────────
 let _newsTimer = null;
