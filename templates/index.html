@@ -5,7 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>美股投資分析儀表板</title>
 <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+<script src="https://s3.tradingview.com/tv.js"></script>
 <link rel="stylesheet" href="/static/css/style.css">
+<style>
+.tv-card { padding:0; overflow:hidden; border-radius:10px; }
+.tv-toolbar { display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--card-bg); border-bottom:1px solid var(--card-bd); flex-wrap:wrap; }
+.tv-title { font-size:0.82rem; font-weight:800; color:var(--text); letter-spacing:.3px; margin-right:4px; }
+.tv-sym { font-size:0.78rem; color:var(--accent); font-weight:700; background:rgba(61,142,248,.1); padding:3px 10px; border-radius:5px; }
+.tv-tf-tabs { display:flex; gap:2px; margin-left:auto; }
+.tv-tf-btn { padding:4px 10px; font-size:0.74rem; font-weight:700; color:var(--text-dim); background:transparent; border:1px solid transparent; border-radius:5px; cursor:pointer; transition:all .15s; }
+.tv-tf-btn.active, .tv-tf-btn:hover { color:var(--text); background:rgba(255,255,255,.07); border-color:var(--border); }
+.tv-tf-btn.active { color:var(--accent); border-color:rgba(61,142,248,.3); }
+.tv-indicator-row { padding:8px 16px; background:var(--card-bg); border-bottom:1px solid var(--card-bd); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.tv-ind-badge { padding:3px 10px; font-size:0.7rem; font-weight:700; color:var(--text-dim); background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:5px; cursor:pointer; transition:all .15s; }
+.tv-ind-badge.active { color:var(--accent); background:rgba(61,142,248,.1); border-color:rgba(61,142,248,.3); }
+.tv-ind-badge:hover { color:var(--text); border-color:var(--text-dim); }
+.tv-ind-label { font-size:0.7rem; color:var(--text-dim); margin-right:4px; }
+#tvChartContainer { width:100%; height:560px; }
+#tvChartContainer iframe { border:none !important; }
+</style>
 </head>
 <body>
 
@@ -227,6 +245,33 @@
   <div class="card" id="investValueCard">
     <div class="card-title">投資核心價值</div>
     <div id="investValuePanel"></div>
+  </div>
+
+  <!-- TV. TradingView Chart -->
+  <div class="card tv-card hidden" id="tvCard">
+    <div class="tv-toolbar">
+      <span class="tv-title">TradingView 圖表</span>
+      <span id="tvSymLabel" class="tv-sym">--</span>
+      <div class="tv-tf-tabs" id="tvTfTabs">
+        <button class="tv-tf-btn" data-tf="1" onclick="setTVInterval('1')">1分</button>
+        <button class="tv-tf-btn" data-tf="15" onclick="setTVInterval('15')">15分</button>
+        <button class="tv-tf-btn" data-tf="60" onclick="setTVInterval('60')">60分</button>
+        <button class="tv-tf-btn active" data-tf="D" onclick="setTVInterval('D')">日線</button>
+        <button class="tv-tf-btn" data-tf="W" onclick="setTVInterval('W')">週線</button>
+        <button class="tv-tf-btn" data-tf="M" onclick="setTVInterval('M')">月線</button>
+      </div>
+    </div>
+    <div class="tv-indicator-row">
+      <span class="tv-ind-label">指標：</span>
+      <span class="tv-ind-badge active" data-study="MASimple@tv-basicstudies" onclick="toggleTVStudy(this,'MASimple@tv-basicstudies')">MA</span>
+      <span class="tv-ind-badge" data-study="RSI@tv-basicstudies" onclick="toggleTVStudy(this,'RSI@tv-basicstudies')">RSI</span>
+      <span class="tv-ind-badge" data-study="MACD@tv-basicstudies" onclick="toggleTVStudy(this,'MACD@tv-basicstudies')">MACD</span>
+      <span class="tv-ind-badge" data-study="BB@tv-basicstudies" onclick="toggleTVStudy(this,'BB@tv-basicstudies')">布林</span>
+      <span class="tv-ind-badge" data-study="Volume@tv-basicstudies" onclick="toggleTVStudy(this,'Volume@tv-basicstudies')">成交量</span>
+      <span class="tv-ind-badge" data-study="Stochastic@tv-basicstudies" onclick="toggleTVStudy(this,'Stochastic@tv-basicstudies')">KD</span>
+      <span style="margin-left:auto;font-size:0.7rem;color:var(--text-dim)">Powered by TradingView · 右鍵可畫線、加指標</span>
+    </div>
+    <div id="tvChartContainer"></div>
   </div>
 
   <!-- 2. Performance Returns -->
@@ -595,11 +640,76 @@ function changePeriod(period) {
   if (compareData) renderCompareChart();
 }
 
+// ── TradingView Chart ───────────────────────────────────────────────────
+let _tvInterval = 'D';
+let _tvStudies  = ['MASimple@tv-basicstudies'];
+let _tvSymbol   = '';
+
+function renderTradingView(d) {
+  const card = $('tvCard');
+  card.classList.remove('hidden');
+  _tvSymbol = d.ticker.toUpperCase();
+  $('tvSymLabel').textContent = _tvSymbol;
+  _buildTVWidget();
+}
+
+function _buildTVWidget() {
+  const container = $('tvChartContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  if (typeof TradingView === 'undefined') return;
+  new TradingView.widget({
+    autosize:        true,
+    symbol:          _tvSymbol,
+    interval:        _tvInterval,
+    timezone:        'Asia/Taipei',
+    theme:           'dark',
+    style:           '1',
+    locale:          'zh_TW',
+    toolbar_bg:      '#0c1220',
+    enable_publishing: false,
+    withdateranges:  true,
+    hide_side_toolbar: false,
+    allow_symbol_change: false,
+    save_image:      false,
+    container_id:    'tvChartContainer',
+    studies:         [..._tvStudies],
+    overrides: {
+      'paneProperties.background':         '#0c1220',
+      'paneProperties.backgroundType':     'solid',
+      'paneProperties.vertGridProperties.color': '#121e30',
+      'paneProperties.horzGridProperties.color': '#121e30',
+      'scalesProperties.textColor':        '#6888a0',
+      'mainSeriesProperties.candleStyle.upColor':          '#e84646',
+      'mainSeriesProperties.candleStyle.downColor':        '#00d68f',
+      'mainSeriesProperties.candleStyle.borderUpColor':    '#e84646',
+      'mainSeriesProperties.candleStyle.borderDownColor':  '#00d68f',
+      'mainSeriesProperties.candleStyle.wickUpColor':      '#e84646',
+      'mainSeriesProperties.candleStyle.wickDownColor':    '#00d68f',
+    },
+  });
+}
+
+function setTVInterval(interval) {
+  _tvInterval = interval;
+  document.querySelectorAll('.tv-tf-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tf === interval));
+  _buildTVWidget();
+}
+
+function toggleTVStudy(el, study) {
+  const idx = _tvStudies.indexOf(study);
+  if (idx >= 0) { _tvStudies.splice(idx, 1); el.classList.remove('active'); }
+  else          { _tvStudies.push(study);     el.classList.add('active');    }
+  _buildTVWidget();
+}
+
 // ── Main Render ─────────────────────────────────────────────────────
 function renderDashboard(d) {
   renderHeader(d);
   renderConclusions(d);
   renderInvestValue(d);
+  renderTradingView(d);
   renderPerf(d);
   renderShortInfo(d);
   // Default to 1M view

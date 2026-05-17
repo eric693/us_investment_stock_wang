@@ -226,6 +226,85 @@ def gen_investment_value(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
         'weaknesses': weaknesses[:2],
     }
 
+def gen_etf_investment_value(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
+                             div_yield, expense_ratio, total_assets, vol_ratio,
+                             ytd_return=0, three_yr=0):
+    s = {}
+    # Momentum (0-4)
+    if price > ma5 > ma20 > ma60 and macd_v > dea_v:
+        s['momentum'] = 4
+    elif price > ma5 > ma20 > ma60:
+        s['momentum'] = 3
+    elif price > ma20 > ma60:
+        s['momentum'] = 2
+    elif price > ma60:
+        s['momentum'] = 1
+    else:
+        s['momentum'] = 0
+
+    # Dividend (0-4)
+    if   div_yield >= 6:  s['dividend'] = 4
+    elif div_yield >= 4:  s['dividend'] = 3
+    elif div_yield >= 2:  s['dividend'] = 2
+    elif div_yield >= 1:  s['dividend'] = 1
+    else:                 s['dividend'] = 0
+
+    # Cost (0-4) — lower expense ratio is better
+    if   expense_ratio == 0:    s['cost'] = 2
+    elif expense_ratio < 0.2:   s['cost'] = 4
+    elif expense_ratio < 0.5:   s['cost'] = 3
+    elif expense_ratio < 1.0:   s['cost'] = 2
+    elif expense_ratio < 1.5:   s['cost'] = 1
+    else:                       s['cost'] = 0
+
+    # Scale (0-4) — larger AUM means more liquidity
+    if   total_assets >= 500:   s['scale'] = 4
+    elif total_assets >= 100:   s['scale'] = 3
+    elif total_assets >= 30:    s['scale'] = 2
+    elif total_assets >= 5:     s['scale'] = 1
+    else:                       s['scale'] = 0
+
+    def grade(v):
+        return 'A+' if v >= 4 else 'A' if v == 3 else 'B' if v == 2 else 'C' if v == 1 else 'D'
+
+    total = sum(s.values()); pct = total / 16
+    if   pct >= 0.75: sig, sig_cn, sig_cls = 'STRONG BUY', '強烈買入', 'sv-strong-buy'
+    elif pct >= 0.60: sig, sig_cn, sig_cls = 'BUY',        '買入',     'sv-buy'
+    elif pct >= 0.45: sig, sig_cn, sig_cls = 'HOLD',       '持有',     'sv-hold'
+    elif pct >= 0.30: sig, sig_cn, sig_cls = 'CAUTION',    '觀望',     'sv-caution'
+    else:             sig, sig_cn, sig_cls = 'AVOID',      '迴避',     'sv-avoid'
+
+    strengths, weaknesses = [], []
+    if s['momentum'] >= 3:  strengths.append('技術趨勢強勁，均線多頭排列，適合趁拉回進場')
+    if s['dividend'] >= 3:  strengths.append(f'殖利率 {div_yield:.1f}%，配息豐厚，適合長期存股')
+    if s['cost']     >= 3:  strengths.append(f'費用率 {expense_ratio:.2f}%，成本低廉，長期複利效果佳')
+    if s['scale']    >= 3:  strengths.append(f'規模 {total_assets:.0f} 億元，流動性充足，買賣彈性高')
+    if three_yr > 10:       strengths.append(f'3年年化報酬 {three_yr:.1f}%，長期績效優異')
+    if rsi_v < 40:          strengths.append(f'RSI {rsi_v:.0f} 低檔，技術面偏低，分批布局機會')
+
+    if s['momentum'] <= 1:  weaknesses.append('短期趨勢偏弱，建議等待均線翻多再布局，避免追高')
+    if s['dividend'] <= 1 and div_yield > 0:  weaknesses.append(f'殖利率 {div_yield:.1f}% 偏低，作為存股工具吸引力有限')
+    if s['cost']     <= 1 and expense_ratio > 0: weaknesses.append(f'費用率 {expense_ratio:.2f}% 偏高，長期拖累報酬不可忽視')
+    if s['scale']    <= 1:  weaknesses.append('規模較小，流動性風險較高，注意買賣價差')
+    if rsi_v > 70:          weaknesses.append(f'RSI {rsi_v:.0f} 超買，短線追高需謹慎，等待拉回再進場')
+
+    return {
+        'signal':    sig,
+        'signalCn':  sig_cn,
+        'signalCls': sig_cls,
+        'score':     round(pct * 100),
+        'grades': {
+            'momentum': grade(s['momentum']),
+            'dividend': grade(s['dividend']),
+            'cost':     grade(s['cost']),
+            'scale':    grade(s['scale']),
+        },
+        'strengths':  strengths[:3],
+        'weaknesses': weaknesses[:2],
+        'isEtfScore': True,
+    }
+
+
 def gen_risks(price, ma20, rsi, vol_ratio, week52h, pe=0, fwd_pe=0, beta=1.0, debt_equity=0):
     risks = []
     from_high = (price - week52h) / week52h * 100 if week52h > 0 else 0
@@ -920,15 +999,28 @@ def get_tw_stock(ticker):
             ta = safe_float(info.get('totalAssets', 0))
             er = safe_float(info.get('annualReportExpenseRatio', info.get('totalExpenseRatio', 0)))
             if er > 1: er /= 100
+            ta_yi = round(ta / 1e8, 1)
+            er_pct = round(er * 100, 4) if er > 0 else 0
+            three_yr = round(safe_float(info.get('threeYearAverageReturn', 0)) * 100, 2)
+            five_yr  = round(safe_float(info.get('fiveYearAverageReturn',  0)) * 100, 2)
+            ytd_ret  = round(safe_float(info.get('ytdReturn', 0)) * 100, 2)
             etf_data = {
-                'totalAssets':   round(ta / 1e8, 1),
-                'expenseRatio':  round(er * 100, 4) if er > 0 else 0,
-                'threeYrReturn': round(safe_float(info.get('threeYearAverageReturn', 0)) * 100, 2),
-                'fiveYrReturn':  round(safe_float(info.get('fiveYearAverageReturn',  0)) * 100, 2),
-                'ytdReturn':     round(safe_float(info.get('ytdReturn', 0)) * 100, 2),
+                'totalAssets':   ta_yi,
+                'expenseRatio':  er_pct,
+                'threeYrReturn': three_yr,
+                'fiveYrReturn':  five_yr,
+                'ytdReturn':     ytd_ret,
                 'category':      info.get('category', ''),
                 'fundFamily':    info.get('fundFamily', ''),
             }
+            invest_val = gen_etf_investment_value(
+                price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
+                div_yield=round(safe_float(info.get('dividendYield', 0)) * 100, 2),
+                expense_ratio=er_pct,
+                total_assets=ta_yi,
+                vol_ratio=vol_ratio,
+                ytd_return=ytd_ret,
+                three_yr=three_yr)
 
         def clean(lst):
             res = []
@@ -1160,5 +1252,178 @@ def get_tw_fundamentals(ticker):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/tw/etf/<ticker>')
+def get_tw_etf(ticker):
+    ticker = tw_normalize(ticker)
+    cached = _cache_get(f'tw_etf:{ticker}')
+    if cached: return jsonify(cached)
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+
+        # ── Dividend history ──
+        div_history = []
+        div_frequency = '未知'
+        div_months = []
+        try:
+            divs = stock.dividends
+            if divs is not None and not divs.empty:
+                divs_sorted = divs.sort_index(ascending=False)
+                for date, amount in divs_sorted.head(16).items():
+                    div_history.append({'date': str(date)[:10], 'amount': round(float(amount), 4)})
+                if len(div_history) >= 2:
+                    dates = [pd.Timestamp(d['date']) for d in div_history[:10]]
+                    gaps  = [(dates[i] - dates[i+1]).days for i in range(len(dates)-1) if i+1 < len(dates)]
+                    avg_gap = sum(gaps) / len(gaps) if gaps else 365
+                    if   avg_gap < 45:  div_frequency = '月配'
+                    elif avg_gap < 100: div_frequency = '季配'
+                    elif avg_gap < 200: div_frequency = '半年配'
+                    else:               div_frequency = '年配'
+                    div_months = sorted(list(set([d.month for d in dates[:8]])))
+        except:
+            pass
+
+        # ── Top holdings ──
+        holdings = []
+        try:
+            th = stock.funds_top_holdings
+            if th is not None and not th.empty:
+                cols = [str(c) for c in th.columns]
+                sym_col  = next((c for c in cols if 'symbol' in c.lower() or 'ticker' in c.lower()), None)
+                name_col = next((c for c in cols if 'name'   in c.lower() or 'holding' in c.lower()), cols[0] if cols else None)
+                pct_col  = next((c for c in cols if 'pct'    in c.lower() or 'percent' in c.lower() or 'weight' in c.lower() or 'asset' in c.lower()), None)
+                for _, row in th.head(10).iterrows():
+                    sym  = str(row[sym_col])  if sym_col  else ''
+                    name = str(row[name_col]) if name_col else ''
+                    pct  = safe_float(row[pct_col]) if pct_col else 0
+                    if pct > 1: pct /= 100
+                    if name and name != 'nan':
+                        holdings.append({'symbol': sym[:10], 'name': name[:30], 'pct': round(pct * 100, 2)})
+        except:
+            pass
+
+        # ── NAV & premium/discount ──
+        nav          = safe_float(info.get('navPrice', info.get('regularMarketPrice', 0)))
+        market_price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+        premium_disc = round((market_price / nav - 1) * 100, 3) if nav > 0 else 0
+
+        # ── Next ex-dividend ──
+        last_div_date = info.get('lastDividendDate', None)
+        ex_div_date   = info.get('exDividendDate',   None)
+        for attr in ['last_div_date', 'ex_div_date']:
+            val = locals()[attr]
+            if val:
+                try:
+                    locals()[attr] = str(pd.Timestamp(val, unit='s').date())
+                except:
+                    locals()[attr] = None
+
+        if last_div_date:
+            try: last_div_date = str(pd.Timestamp(last_div_date, unit='s').date())
+            except: last_div_date = None
+        if ex_div_date:
+            try: ex_div_date = str(pd.Timestamp(ex_div_date, unit='s').date())
+            except: ex_div_date = None
+
+        # ── Annual yield calculation from history ──
+        annual_div = 0
+        if div_history:
+            if div_frequency == '月配':
+                annual_div = sum(d['amount'] for d in div_history[:12])
+            elif div_frequency == '季配':
+                annual_div = sum(d['amount'] for d in div_history[:4])
+            elif div_frequency == '半年配':
+                annual_div = sum(d['amount'] for d in div_history[:2])
+            else:
+                annual_div = div_history[0]['amount'] if div_history else 0
+        hist_yield = round(annual_div / market_price * 100, 2) if market_price > 0 and annual_div > 0 else 0
+
+        result = {
+            'ticker':          ticker,
+            'nav':             round(nav, 4),
+            'premiumDiscount': premium_disc,
+            'lastDividend':    round(safe_float(info.get('lastDividendValue', 0)), 4),
+            'lastDividendDate':last_div_date,
+            'exDividendDate':  ex_div_date,
+            'dividendFrequency': div_frequency,
+            'dividendMonths':  div_months,
+            'dividendHistory': div_history,
+            'histYield':       hist_yield,
+            'holdings':        holdings,
+            'totalAssets':     round(safe_float(info.get('totalAssets', 0)) / 1e8, 1),
+        }
+        _cache_set(f'tw_etf:{ticker}', result, ttl=600)
+        return jsonify(result)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tw/realtime/<ticker>')
+def get_tw_realtime(ticker):
+    ticker = tw_normalize(ticker)
+    cached = _cache_get(f'tw_rt:{ticker}')
+    if cached: return jsonify(cached)
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+        price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+        prev  = safe_float(info.get('previousClose', info.get('regularMarketPreviousClose', 0)))
+        change = price - prev
+        change_pct = change / prev * 100 if prev else 0
+        result = {
+            'ticker':    ticker,
+            'price':     round(price, 2),
+            'change':    round(change, 2),
+            'changePct': round(change_pct, 2),
+            'volume':    safe_int(info.get('regularMarketVolume', 0)),
+            'high':      round(safe_float(info.get('dayHigh', info.get('regularMarketDayHigh', 0))), 2),
+            'low':       round(safe_float(info.get('dayLow',  info.get('regularMarketDayLow',  0))), 2),
+        }
+        _cache_set(f'tw_rt:{ticker}', result, ttl=30)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tw/intraday/<ticker>')
+def get_tw_intraday(ticker):
+    ticker = tw_normalize(ticker)
+    cached = _cache_get(f'tw_intra:{ticker}')
+    if cached: return jsonify(cached)
+    try:
+        stock = yf.Ticker(ticker)
+        hist  = stock.history(period='1d', interval='5m')
+        if hist.empty:
+            return jsonify({'error': '今日無盤中資料', 'ticker': ticker}), 404
+
+        def clean(lst):
+            res = []
+            for x in lst:
+                try:
+                    f = float(x)
+                    res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 4))
+                except:
+                    res.append(None)
+            return res
+
+        dates  = hist.index.strftime('%H:%M').tolist()
+        result = {
+            'ticker':  ticker,
+            'dates':   dates,
+            'ohlcv': {
+                'open':   clean(hist['Open'].tolist()),
+                'high':   clean(hist['High'].tolist()),
+                'low':    clean(hist['Low'].tolist()),
+                'close':  clean(hist['Close'].tolist()),
+                'volume': [safe_int(x) for x in hist['Volume'].tolist()],
+            },
+        }
+        _cache_set(f'tw_intra:{ticker}', result, ttl=60)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5999, debug=False)
+    app.run(host='0.0.0.0', port=6000, debug=False)
