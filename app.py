@@ -299,12 +299,63 @@ def gen_catalysts(price, ma5, ma20, ma60, macd, dea, rsi, vol_ratio, week52h, in
     if target > price * 1.1:
         cats.append({'num': len(cats)+1, 'text': f'分析師目標價 ${target:.2f}，具上漲空間',
                      'sub': f'較現價有 {(target/price-1)*100:.0f}% 潛在漲幅'})
-    extras = [
-        {'text': '財報週期臨近，業績催化劑持續',       'sub': '關注收入成長與利潤率改善趨勢'},
-        {'text': '產業趨勢受益，長期成長邏輯明確',     'sub': '市場份額擴大，商業模式持續優化'},
-        {'text': '技術面關鍵位置蓄積，突破動能累積',   'sub': '觀察成交量配合情況確認方向'},
-        {'text': '機構持股比例提升，籌碼結構改善',     'sub': '長線資金介入增強價格支撐'},
-    ]
+    sector    = info.get('sector', '')
+    industry  = info.get('industry', '')
+    # US stocks: yfinance returns dividendYield as decimal (0.0665 = 6.65%)
+    div_yield = safe_float(info.get('dividendYield', 0)) * 100
+    inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
+    rev_growth = round(safe_float(info.get('revenueGrowth', 0)) * 100, 1)
+
+    if 'Semiconductor' in industry or 'Technology' in sector:
+        item_sector = {'text': 'AI / 半導體週期上行，需求能見度高',
+                       'sub':  '全球 AI 基建需求強勁，數據中心與邊緣運算訂單持續擴大'}
+    elif 'Health' in sector:
+        item_sector = {'text': '生技醫療長期趨勢受益，研發管線具催化潛力',
+                       'sub':  '老齡化人口驅動需求，創新藥品審批進程順利'}
+    elif 'Financial' in sector:
+        item_sector = {'text': '高利率環境有利淨利差，金融股盈利能力強',
+                       'sub':  '利率高位支撐銀行息差收益，貸款品質穩健'}
+    elif 'Energy' in sector:
+        item_sector = {'text': '能源供需緊張，盈利與現金流充裕',
+                       'sub':  '原油/天然氣高位，公司資本回報計畫積極'}
+    elif 'Consumer' in sector:
+        item_sector = {'text': '消費需求韌性佳，定價能力與市佔率穩固',
+                       'sub':  '消費者支出維持正成長，品牌護城河保護利潤率'}
+    else:
+        item_sector = {'text': '產業趨勢受益，長期成長邏輯明確',
+                       'sub':  '市場份額持續擴大，商業模式優化'}
+
+    if rev_growth > 15:
+        item_growth = {'text': f'營收年增 {rev_growth:.0f}%，業績動能強勁',
+                       'sub':  '財報持續超預期，機構法人上調目標價，成長確定性高'}
+    elif rev_growth > 0:
+        item_growth = {'text': f'營收穩健成長 {rev_growth:.0f}%，基本面支撐',
+                       'sub':  '成長軌道持續，估值有基本面背書'}
+    else:
+        item_growth = {'text': '技術面關鍵位置蓄積，突破動能累積',
+                       'sub':  '觀察成交量配合情況確認突破方向'}
+
+    if inst_pct >= 60:
+        item_inst = {'text': f'機構持股 {inst_pct:.0f}%，主力資金深度佈局',
+                     'sub':  '大型機構長線持有，護盤意願強，籌碼結構穩定'}
+    elif inst_pct >= 30:
+        item_inst = {'text': f'機構持股 {inst_pct:.0f}%，法人籌碼穩固',
+                     'sub':  '機構積極佈局，長線資金介入增強價格支撐'}
+    else:
+        item_inst = {'text': '法人持股動向值得關注，持續觀察籌碼面',
+                     'sub':  '留意機構大額進出異動，籌碼面變化影響短期走勢'}
+
+    if div_yield >= 4:
+        item_div = {'text': f'高殖利率 {div_yield:.1f}%，防禦配置首選',
+                    'sub':  '高股息提供下跌緩衝，適合穩健型投資人'}
+    elif div_yield >= 1:
+        item_div = {'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
+                    'sub':  '定期現金股利，顯示公司財務健康與回饋股東意願'}
+    else:
+        item_div = {'text': '成長型公司，資本優先投入業務擴張',
+                    'sub':  '公司將資本配置於高回報成長項目，追求 EPS 長期提升'}
+
+    extras = [item_sector, item_growth, item_inst, item_div]
     while len(cats) < 4:
         cats.append({'num': len(cats)+1, **extras[len(cats) % len(extras)]})
     return cats[:4]
@@ -470,7 +521,9 @@ def gen_etf_investment_value(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
     }
 
 
-def gen_risks(price, ma20, rsi, vol_ratio, week52h, pe=0, fwd_pe=0, beta=1.0, debt_equity=0):
+def gen_risks(price, ma20, rsi, vol_ratio, week52h,
+              pe=0, fwd_pe=0, beta=1.0, debt_equity=0,
+              sector='', industry=''):
     risks = []
     from_high = (price - week52h) / week52h * 100 if week52h > 0 else 0
     ref_pe = fwd_pe if fwd_pe > 0 else pe
@@ -508,16 +561,43 @@ def gen_risks(price, ma20, rsi, vol_ratio, week52h, pe=0, fwd_pe=0, beta=1.0, de
     if vol_ratio > 3.5:
         risks.append({'level':'medium', 'category':'籌碼風險', 'text':f'成交量爆量（{vol_ratio:.1f}x 均量），短期獲利了結賣壓可能增加，注意籌碼鬆動'})
 
-    # Always-present macro & business risks
-    risks.append({'level':'medium', 'category':'總經風險', 'text':'聯準會利率政策與通膨數據仍具不確定性，高估值成長股對利率敏感度高'})
-    risks.append({'level':'low',    'category':'業務風險', 'text':'市場競爭加劇與技術迭代加速，財報不如預期或展望保守將引發短期大幅波動'})
-    risks.append({'level':'low',    'category':'地緣風險', 'text':'中美貿易摩擦、地緣政治緊張局勢可能影響供應鏈與市場情緒'})
+    # Macro risk — severity depends on valuation and sector
+    is_high_pe = ref_pe > 30 or ref_pe == 0  # unknown PE treated as growth
+    macro_level = 'medium' if (is_high_pe or 'Technology' in sector) else 'low'
+    risks.append({'level': macro_level, 'category': '總經風險',
+                  'text': '聯準會利率政策仍具不確定性，高本益比成長股對利率敏感度高' if is_high_pe
+                          else '宏觀經濟與通膨走勢仍需追蹤，景氣下行時需評估盈利韌性'})
+
+    # Geopolitical risk — only meaningful for tech/semiconductor exposed to China trade
+    is_supply_chain = 'Semiconductor' in industry or 'Electronic' in industry or 'Technology' in sector
+    if is_supply_chain:
+        risks.append({'level': 'low', 'category': '地緣風險',
+                      'text': '中美科技競爭持續，出口管制政策可能影響供應鏈佈局與市場准入'})
+    else:
+        risks.append({'level': 'low', 'category': '業務風險',
+                      'text': '市場競爭加劇與技術迭代加速，財報不如預期或展望保守將引發短期波動'})
 
     return risks[:6]
 
-def gen_strategy(price, ma5, ma20, ma60, rsi, levels):
+def gen_strategy(price, ma5, ma20, ma60, rsi, levels, info=None):
     stop = max(levels['support1'] * 0.97, price * 0.90)
-    if price > ma20 and rsi < 70:
+
+    # Leveraged / inverse ETFs need completely different strategy language
+    _info     = info or {}
+    _sym      = _info.get('symbol', '').upper().replace('.TW','').replace('.TWO','')
+    _name     = (_info.get('longName','') + _info.get('shortName','')).upper()
+    _is_lev   = _sym.endswith('L') or '槓桿' in _name or '2倍' in _name
+    _is_inv   = _sym.endswith('R') or _sym.endswith('B') or '反向' in _name
+
+    if _is_lev:
+        long_t  = '不適合長期持有，槓桿耗損效應將侵蝕長期報酬，建議操作週期以日至週為限'
+        swing_t = f'趨勢明確時可短線追進，突破 ${levels["resistance1"]:.2f} 加碼，嚴格設 MA20 止損'
+        short_t = f'短線支撐參考 ${levels["support1"]:.2f}，重倉風險極高，部位控制在總資金 10% 內'
+    elif _is_inv:
+        long_t  = '不適合長期持有，僅限短線空頭避險，持有超過 2 週複利效應將大幅偏離 -1 倍報酬'
+        swing_t = f'看空市場時可短線介入，指數反彈（本ETF回落至 ${levels["support1"]:.2f}）時注意止損'
+        short_t = f'操作週期建議 1-5 個交易日，平倉後勿持有過夜部位過重'
+    elif price > ma20 and rsi < 70:
         long_t  = f'逢回布局，回測 MA20（${ma20:.2f}）附近加倉，止損設 MA60（${ma60:.2f}）下方 3%'
         swing_t = f'波段操作：突破近期高點 ${levels["resistance1"]:.2f} 後加碼，回踩 MA20 止損'
         short_t = f'短線留意支撐位 ${levels["support1"]:.2f} 附近反彈機會，嚴格設止損'
@@ -525,12 +605,28 @@ def gen_strategy(price, ma5, ma20, ma60, rsi, levels):
         long_t  = f'等待股價站穩 MA60（${ma60:.2f}）後再布局，降低進場風險'
         swing_t = f'等待回測 MA20（${ma20:.2f}）確認支撐後入場，止損設前低'
         short_t = f'技術面偏弱，觀望為主，等待均線金叉信號再行動'
+
+    # Price targets: prefer analyst data, fall back to technical levels
+    t_mean = safe_float((info or {}).get('targetMeanPrice', 0))
+    t_high = safe_float((info or {}).get('targetHighPrice', 0))
+    t_low  = safe_float((info or {}).get('targetLowPrice',  0))
+
+    if t_mean > price:
+        bull_t    = round(t_high if t_high > t_mean else t_mean * 1.08, 1)
+        neutral_t = round(t_mean, 1)
+        bear_t    = round(t_low  if 0 < t_low < price else price * 0.90, 1)
+    else:
+        # No valid analyst coverage — derive from technical levels
+        bull_t    = round(max(levels['resistance2'], price * 1.15), 1)
+        neutral_t = round(levels['resistance1'] if levels['resistance1'] > price else price * 1.08, 1)
+        bear_t    = round(levels['support2']    if levels['support2']    < price else price * 0.90, 1)
+
     return {
         'long': long_t, 'swing': swing_t, 'short': short_t,
         'stopLoss':       round(stop, 2),
-        'bullTarget':     round(price * 1.30, 1),
-        'neutralTarget':  round(price * 1.12, 1),
-        'bearTarget':     round(price * 0.85, 1),
+        'bullTarget':     bull_t,
+        'neutralTarget':  neutral_t,
+        'bearTarget':     bear_t,
     }
 
 # ── Routes ────────────────────────────────────────────────────────
@@ -751,8 +847,10 @@ def get_stock(ticker):
                                 pe=safe_float(info.get('trailingPE',0)),
                                 fwd_pe=safe_float(info.get('forwardPE',0)),
                                 beta=safe_float(info.get('beta',1)),
-                                debt_equity=safe_float(info.get('debtToEquity',0)))
-        strategy    = gen_strategy(price, ma5, ma20, ma60, rsi_v, levels)
+                                debt_equity=safe_float(info.get('debtToEquity',0)),
+                                sector=info.get('sector',''),
+                                industry=info.get('industry',''))
+        strategy    = gen_strategy(price, ma5, ma20, ma60, rsi_v, levels, info=info)
         returns     = calc_returns(hist)
         invest_val  = gen_investment_value(
             price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
@@ -927,15 +1025,17 @@ def tw_display(ticker):
     return ticker.replace('.TWO', '').replace('.TW', '')
 
 def gen_tw_risks(price, ma20, rsi, vol_ratio, week52h,
-                 pe=0, fwd_pe=0, beta=1.0, debt_equity=0, is_etf=False):
+                 pe=0, fwd_pe=0, beta=1.0, debt_equity=0,
+                 is_etf=False, inst_pct=0, ticker='', etf_name=''):
     risks = []
     from_high = (price - week52h) / week52h * 100 if week52h > 0 else 0
     ref_pe = fwd_pe if fwd_pe > 0 else pe
 
-    if ref_pe > 30:
-        risks.append({'level':'high',   'category':'估值風險', 'text':f'本益比 {ref_pe:.0f}x 高於台股歷史均值（約15-20x），業績須持續超預期才能支撐估值'})
-    elif ref_pe > 20:
-        risks.append({'level':'medium', 'category':'估值風險', 'text':f'本益比 {ref_pe:.0f}x 略高，需關注業績成長是否持續兌現'})
+    if not is_etf:  # PE is not a meaningful metric for ETFs
+        if ref_pe > 30:
+            risks.append({'level':'high',   'category':'估值風險', 'text':f'本益比 {ref_pe:.0f}x 高於台股歷史均值（約15-20x），業績須持續超預期才能支撐估值'})
+        elif ref_pe > 20:
+            risks.append({'level':'medium', 'category':'估值風險', 'text':f'本益比 {ref_pe:.0f}x 略高，需關注業績成長是否持續兌現'})
 
     if rsi > 75:
         risks.append({'level':'high',   'category':'技術風險', 'text':f'RSI {rsi:.0f} 嚴重超買，技術面過熱，短線回調風險高，建議等待拉回再布局'})
@@ -959,12 +1059,35 @@ def gen_tw_risks(price, ma20, rsi, vol_ratio, week52h,
     if vol_ratio > 3.5:
         risks.append({'level':'medium', 'category':'籌碼風險', 'text':f'成交量爆量（{vol_ratio:.1f}x 均量），短期獲利了結賣壓可能增加，注意籌碼鬆動'})
 
+    # ETF-specific risk: differentiate leveraged/inverse from regular
     if is_etf:
-        risks.append({'level':'low', 'category':'追蹤風險', 'text':'ETF 追蹤誤差與折溢價可能影響實際報酬，建議定期確認 NAV 與市價差異'})
+        sym  = ticker.upper().replace('.TW', '').replace('.TWO', '')
+        name_upper = etf_name.upper()
+        is_lev = sym.endswith('L') or '槓桿' in name_upper or '2倍' in name_upper
+        is_inv = sym.endswith('R') or sym.endswith('B') or '反向' in name_upper or 'INVERSE' in name_upper
+        if is_lev:
+            risks.append({'level':'high', 'category':'槓桿耗損風險',
+                          'text':'槓桿ETF每日重新平衡，長期持有因複利衰減效應（beta slippage）報酬將顯著偏離2倍指數，不適合長期持有或定期定額'})
+        elif is_inv:
+            risks.append({'level':'high', 'category':'方向風險',
+                          'text':'反向ETF僅適合短線避險，長期持有因複利效應將顯著偏離預期報酬，須嚴格設定停利停損'})
+        else:
+            risks.append({'level':'low', 'category':'追蹤風險',
+                          'text':'ETF追蹤誤差與折溢價可能影響實際報酬，建議定期確認 NAV 與市價差異'})
 
-    risks.append({'level':'medium', 'category':'地緣風險', 'text':'兩岸關係緊張及地緣政治局勢仍是台股最大不確定因素，可能引發外資快速撤離並衝擊市場'})
-    risks.append({'level':'medium', 'category':'總經風險', 'text':'台灣央行利率政策、新台幣匯率走勢及全球景氣循環均對台股形成壓力，需密切追蹤'})
-    risks.append({'level':'low',    'category':'外資風險', 'text':'外資持股比例高，全球風險趨避情緒升溫時可能引發大量賣超，衝擊市場流動性'})
+    # Geopolitical risk — always relevant for Taiwan
+    risks.append({'level':'medium', 'category':'地緣風險',
+                  'text':'兩岸關係緊張及地緣政治局勢仍是台股最大不確定因素，可能引發外資快速撤離並衝擊市場'})
+
+    # Macro risk — always relevant for Taiwan
+    risks.append({'level':'medium', 'category':'總經風險',
+                  'text':'台灣央行利率政策、新台幣匯率走勢及全球景氣循環均對台股形成壓力，需密切追蹤'})
+
+    # Foreign ownership risk — only if inst_pct is actually high
+    if inst_pct >= 25:
+        risks.append({'level':'low', 'category':'外資風險',
+                      'text':f'外資持股 {inst_pct:.0f}%，全球風險趨避情緒升溫時可能引發大量賣超，衝擊市場流動性'})
+
     return risks[:6]
 
 def gen_tw_catalysts(price, ma5, ma20, ma60, macd, dea, rsi,
@@ -984,19 +1107,109 @@ def gen_tw_catalysts(price, ma5, ma20, ma60, macd, dea, rsi,
                      'sub': '短中長期均線支撐，回撐布局機會，趨勢延續性高'})
 
     if is_etf:
-        extras = [
-            {'text': '長期定期定額最佳工具，分散風險效果佳', 'sub': '追蹤指數，分散個股風險，適合長期穩健投資人'},
-            {'text': '費用率低廉，長期複利效果顯著優越',     'sub': '相較主動基金費用低，長期績效差異大'},
-            {'text': '配息穩定，適合退休規劃與現金流需求',   'sub': '定期配息提供穩定現金流，適合保守型投資人'},
-            {'text': '流動性佳，買賣彈性高於一般基金',       'sub': '交易所掛牌，隨時買賣，不受申購贖回限制'},
-        ]
+        name      = (info.get('longName', '') + ' ' + info.get('shortName', '')).upper()
+        # yfinance returns dividendYield as a percentage for TW tickers (e.g. 6.65 = 6.65%)
+        div_yield = safe_float(info.get('dividendYield', 0))
+        sym       = info.get('symbol', '').upper().replace('.TW', '').replace('.TWO', '')
+
+        is_leveraged = sym.endswith('L') or '槓桿' in name or '2倍' in name
+        is_inverse   = sym.endswith('R') or '反向' in name or 'INVERSE' in name
+        is_bond      = '債' in name or 'BOND' in name
+        is_esg       = 'ESG' in name or '永續' in name
+        is_income    = '高息' in name or '高股息' in name or div_yield >= 4
+
+        if is_leveraged:
+            item0 = {'text': '短線波段放大工具，掌握指數趨勢倍數報酬',
+                     'sub':  '適合有操作經驗的短線投資人，不適合長期持有或定期定額'}
+        elif is_inverse:
+            item0 = {'text': '空頭避險工具，指數下跌時反向獲利',
+                     'sub':  '適合短線避險或看空操作，不適合長期持有'}
+        elif is_bond:
+            item0 = {'text': '固定收益特性，股債配置降低整體波動',
+                     'sub':  '與股票低相關性，有效分散組合風險，適合穩健型投資人'}
+        elif is_esg:
+            item0 = {'text': 'ESG永續趨勢，國際機構資金優先配置標的',
+                     'sub':  '符合全球ESG投資潮流，機構法人偏好，長期估值支撐佳'}
+        else:
+            item0 = {'text': '長期定期定額最佳工具，分散風險效果佳',
+                     'sub':  '追蹤指數，分散個股風險，適合長期穩健投資人'}
+
+        item1 = {'text': '費用率低廉，長期複利效果顯著優越',
+                 'sub':  '相較主動基金費用低，長期績效差異大'}
+
+        if is_leveraged or is_inverse:
+            item2 = {'text': '短線操作為主，嚴格控制持有時間與部位',
+                     'sub':  '複利衰減效應使長期持有報酬大幅偏離預期，建議持有週期不超過數週'}
+        elif div_yield == 0:
+            item2 = {'text': '不配息設計，股息自動滾入淨值複利效果佳',
+                     'sub':  '股利完整保留於淨值，免配息扣稅，長期資本累積效率更高'}
+        elif is_income:
+            item2 = {'text': f'高殖利率 {div_yield:.1f}%，現金流穩定豐厚',
+                     'sub':  '高額定期配息，適合退休規劃與追求現金流的存股族'}
+        else:
+            item2 = {'text': f'配息 {div_yield:.1f}%，適合退休規劃與現金流需求',
+                     'sub':  '定期配息提供穩定現金流，適合保守型投資人'}
+
+        item3 = {'text': '流動性佳，買賣彈性高於一般基金',
+                 'sub':  '交易所掛牌，隨時買賣，不受申購贖回限制'}
+
+        extras = [item0, item1, item2, item3]
     else:
-        extras = [
-            {'text': 'AI 供應鏈受惠，台灣半導體優勢持續',   'sub': '全球 AI 基礎建設需求旺盛，台廠訂單能見度高'},
-            {'text': '三大法人合計買超，籌碼結構穩定',       'sub': '外資＋投信＋自營商共同護盤，主力資金積極介入'},
-            {'text': '配息穩定，殖利率具吸引力',             'sub': '高殖利率在利率環境中具防禦優勢，吸引存股族'},
-            {'text': '技術面關鍵位置蓄積，突破動能累積中',   'sub': '等待成交量配合確認突破，上漲空間可期'},
-        ]
+        sector    = info.get('sector', '')
+        industry  = info.get('industry', '')
+        # yfinance returns dividendYield as a percentage for TW tickers
+        div_yield = safe_float(info.get('dividendYield', 0))
+        inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
+        rev_growth = round(safe_float(info.get('revenueGrowth', 0)) * 100, 1)
+
+        # Sector-specific item
+        if 'Semiconductor' in industry or 'Electronic' in industry or 'Technology' in sector:
+            item_sector = {'text': 'AI 供應鏈受惠，半導體需求強勁',
+                           'sub':  '全球 AI 基礎建設需求旺盛，台廠訂單能見度高'}
+        elif 'Financial' in sector or 'Insurance' in industry or 'Bank' in industry:
+            item_sector = {'text': '金融股防禦特性佳，利差與費用收入穩定',
+                           'sub':  '息差收益穩健，高股息特性吸引長線資金'}
+        elif 'Basic Materials' in sector or 'Chemical' in industry or 'Steel' in industry:
+            item_sector = {'text': '原材料需求回升，景氣循環支撐股價',
+                           'sub':  '下游需求復甦，庫存去化完成，產品報價趨穩'}
+        elif 'Consumer' in sector:
+            item_sector = {'text': '內需消費持穩，品牌護城河優勢明顯',
+                           'sub':  '消費需求具韌性，市佔率穩固，定價能力強'}
+        else:
+            item_sector = {'text': '產業趨勢受益，長期成長邏輯明確',
+                           'sub':  '市場份額持續擴大，商業模式優化'}
+
+        # Revenue growth item
+        if rev_growth > 15:
+            item_growth = {'text': f'營收年增 {rev_growth:.0f}%，業績動能強勁',
+                           'sub':  '財報持續超預期，機構上調目標價，成長確定性高'}
+        elif rev_growth > 0:
+            item_growth = {'text': f'營收穩健成長 {rev_growth:.0f}%，基本面支撐',
+                           'sub':  '財報品質穩定，成長軌道持續，本益比有支撐'}
+        else:
+            item_growth = {'text': '技術面關鍵位置蓄積，突破動能累積中',
+                           'sub':  '等待成交量配合確認方向，突破後上漲空間可期'}
+
+        # Institutional holding item
+        if inst_pct >= 30:
+            item_inst = {'text': f'外資持股 {inst_pct:.0f}%，法人籌碼穩固',
+                         'sub':  '機構長線佈局，籌碼結構改善，護盤意願強'}
+        else:
+            item_inst = {'text': '三大法人動向值得關注，籌碼面持續觀察',
+                         'sub':  '法人進出影響短期走勢，留意大額異動訊號'}
+
+        # Dividend item
+        if div_yield >= 4:
+            item_div = {'text': f'高殖利率 {div_yield:.1f}%，現金流豐厚',
+                        'sub':  '高股息防禦特性，適合存股族長期持有'}
+        elif div_yield >= 1:
+            item_div = {'text': f'殖利率 {div_yield:.1f}%，股東回饋穩定',
+                        'sub':  '定期現金回報，股東回饋政策明確'}
+        else:
+            item_div = {'text': '成長型標的，以資本增值為主要報酬來源',
+                        'sub':  '公司優先將資金投入業務擴張，追求 EPS 長期成長'}
+
+        extras = [item_sector, item_growth, item_inst, item_div]
     while len(cats) < 4:
         cats.append({'num': len(cats)+1, **extras[len(cats) % len(extras)]})
     return cats[:4]
@@ -1131,8 +1344,11 @@ def get_tw_stock(ticker):
                                    fwd_pe=safe_float(info.get('forwardPE', 0)),
                                    beta=safe_float(info.get('beta', 1)),
                                    debt_equity=safe_float(info.get('debtToEquity', 0)),
-                                   is_etf=is_etf)
-        strategy    = gen_strategy(price, ma5, ma20, ma60, rsi_v, levels)
+                                   is_etf=is_etf,
+                                   inst_pct=inst_pct,
+                                   ticker=ticker,
+                                   etf_name=info.get('longName', '') + info.get('shortName', '') if is_etf else '')
+        strategy    = gen_strategy(price, ma5, ma20, ma60, rsi_v, levels, info=info)
         returns     = calc_returns(hist)
         invest_val  = gen_investment_value(
             price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
@@ -1180,7 +1396,7 @@ def get_tw_stock(ticker):
             }
             invest_val = gen_etf_investment_value(
                 price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
-                div_yield=round(safe_float(info.get('dividendYield', 0)) * 100, 2),
+                div_yield=round(safe_float(info.get('dividendYield', 0)), 2),
                 expense_ratio=er_pct,
                 total_assets=ta_yi,
                 vol_ratio=vol_ratio,
@@ -1222,7 +1438,7 @@ def get_tw_stock(ticker):
             'eps':           round(safe_float(info.get('trailingEps', 0)), 2),
             'fwdEps':        fwd_eps,
             'beta':          round(safe_float(info.get('beta',        0)), 2),
-            'divYield':      round(safe_float(info.get('dividendYield', 0)) * 100, 2),
+            'divYield':      round(safe_float(info.get('dividendYield', 0)), 2),
             'sharesOut':     safe_int(info.get('sharesOutstanding', 0)),
             'week52High':    round(week52h, 2),
             'week52Low':     round(week52l, 2),
