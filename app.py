@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 import warnings
 import time
+import requests as _requests
+from xml.etree import ElementTree as ET
+import urllib.parse
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
@@ -1005,6 +1008,30 @@ def get_tw_stock(ticker):
         return jsonify({'error': str(e)}), 500
 
 
+def _fetch_gnews(query, max_results=10):
+    try:
+        q   = urllib.parse.quote(query)
+        url = f'https://news.google.com/rss/search?q={q}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant'
+        r   = _requests.get(url, timeout=6, headers={'User-Agent': 'Mozilla/5.0'})
+        if r.status_code != 200:
+            return []
+        root  = ET.fromstring(r.content)
+        items = root.findall('.//item')
+        out   = []
+        for item in items[:max_results]:
+            title = item.findtext('title', '').strip()
+            link  = item.findtext('link', '').strip()
+            pub   = item.findtext('pubDate', '')
+            src   = item.find('source')
+            publisher = src.text.strip() if src is not None else 'Google News'
+            if title and link:
+                out.append({'title': title, 'publisher': publisher, 'url': link,
+                            'summary': '', 'pubTime': pub})
+        return out
+    except Exception:
+        return []
+
+
 @app.route('/api/tw/news/<ticker>')
 def get_tw_news(ticker):
     ticker = tw_normalize(ticker)
@@ -1012,8 +1039,10 @@ def get_tw_news(ticker):
     if cached: return jsonify(cached)
     try:
         stock    = yf.Ticker(ticker)
+        info     = stock.info
         raw_news = stock.news or []
         articles = []
+        seen_titles = set()
         for item in raw_news[:12]:
             c         = item.get('content', {})
             title     = c.get('title', '')
@@ -1021,9 +1050,24 @@ def get_tw_news(ticker):
             url       = (c.get('canonicalUrl') or {}).get('url', '')
             summary   = c.get('summary', '') or ''
             pub_time  = c.get('pubDate', '')
-            if title:
+            if title and title not in seen_titles:
+                seen_titles.add(title)
                 articles.append({'title': title, 'publisher': publisher, 'url': url,
                                   'summary': summary[:180], 'pubTime': pub_time})
+
+        # Supplement with Google News if fewer than 6 articles
+        if len(articles) < 6:
+            code = ticker.replace('.TW','').replace('.TWO','')
+            name = info.get('shortName', '') or info.get('longName', '') or ''
+            query = f'{code} {name} 台股' if name else f'{code} 台股'
+            gn = _fetch_gnews(query, max_results=12)
+            for a in gn:
+                if a['title'] not in seen_titles:
+                    seen_titles.add(a['title'])
+                    articles.append(a)
+                    if len(articles) >= 15:
+                        break
+
         result = {'ticker': ticker, 'articles': articles}
         _cache_set(f'tw_news:{ticker}', result, ttl=180)
         return jsonify(result)

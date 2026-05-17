@@ -17,6 +17,22 @@
 /* ── Market Switch ──────────────────────────────────────────────── */
 .market-switch { color:var(--gold); font-size:0.78rem; font-weight:700; text-decoration:none; padding:4px 12px; border:1px solid var(--gold)30; border-radius:6px; white-space:nowrap; transition:all .15s; }
 .market-switch:hover { background:var(--gold)15; }
+/* ── MA Settings Panel ─────────────────────────────────────────── */
+.ma-cfg-btn { background:transparent; border:1px solid var(--border); color:var(--text-dim); padding:2px 7px; border-radius:5px; cursor:pointer; font-size:0.75rem; transition:all .15s; line-height:1.6; }
+.ma-cfg-btn:hover { border-color:var(--accent); color:var(--accent); }
+.ma-cfg-panel { position:absolute; right:0; top:calc(100% + 6px); background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; z-index:200; min-width:220px; box-shadow:0 8px 32px rgba(0,0,0,.5); }
+.ma-cfg-title { font-size:0.75rem; color:var(--text-dim); margin-bottom:10px; font-weight:700; letter-spacing:.5px; }
+.ma-cfg-inputs { display:flex; flex-direction:column; gap:8px; }
+.ma-cfg-item { display:flex; align-items:center; gap:8px; }
+.ma-cfg-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.ma-cfg-item label { font-size:0.75rem; color:var(--text-mid); min-width:28px; }
+.ma-cfg-item input { width:60px; padding:3px 6px; background:#060c18; border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:0.8rem; text-align:center; }
+.ma-cfg-item input:focus { outline:none; border-color:var(--accent); }
+.ma-cfg-actions { display:flex; gap:6px; margin-top:12px; }
+.ma-cfg-apply { flex:1; padding:5px; background:var(--accent); border:none; border-radius:5px; color:#fff; font-size:0.75rem; font-weight:700; cursor:pointer; }
+.ma-cfg-close { padding:5px 10px; background:transparent; border:1px solid var(--border); border-radius:5px; color:var(--text-dim); font-size:0.75rem; cursor:pointer; }
+.ma-cfg-apply:hover { filter:brightness(1.15); }
+.ma-cfg-close:hover { border-color:var(--text-mid); color:var(--text-mid); }
 </style>
 </head>
 <body>
@@ -307,13 +323,42 @@
   <!-- 4. Chart + Right Panel -->
   <div class="two-col chart-row">
     <div class="card chart-card">
-      <div class="chart-top">
+      <div class="chart-top" style="position:relative">
         <div class="ma-pills" id="maPills"></div>
-        <div class="period-tabs">
-          <button class="ptab active" data-period="1M" onclick="changePeriod('1M')">1M</button>
-          <button class="ptab" data-period="3M" onclick="changePeriod('3M')">3M</button>
-          <button class="ptab" data-period="6M" onclick="changePeriod('6M')">6M</button>
-          <button class="ptab" data-period="1Y" onclick="changePeriod('1Y')">1Y</button>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="period-tabs">
+            <button class="ptab" data-period="5D" onclick="changePeriod('5D')">5D</button>
+            <button class="ptab" data-period="週" onclick="changePeriod('週')">週</button>
+            <button class="ptab active" data-period="1M" onclick="changePeriod('1M')">1M</button>
+            <button class="ptab" data-period="3M" onclick="changePeriod('3M')">3M</button>
+            <button class="ptab" data-period="6M" onclick="changePeriod('6M')">6M</button>
+            <button class="ptab" data-period="1Y" onclick="changePeriod('1Y')">1Y</button>
+          </div>
+          <button class="ma-cfg-btn" onclick="toggleMASettings()" title="自訂均線">⚙</button>
+        </div>
+        <div id="maSettingsPanel" class="ma-cfg-panel hidden">
+          <div class="ma-cfg-title">自訂均線週期</div>
+          <div class="ma-cfg-inputs">
+            <div class="ma-cfg-item">
+              <span class="ma-cfg-dot" style="background:#ffa000"></span>
+              <label>MA1</label>
+              <input type="number" id="maInput1" min="1" max="500" value="5">
+            </div>
+            <div class="ma-cfg-item">
+              <span class="ma-cfg-dot" style="background:#d94fff"></span>
+              <label>MA2</label>
+              <input type="number" id="maInput2" min="1" max="500" value="20">
+            </div>
+            <div class="ma-cfg-item">
+              <span class="ma-cfg-dot" style="background:#36c6ff"></span>
+              <label>MA3</label>
+              <input type="number" id="maInput3" min="1" max="500" value="60">
+            </div>
+          </div>
+          <div class="ma-cfg-actions">
+            <button class="ma-cfg-apply" onclick="applyMASettings()">套用</button>
+            <button class="ma-cfg-close" onclick="toggleMASettings()">關閉</button>
+          </div>
         </div>
       </div>
       <div id="indicatorBar" class="indicator-bar"></div>
@@ -516,6 +561,120 @@ function displayTW(ticker) {
 // ── State ──────────────────────────────────────────────────────────
 let currentData   = null;
 let currentPeriod = '1M';
+let maSettings    = JSON.parse(localStorage.getItem('tw_ma_settings') || 'null') || {m1:5, m2:20, m3:60};
+
+// ── MA helpers ──────────────────────────────────────────────────────
+function calcMA(closes, period) {
+  return closes.map((_, i) => {
+    if (i < period - 1) return null;
+    const sl = closes.slice(i - period + 1, i + 1);
+    const valid = sl.filter(v => v != null);
+    if (valid.length < period) return null;
+    return +(valid.reduce((a, b) => a + b, 0) / period).toFixed(2);
+  });
+}
+function calcEMA(arr, period) {
+  const k = 2 / (period + 1);
+  const result = new Array(arr.length).fill(null);
+  let ema = null, cnt = 0, sum = 0;
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] == null) continue;
+    if (ema === null) {
+      sum += arr[i]; cnt++;
+      if (cnt === period) { ema = sum / period; result[i] = +ema.toFixed(4); }
+    } else {
+      ema = arr[i] * k + ema * (1 - k);
+      result[i] = +ema.toFixed(4);
+    }
+  }
+  return result;
+}
+function calcBollingerJS(closes, period=20, dev=2) {
+  const upper=[], mid=[], lower=[];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { upper.push(null); mid.push(null); lower.push(null); continue; }
+    const sl = closes.slice(i - period + 1, i + 1).filter(v => v != null);
+    if (sl.length < period) { upper.push(null); mid.push(null); lower.push(null); continue; }
+    const mean = sl.reduce((a,b) => a+b, 0) / period;
+    const std  = Math.sqrt(sl.reduce((a,b) => a+(b-mean)**2, 0) / period);
+    upper.push(+(mean + dev*std).toFixed(2));
+    mid.push(  +mean.toFixed(2));
+    lower.push(+(mean - dev*std).toFixed(2));
+  }
+  return [upper, mid, lower];
+}
+
+function computeCustomMAs(data) {
+  const closes = data.ohlcv.close;
+  const { m1, m2, m3 } = maSettings;
+  const a1 = calcMA(closes, m1), a2 = calcMA(closes, m2), a3 = calcMA(closes, m3);
+  const last = arr => { for (let i=arr.length-1; i>=0; i--) if (arr[i]!=null) return arr[i]; return null; };
+  return { arrays: {m1:a1, m2:a2, m3:a3}, scalars: {m1:last(a1), m2:last(a2), m3:last(a3)} };
+}
+
+function resampleWeekly(data) {
+  const { dates, ohlcv, macd, rsiSeries } = data;
+  const weekGroups = new Map(), weekOrder = [];
+  dates.forEach((ds, i) => {
+    const d = new Date(ds + 'T00:00:00');
+    const day = d.getDay() || 7;
+    const mon = new Date(d); mon.setDate(d.getDate() - day + 1);
+    const key = mon.toISOString().slice(0,10);
+    if (!weekGroups.has(key)) { weekGroups.set(key, []); weekOrder.push(key); }
+    weekGroups.get(key).push(i);
+  });
+  const wD=[], wO=[], wH=[], wL=[], wC=[], wV=[], wMd=[], wMs=[], wMh=[], wRsi=[];
+  for (const key of weekOrder) {
+    const idxs = weekGroups.get(key);
+    const vc = idxs.map(i => ohlcv.close[i]).filter(v => v!=null);
+    if (!vc.length) continue;
+    const li = idxs[idxs.length-1];
+    wD.push(dates[li]);
+    wO.push(ohlcv.open[idxs[0]]);
+    wH.push(Math.max(...idxs.map(i=>ohlcv.high[i]).filter(v=>v!=null)));
+    wL.push(Math.min(...idxs.map(i=>ohlcv.low[i]).filter(v=>v!=null)));
+    wC.push(ohlcv.close[li]);
+    wV.push(idxs.reduce((s,i)=>s+(ohlcv.volume[i]||0),0));
+    wMd.push(macd.dif[li]); wMs.push(macd.dea[li]); wMh.push(macd.hist[li]);
+    wRsi.push(rsiSeries[li]);
+  }
+  const [bbU, bbM, bbL] = calcBollingerJS(wC);
+  const { m1, m2, m3 } = maSettings;
+  const wa1=calcMA(wC,m1), wa2=calcMA(wC,m2), wa3=calcMA(wC,m3);
+  const last = arr => { for (let i=arr.length-1;i>=0;i--) if(arr[i]!=null) return arr[i]; return null; };
+  return { ...data,
+    dates: wD,
+    ohlcv: { open:wO, high:wH, low:wL, close:wC, volume:wV },
+    macd:  { dif:wMd, dea:wMs, hist:wMh },
+    bollinger: { upper:bbU, mid:bbM, lower:bbL },
+    rsiSeries: wRsi,
+    customMA: { arrays:{m1:wa1, m2:wa2, m3:wa3}, scalars:{m1:last(wa1), m2:last(wa2), m3:last(wa3)} },
+  };
+}
+
+// ── MA Settings UI ───────────────────────────────────────────────────
+function toggleMASettings() {
+  const p = $('maSettingsPanel');
+  if (p.classList.contains('hidden')) {
+    $('maInput1').value = maSettings.m1;
+    $('maInput2').value = maSettings.m2;
+    $('maInput3').value = maSettings.m3;
+    p.classList.remove('hidden');
+  } else {
+    p.classList.add('hidden');
+  }
+}
+function applyMASettings() {
+  const v1 = parseInt($('maInput1').value), v2 = parseInt($('maInput2').value), v3 = parseInt($('maInput3').value);
+  if (!v1||!v2||!v3||v1<1||v2<1||v3<1) return;
+  maSettings = {m1:v1, m2:v2, m3:v3};
+  localStorage.setItem('tw_ma_settings', JSON.stringify(maSettings));
+  $('maSettingsPanel').classList.add('hidden');
+  if (currentData) {
+    currentData._customMA = computeCustomMAs(currentData);
+    changePeriod(currentPeriod);
+  }
+}
 
 // ── Entry ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -600,6 +759,7 @@ async function loadStock(raw) {
     const d = await r.json();
     if (d.error) { showError(d.error); return; }
     currentData = d;
+    currentData._customMA = computeCustomMAs(currentData);
     renderDashboard(d);
     hide('loading'); show('dashboard');
     setTimeout(() => changePeriod(currentPeriod), 50);
@@ -627,19 +787,25 @@ function changePeriod(period) {
   if (!currentData) return;
   currentPeriod = period;
   document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.period === period));
-  const n = { '1M': 21, '3M': 63, '6M': 126, '1Y': 252 }[period] || 252;
-  const sl = arr => arr ? arr.slice(-n) : [];
-  const sliced = Object.assign({}, currentData, {
-    dates:     sl(currentData.dates),
-    ohlcv:     { open: sl(currentData.ohlcv.open), high: sl(currentData.ohlcv.high),
-                 low:  sl(currentData.ohlcv.low),  close: sl(currentData.ohlcv.close),
-                 volume: sl(currentData.ohlcv.volume) },
-    ma:        { ma5: sl(currentData.ma.ma5), ma20: sl(currentData.ma.ma20), ma60: sl(currentData.ma.ma60) },
-    macd:      { dif: sl(currentData.macd.dif), dea: sl(currentData.macd.dea), hist: sl(currentData.macd.hist) },
-    bollinger: { upper: sl(currentData.bollinger.upper), mid: sl(currentData.bollinger.mid), lower: sl(currentData.bollinger.lower) },
-    rsiSeries: sl(currentData.rsiSeries),
-  });
-  renderCharts(sliced);
+  if (period === '週') {
+    renderCharts(resampleWeekly(currentData));
+  } else {
+    const n = { '5D': 5, '1M': 21, '3M': 63, '6M': 126, '1Y': 252 }[period] || 252;
+    const sl = arr => arr ? arr.slice(-n) : [];
+    const cma = currentData._customMA;
+    const sliced = Object.assign({}, currentData, {
+      dates:     sl(currentData.dates),
+      ohlcv:     { open: sl(currentData.ohlcv.open), high: sl(currentData.ohlcv.high),
+                   low:  sl(currentData.ohlcv.low),  close: sl(currentData.ohlcv.close),
+                   volume: sl(currentData.ohlcv.volume) },
+      ma:        { ma5: sl(currentData.ma.ma5), ma20: sl(currentData.ma.ma20), ma60: sl(currentData.ma.ma60) },
+      macd:      { dif: sl(currentData.macd.dif), dea: sl(currentData.macd.dea), hist: sl(currentData.macd.hist) },
+      bollinger: { upper: sl(currentData.bollinger.upper), mid: sl(currentData.bollinger.mid), lower: sl(currentData.bollinger.lower) },
+      rsiSeries: sl(currentData.rsiSeries),
+      customMA:  { arrays: { m1: sl(cma.arrays.m1), m2: sl(cma.arrays.m2), m3: sl(cma.arrays.m3) }, scalars: cma.scalars },
+    });
+    renderCharts(sliced);
+  }
   if (compareData) renderCompareChart();
 }
 
@@ -652,6 +818,7 @@ function renderDashboard(d) {
   renderPerf(d);
   renderShortInfo(d);
   const sl = arr => arr ? arr.slice(-21) : [];
+  const cma = d._customMA || computeCustomMAs(d);
   const sliced1M = Object.assign({}, d, {
     dates:     sl(d.dates),
     ohlcv:     { open: sl(d.ohlcv.open), high: sl(d.ohlcv.high), low: sl(d.ohlcv.low), close: sl(d.ohlcv.close), volume: sl(d.ohlcv.volume) },
@@ -659,6 +826,7 @@ function renderDashboard(d) {
     macd:      { dif: sl(d.macd.dif), dea: sl(d.macd.dea), hist: sl(d.macd.hist) },
     bollinger: { upper: sl(d.bollinger.upper), mid: sl(d.bollinger.mid), lower: sl(d.bollinger.lower) },
     rsiSeries: sl(d.rsiSeries),
+    customMA:  { arrays: { m1: sl(cma.arrays.m1), m2: sl(cma.arrays.m2), m3: sl(cma.arrays.m3) }, scalars: cma.scalars },
   });
   renderCharts(sliced1M);
   renderCatalysts(d);
@@ -785,25 +953,27 @@ function renderShortInfo(d) {
 // ── Indicator Bar ────────────────────────────────────────────────────
 function renderIndicatorBar(d) {
   const price = d.price;
-  const ma5=d.ma5, ma20=d.ma20, ma60=d.ma60;
+  const cs = d.customMA ? d.customMA.scalars : null;
+  const ma1 = cs ? cs.m1 : d.ma5,  ma2 = cs ? cs.m2 : d.ma20, ma3 = cs ? cs.m3 : d.ma60;
+  const l1 = `MA${maSettings.m1}`, l2 = `MA${maSettings.m2}`, l3 = `MA${maSettings.m3}`;
   let maTrend, maColor, maDesc;
-  if (price > ma5 && ma5 > ma20 && ma20 > ma60) {
+  if (price > ma1 && ma1 > ma2 && ma2 > ma3) {
     maTrend='多頭完美排列'; maColor='var(--green)';
-    maDesc=`MA5(${ma5}) > MA20(${ma20}) > MA60(${ma60}) — 短中長期趨勢全面向上`;
-  } else if (price > ma20 && ma20 > ma60) {
+    maDesc=`${l1}(${ma1}) > ${l2}(${ma2}) > ${l3}(${ma3}) — 短中長期趨勢全面向上`;
+  } else if (price > ma2 && ma2 > ma3) {
     maTrend='中期多頭'; maColor='var(--green)';
-    maDesc=`股價站穩 MA20(${ma20})，中長期趨勢仍偏多`;
-  } else if (price < ma60) {
+    maDesc=`股價站穩 ${l2}(${ma2})，中長期趨勢仍偏多`;
+  } else if (price < ma3) {
     maTrend='空頭排列'; maColor='var(--red)';
-    maDesc=`跌破 MA60(${ma60})，中長期趨勢轉弱，謹慎操作`;
+    maDesc=`跌破 ${l3}(${ma3})，中長期趨勢轉弱，謹慎操作`;
   } else {
     maTrend='盤整'; maColor='var(--yellow)';
     maDesc='均線糾結，方向未明，等待突破確認';
   }
 
-  const ma5Cls  = price > ma5  ? 'ib-up' : 'ib-dn';
-  const ma20Cls = price > ma20 ? 'ib-up' : 'ib-dn';
-  const ma60Cls = price > ma60 ? 'ib-up' : 'ib-dn';
+  const ma1Cls = price > ma1 ? 'ib-up' : 'ib-dn';
+  const ma2Cls = price > ma2 ? 'ib-up' : 'ib-dn';
+  const ma3Cls = price > ma3 ? 'ib-up' : 'ib-dn';
 
   let rsiLabel, rsiColor, rsiDesc;
   const rsi = d.rsi;
@@ -824,9 +994,9 @@ function renderIndicatorBar(d) {
     <div class="ib-item">
       <div class="ib-group">
         <span class="ib-tag" style="color:${maColor};border-color:${maColor}20">${maTrend}</span>
-        <span class="ib-kv ${ma5Cls}">MA5 <strong>${ma5}</strong></span>
-        <span class="ib-kv ${ma20Cls}">MA20 <strong>${ma20}</strong></span>
-        <span class="ib-kv ${ma60Cls}">MA60 <strong>${ma60}</strong></span>
+        <span class="ib-kv ${ma1Cls}">${l1} <strong>${ma1}</strong></span>
+        <span class="ib-kv ${ma2Cls}">${l2} <strong>${ma2}</strong></span>
+        <span class="ib-kv ${ma3Cls}">${l3} <strong>${ma3}</strong></span>
       </div>
       <span class="ib-desc">${maDesc}</span>
     </div>
@@ -854,10 +1024,12 @@ function renderIndicatorBar(d) {
 // ── Charts ──────────────────────────────────────────────────────────
 function renderCharts(d) {
   renderIndicatorBar(d);
+  const cs = d.customMA ? d.customMA.scalars : null;
+  const sv1 = cs ? cs.m1 : d.ma5, sv2 = cs ? cs.m2 : d.ma20, sv3 = cs ? cs.m3 : d.ma60;
   setHTML('maPills',
-    `<span class="pill ma5">MA5: ${d.ma5}</span>` +
-    `<span class="pill ma20">MA20: ${d.ma20}</span>` +
-    `<span class="pill ma60">MA60: ${d.ma60}</span>` +
+    `<span class="pill ma5">MA${maSettings.m1}: ${sv1||'--'}</span>` +
+    `<span class="pill ma20">MA${maSettings.m2}: ${sv2||'--'}</span>` +
+    `<span class="pill ma60">MA${maSettings.m3}: ${sv3||'--'}</span>` +
     `<span class="pill rsi">RSI: ${d.rsi}</span>` +
     `<span class="pill bb">BB: ${d.bbLower}~${d.bbUpper}</span>`
   );
@@ -869,6 +1041,11 @@ function renderCharts(d) {
     c >= d.ohlcv.close[i-1] ? 'rgba(232,70,70,0.5)' : 'rgba(0,214,143,0.5)'
   );
 
+  const cmaArr = d.customMA ? d.customMA.arrays : null;
+  const ma1arr = cmaArr ? cmaArr.m1 : d.ma.ma5;
+  const ma2arr = cmaArr ? cmaArr.m2 : d.ma.ma20;
+  const ma3arr = cmaArr ? cmaArr.m3 : d.ma.ma60;
+
   Plotly.newPlot('priceChart', [
     { type:'scatter', mode:'lines', x:dates, y:d.bollinger.upper,
       line:{color:'rgba(100,180,80,0.4)',width:1,dash:'dot'}, connectgaps:false, showlegend:false, hoverinfo:'skip' },
@@ -879,9 +1056,9 @@ function renderCharts(d) {
       x:dates, open:d.ohlcv.open, high:d.ohlcv.high, low:d.ohlcv.low, close:d.ohlcv.close,
       increasing:{line:{color:'#e84646',width:1}, fillcolor:'#e84646'},
       decreasing:{line:{color:'#00d68f',width:1}, fillcolor:'#00d68f'}, showlegend:false },
-    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma5,  name:'MA5',  line:{color:'#ffa000',width:1.5}, connectgaps:false },
-    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma20, name:'MA20', line:{color:'#d94fff',width:1.5}, connectgaps:false },
-    { type:'scatter', mode:'lines', x:dates, y:d.ma.ma60, name:'MA60', line:{color:'#36c6ff',width:1.5}, connectgaps:false },
+    { type:'scatter', mode:'lines', x:dates, y:ma1arr, name:`MA${maSettings.m1}`, line:{color:'#ffa000',width:1.5}, connectgaps:false },
+    { type:'scatter', mode:'lines', x:dates, y:ma2arr, name:`MA${maSettings.m2}`, line:{color:'#d94fff',width:1.5}, connectgaps:false },
+    { type:'scatter', mode:'lines', x:dates, y:ma3arr, name:`MA${maSettings.m3}`, line:{color:'#36c6ff',width:1.5}, connectgaps:false },
   ], {
     paper_bgcolor:BG, plot_bgcolor:BG, font:{color:'#6888a0',size:11},
     showlegend:true,
@@ -1436,7 +1613,7 @@ async function loadCompare() {
 }
 function renderCompareChart() {
   if (!currentData || !compareData) return;
-  const n = {'1M':21,'3M':63,'6M':126,'1Y':252}[currentPeriod]||252;
+  const n = {'5D':5,'1M':21,'3M':63,'6M':126,'1Y':252}[currentPeriod]||252;
   const dates = currentData.dates.slice(-n);
   const c1 = currentData.ohlcv.close.slice(-n);
   const c2 = compareData.ohlcv.close.slice(-Math.min(n,compareData.ohlcv.close.length));
