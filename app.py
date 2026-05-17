@@ -1058,8 +1058,7 @@ def get_tw_news(ticker):
         # Supplement with Google News if fewer than 6 articles
         if len(articles) < 6:
             code = ticker.replace('.TW','').replace('.TWO','')
-            name = info.get('shortName', '') or info.get('longName', '') or ''
-            query = f'{code} {name} 台股' if name else f'{code} 台股'
+            query = f'{code} 台股'
             gn = _fetch_gnews(query, max_results=12)
             for a in gn:
                 if a['title'] not in seen_titles:
