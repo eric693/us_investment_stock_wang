@@ -67,7 +67,7 @@ def calc_gmma(close):
 
 # ── Signal Engines ────────────────────────────────────────────────────
 def _aggressive_signal(stock, ticker, price, name):
-    """🔥 激進爆發型：5分K帶量突破 + MACD 放大"""
+    """激進爆發型：5分K帶量突破 + MACD 放大"""
     hist = stock.history(period='5d', interval='5m')
     if hist.empty or len(hist) < 30:
         return _signal_wait(ticker, name, price, 'aggressive', '盤中資料不足，無法判斷')
@@ -131,7 +131,7 @@ def _aggressive_signal(stock, ticker, price, name):
 
 
 def _steady_signal(stock, ticker, price, name):
-    """🛡️ 穩健保守型：日K GMMA 支撐 + MACD 底部轉強"""
+    """穩健保守型：日K GMMA 支撐 + MACD 底部轉強"""
     hist = stock.history(period='6mo', interval='1d')
     if hist.empty or len(hist) < 60:
         return _signal_wait(ticker, name, price, 'steady', '歷史資料不足，無法判斷')
@@ -1577,13 +1577,20 @@ def send_line_notify():
     try:
         data    = request.json or {}
         token   = data.get('token', '').strip()
+        user_id = data.get('user_id', '').strip()
         message = data.get('message', '').strip()
-        if not token or not message:
-            return jsonify({'error': 'token and message required'}), 400
+        if not token or not user_id or not message:
+            return jsonify({'error': 'token, user_id and message required'}), 400
         r = _requests.post(
-            'https://notify-api.line.me/api/notify',
-            headers={'Authorization': f'Bearer {token}'},
-            data={'message': '\n' + message},
+            'https://api.line.me/v2/bot/message/push',
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {token}',
+            },
+            json={
+                'to': user_id,
+                'messages': [{'type': 'text', 'text': message}],
+            },
             timeout=10
         )
         return jsonify({'status': r.status_code, 'ok': r.status_code == 200,

@@ -414,8 +414,8 @@
       <div class="monitor-row">
         <span class="monitor-label">操作模式</span>
         <div class="mode-btn-group">
-          <button class="mode-btn active" id="modeOff"   onclick="setMonitorMode('off')">⏸ 關閉</button>
-          <button class="mode-btn"        id="modeAuto"  onclick="setMonitorMode('auto')">🤖 智慧自動</button>
+          <button class="mode-btn active" id="modeOff"   onclick="setMonitorMode('off')">關閉</button>
+          <button class="mode-btn"        id="modeAuto"  onclick="setMonitorMode('auto')">智慧自動</button>
         </div>
       </div>
       <!-- Row 2: Profile (only when auto) -->
@@ -423,13 +423,13 @@
         <span class="monitor-label">策略性格</span>
         <div class="profile-select-wrap">
           <button class="profile-btn aggressive active" id="profileAggressive" onclick="setProfile('aggressive')">
-            🔥 激進爆發型
+            激進爆發型
           </button>
           <button class="profile-btn steady" id="profileSteady" onclick="setProfile('steady')">
-            🛡️ 穩健保守型
+            穩健保守型
           </button>
         </div>
-        <button class="scan-btn" id="scanBtn" onclick="manualScan()">⚡ 立即掃描</button>
+        <button class="scan-btn" id="scanBtn" onclick="manualScan()">立即掃描</button>
       </div>
       <!-- Row 3: Profile desc -->
       <div id="profileDesc" class="hidden" style="font-size:0.78rem;color:var(--text-dim);padding:6px 14px;background:rgba(255,255,255,.03);border-radius:6px;line-height:1.6"></div>
@@ -440,7 +440,8 @@
         <div class="line-settings-box">
           <div class="line-settings-title">LINE 通知設定（選填）</div>
           <div class="line-token-row">
-            <input id="lineTokenInput" class="line-token-input" type="password" placeholder="貼上 LINE Notify Token...">
+            <input id="lineTokenInput" class="line-token-input" type="password" placeholder="Channel Access Token...">
+            <input id="lineUserIdInput" class="line-token-input" type="text" placeholder="LINE User ID (Uxxxxxxxxx)..." style="margin-top:6px">
             <button class="line-save-btn" onclick="saveLineToken()">儲存</button>
           </div>
           <div id="lineStatusMsg" class="line-status"></div>
@@ -541,7 +542,7 @@
             <button class="ptab" data-period="6M" onclick="changePeriod('6M')">6M</button>
             <button class="ptab" data-period="1Y" onclick="changePeriod('1Y')">1Y</button>
           </div>
-          <button class="ma-cfg-btn" onclick="toggleMASettings()" title="自訂均線">⚙</button>
+          <button class="ma-cfg-btn" onclick="toggleMASettings()" title="自訂均線">均線設定</button>
         </div>
         <div id="maSettingsPanel" class="ma-cfg-panel hidden">
           <div class="ma-cfg-title">自訂均線週期</div>
@@ -1089,8 +1090,8 @@ let _monitorTimer   = null;
 let _lastSignal     = null;
 
 const PROFILE_DESC = {
-  aggressive: '⚡ 採 5分K，追突破不追高點，帶量突破即刻通知。適合：00631L、00670L 等動能強標的。停利：跌破 15分K MA20。',
-  steady:     '⏰ 採日K，等回測 GMMA 長期均線支撐，量縮打底確認後才通知（通常尾盤後）。適合：0050、0056、00878 存股標的。停損：跌破前波大頸線。',
+  aggressive: '採 5分K，追突破不追高點，帶量突破即刻通知。適合：00631L、00670L 等動能強標的。停利：跌破 15分K MA20。',
+  steady:     '採日K，等回測 GMMA 長期均線支撐，量縮打底確認後才通知（通常尾盤後）。適合：0050、0056、00878 存股標的。停損：跌破前波大頸線。',
 };
 
 function renderMonitorPanel(d) {
@@ -1103,7 +1104,10 @@ function renderMonitorPanel(d) {
   _applyProfileUI();
   // Restore LINE token display
   const tok = _getLineToken();
-  if (tok) { $('lineTokenInput').value = tok; setHTML('lineStatusMsg', '<span style="color:var(--green)">✓ Token 已儲存</span>'); }
+  const uid = _getLineUserId();
+  if (tok) { $('lineTokenInput').value = tok; }
+  if (uid) { $('lineUserIdInput').value = uid; }
+  if (tok || uid) { setHTML('lineStatusMsg', '<span style="color:var(--green)">設定已儲存</span>'); }
 }
 
 function setMonitorMode(mode) {
@@ -1171,14 +1175,14 @@ async function manualScan() {
     show('signalCard');
     setHTML('signalCard', `<div class="signal-card sig-wait"><div style="color:var(--red);font-size:0.82rem">掃描失敗：${e.message}</div></div>`);
   }
-  if (btn) { btn.disabled = false; btn.classList.remove('scanning'); btn.textContent = '⚡ 立即掃描'; }
+  if (btn) { btn.disabled = false; btn.classList.remove('scanning'); btn.textContent = '立即掃描'; }
 }
 
 function _renderSignalCard(sig) {
   const card = $('signalCard');
   card.classList.remove('hidden');
 
-  const profileIcon = sig.profile === 'aggressive' ? '🔥' : '🛡️';
+  const profileIcon = '';
   const profileName = sig.profile === 'aggressive' ? '激進爆發型' : '穩健保守型';
   const actionCls   = {BUY:'sig-buy', WATCH:'sig-watch', WAIT:'sig-wait', AVOID:'sig-avoid'}[sig.action] || 'sig-wait';
   const confCls     = {高:'sig-conf-hi', 中:'sig-conf-mid', 低:'sig-conf-lo'}[sig.confidence] || 'sig-conf-na';
@@ -1187,16 +1191,16 @@ function _renderSignalCard(sig) {
   const det = sig.details || {};
   const detRows = sig.profile === 'aggressive' ? [
     { label:'近期盤整高點', val: det.breakoutLevel ? det.breakoutLevel + ' 元' : 'N/A' },
-    { label:'帶量突破',     val: det.breakout ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--red)">✗ 否</span>' },
+    { label:'帶量突破',     val: det.breakout ? '<span style="color:var(--green)">是</span>' : '<span style="color:var(--red)">否</span>' },
     { label:'量比',         val: det.volRatio ? det.volRatio + 'x' : 'N/A', color: det.volConfirmed ? 'var(--green)' : '' },
     { label:'MACD 柱狀',   val: det.macdHist !== undefined ? det.macdHist : 'N/A', color: det.macdHist > 0 ? 'var(--green)' : 'var(--red)' },
     { label:'MA20（止損參考）', val: det.ma20 ? det.ma20 + ' 元' : 'N/A' },
   ] : [
     { label:'GMMA 長期支撐', val: det.gmmaLongMin ? det.gmmaLongMin + '~' + det.gmmaLongMax + ' 元' : 'N/A' },
     { label:'GMMA 短期均',   val: det.gmmaShortMin ? det.gmmaShortMin + ' 元' : 'N/A' },
-    { label:'在支撐區',      val: det.nearSupport ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--text-dim)">否</span>' },
-    { label:'MACD 黃金交叉', val: det.goldenCross ? '<span style="color:var(--green)">✓ 出現</span>' : '<span style="color:var(--text-dim)">未出現</span>' },
-    { label:'量縮打底',      val: det.volShrink ? '<span style="color:var(--green)">✓ 是</span>' : '<span style="color:var(--text-dim)">否</span>' },
+    { label:'在支撐區',      val: det.nearSupport ? '<span style="color:var(--green)">是</span>' : '<span style="color:var(--text-dim)">否</span>' },
+    { label:'MACD 黃金交叉', val: det.goldenCross ? '<span style="color:var(--green)">出現</span>' : '<span style="color:var(--text-dim)">未出現</span>' },
+    { label:'量縮打底',      val: det.volShrink ? '<span style="color:var(--green)">是</span>' : '<span style="color:var(--text-dim)">否</span>' },
     { label:'RSI',           val: det.rsi !== undefined ? det.rsi : 'N/A', color: det.rsi < 40 ? 'var(--green)' : det.rsi > 70 ? 'var(--red)' : '' },
   ];
 
@@ -1222,10 +1226,10 @@ function _renderSignalCard(sig) {
       <div class="sig-details-grid">${detHTML}</div>
       ${sig.stopLoss > 0 ? `
       <div class="sig-stop">
-        🛑 <div><strong>移動停利/停損：</strong>${sig.trailingStop || '止損 ' + sig.stopLoss + ' 元'}</div>
+        <div><strong>移動停利/停損：</strong>${sig.trailingStop || '止損 ' + sig.stopLoss + ' 元'}</div>
       </div>` : ''}
       <div class="sig-actions">
-        <button class="sig-line-btn" onclick="sendSignalToLine()">📲 發送 LINE 通知</button>
+        <button class="sig-line-btn" onclick="sendSignalToLine()">發送 LINE 通知</button>
         <div class="sig-auto-badge">
           <span class="rt-dot ${_monitorMode === 'auto' ? '' : 'rt-off'}"></span>
           ${_monitorMode === 'auto' ? '自動掃描每 5 分鐘' : '手動掃描模式'}
@@ -1237,29 +1241,31 @@ function _renderSignalCard(sig) {
 function sendSignalToLine() {
   if (!_lastSignal) return;
   const tok = _getLineToken();
-  if (!tok) {
-    alert('請先在下方設定 LINE Notify Token'); return;
+  const uid = _getLineUserId();
+  if (!tok || !uid) {
+    alert('請先在下方設定 LINE Channel Access Token 與 User ID'); return;
   }
-  _sendLine(tok, _formatLineMsg(_lastSignal));
+  _sendLine(tok, uid, _formatLineMsg(_lastSignal));
 }
 
 async function _autoLineNotify(sig) {
   const tok = _getLineToken();
-  if (!tok) return;
-  await _sendLine(tok, _formatLineMsg(sig));
+  const uid = _getLineUserId();
+  if (!tok || !uid) return;
+  await _sendLine(tok, uid, _formatLineMsg(sig));
 }
 
-async function _sendLine(token, message) {
+async function _sendLine(token, user_id, message) {
   try {
     const r = await fetch('/api/tw/notify/line', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ token, message }),
+      body: JSON.stringify({ token, user_id, message }),
     });
     const d = await r.json();
     const el = $('lineStatusMsg');
     if (d.ok) {
-      if (el) setHTML('lineStatusMsg', '<span style="color:var(--green)">✓ LINE 通知已發送</span>');
+      if (el) setHTML('lineStatusMsg', '<span style="color:var(--green)">LINE 通知已發送</span>');
     } else {
       if (el) setHTML('lineStatusMsg', `<span style="color:var(--red)">發送失敗：${d.msg || d.error || '未知錯誤'}</span>`);
     }
@@ -1270,27 +1276,29 @@ async function _sendLine(token, message) {
 }
 
 function _formatLineMsg(sig) {
-  const icon = sig.profile === 'aggressive' ? '🔥' : '🛡️';
   const profileName = sig.profile === 'aggressive' ? '激進爆發型' : '穩健保守型';
-  return `🤖 【AI 智慧交易建議 - ${icon}${profileName}】
+  return `【AI 智慧交易建議 - ${profileName}】
 標的：${sig.displayTicker || sig.ticker.replace('.TW','').replace('.TWO','')} ${sig.name}
 現價：${sig.price} 元
 建議動作：【${sig.actionCn}】
 系統判定：${sig.reason}
 止損參考：${sig.stopLoss > 0 ? sig.stopLoss + ' 元' : 'N/A'}
-⏰ 掃描時間：${sig.timestamp}
+掃描時間：${sig.timestamp}
 —— 僅供參考，投資有風險 ——`;
 }
 
 function saveLineToken() {
   const tok = ($('lineTokenInput').value || '').trim();
-  localStorage.setItem('line_notify_token', tok);
-  setHTML('lineStatusMsg', tok
-    ? '<span style="color:var(--green)">✓ Token 已儲存（本機）</span>'
-    : '<span style="color:var(--text-dim)">Token 已清除</span>');
+  const uid = ($('lineUserIdInput').value || '').trim();
+  localStorage.setItem('line_channel_token', tok);
+  localStorage.setItem('line_user_id', uid);
+  setHTML('lineStatusMsg', (tok && uid)
+    ? '<span style="color:var(--green)">設定已儲存（本機）</span>'
+    : '<span style="color:var(--text-dim)">設定已清除</span>');
 }
 
-function _getLineToken() { return localStorage.getItem('line_notify_token') || ''; }
+function _getLineToken() { return localStorage.getItem('line_channel_token') || ''; }
+function _getLineUserId() { return localStorage.getItem('line_user_id') || ''; }
 
 function _saveMonitorSettings(ticker, settings) {
   const all = JSON.parse(localStorage.getItem('monitor_settings') || '{}');
@@ -2278,7 +2286,7 @@ function toggleWatch() {
 function updateWatchBtn(ticker) {
   const btn = $('watchBtn'); if (!btn) return;
   const inWl = getWatchlist().includes(ticker);
-  btn.textContent = inWl ? '★ 已自選' : '+ 自選';
+  btn.textContent = inWl ? '已自選' : '+ 自選';
   btn.className = 'watch-btn' + (inWl ? ' watched' : '');
 }
 function removeFromWatchlist(ticker) {
