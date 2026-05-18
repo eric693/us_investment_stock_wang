@@ -80,9 +80,10 @@ def _run_server_scan():
                     continue
                 cfg2['tickers'][ticker]['last_signal'] = result
                 cfg2['tickers'][ticker]['last_scan'] = now_str
-                line_token   = settings.get('line_token', '')
-                line_user_id = settings.get('line_user_id', '')
-                last_notify  = settings.get('last_notify_time', '')
+                entry        = cfg2['tickers'][ticker]
+                line_token   = entry.get('line_token', '')
+                line_user_id = entry.get('line_user_id', '')
+                last_notify  = entry.get('last_notify_time', '')
                 cooldown_ok  = (not last_notify or
                     (pd.Timestamp.now(tz='Asia/Taipei') -
                      pd.Timestamp(last_notify, tz='Asia/Taipei')).total_seconds() > 1800)

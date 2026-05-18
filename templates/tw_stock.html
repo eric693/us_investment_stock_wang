@@ -1143,6 +1143,13 @@ async function renderMonitorPanel(d) {
     const cost = (pos.avgPrice * pos.shares).toLocaleString('zh-TW', {maximumFractionDigits:0});
     $('posStatusMsg').textContent = `成本 ${cost} 元`;
   }
+  // Restart browser timer if auto mode was saved
+  clearInterval(_monitorTimer); _monitorTimer = null;
+  if (_monitorMode === 'auto') {
+    _setAutoLabel(true);
+    _monitorTimer = setInterval(manualScan, 5 * 60 * 1000);
+    manualScan();
+  }
   // Sync server label
   try {
     const r = await fetch('/api/tw/monitor/list');
@@ -1241,8 +1248,9 @@ async function manualScan() {
     _lastSignal = sig;
     _renderSignalCard(sig);
     _setAutoLabel(true, new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}) + ' 掃描');
-    // Auto-notify if BUY signal
-    if (sig.action === 'BUY' && _getLineToken()) {
+    // Auto-notify from browser only when server monitoring is NOT active (avoid duplicates)
+    const serverActive = !$('monitorServerLabel').classList.contains('hidden');
+    if (sig.action === 'BUY' && _getLineToken() && _getLineUserId() && !serverActive) {
       _autoLineNotify(sig);
     }
   } catch(e) {
