@@ -465,7 +465,10 @@
           <div class="line-token-row">
             <input id="lineTokenInput" class="line-token-input" type="password" placeholder="Channel Access Token...">
             <input id="lineUserIdInput" class="line-token-input" type="text" placeholder="LINE User ID (Uxxxxxxxxx)..." style="margin-top:6px">
-            <button class="line-save-btn" onclick="saveLineToken()">儲存</button>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button class="line-save-btn" onclick="saveLineToken()">儲存設定</button>
+              <button class="line-save-btn" style="background:rgba(0,214,143,.15);border-color:rgba(0,214,143,.4);color:#00d68f" onclick="testLineConnection()">測試傳送</button>
+            </div>
           </div>
           <div id="lineStatusMsg" class="line-status"></div>
         </div>
@@ -1323,13 +1326,26 @@ function _renderSignalCard(sig) {
 }
 
 function sendSignalToLine() {
-  if (!_lastSignal) return;
+  if (!_lastSignal) {
+    alert('請先按「立即掃描」取得訊號，再發送 LINE 通知。'); return;
+  }
   const tok = _getLineToken();
   const uid = _getLineUserId();
   if (!tok || !uid) {
-    alert('請先在下方設定 LINE Channel Access Token 與 User ID'); return;
+    alert('請先在下方設定 LINE Channel Access Token 與 User ID 並按儲存。'); return;
   }
   _sendLine(tok, uid, _formatLineMsg(_lastSignal));
+}
+
+async function testLineConnection() {
+  const tok = ($('lineTokenInput').value || '').trim();
+  const uid = ($('lineUserIdInput').value || '').trim();
+  if (!tok || !uid) {
+    setHTML('lineStatusMsg', '<span style="color:var(--red)">請先填寫 Token 和 User ID</span>'); return;
+  }
+  setHTML('lineStatusMsg', '<span style="color:var(--text-dim)">傳送中...</span>');
+  const ticker = currentData ? (currentData.displayTicker || currentData.ticker.replace('.TW','').replace('.TWO','')) : '測試';
+  await _sendLine(tok, uid, `【連線測試】\n台股智慧盯盤系統連線成功！\n標的：${ticker}\n時間：${new Date().toLocaleString('zh-TW')}`);
 }
 
 async function _autoLineNotify(sig) {
