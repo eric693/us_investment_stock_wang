@@ -114,6 +114,20 @@
 .sig-line-btn { padding:6px 16px; font-size:0.76rem; font-weight:700; background:rgba(0,214,143,.1); border:1px solid rgba(0,214,143,.3); border-radius:6px; color:#00d68f; cursor:pointer; transition:all .15s; }
 .sig-line-btn:hover { background:rgba(0,214,143,.2); }
 .sig-auto-badge { padding:5px 12px; font-size:0.72rem; color:var(--text-dim); background:rgba(255,255,255,.04); border-radius:6px; display:flex; align-items:center; gap:5px; }
+/* Position tracking */
+.pos-input { width:100px; padding:5px 8px; background:#0c1220; border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:0.78rem; }
+.pos-input:focus { outline:none; border-color:var(--accent); }
+.pos-save-btn { padding:5px 12px; background:rgba(88,166,255,.15); border:1px solid rgba(88,166,255,.3); color:var(--accent); border-radius:5px; font-size:0.75rem; cursor:pointer; white-space:nowrap; }
+.pos-save-btn:hover { background:rgba(88,166,255,.25); }
+.pnl-strip { display:flex; border:1px solid rgba(255,255,255,.08); border-radius:8px; overflow:hidden; margin:10px 0 6px; }
+.pnl-cell { flex:1; padding:8px 6px; text-align:center; }
+.pnl-cell:not(:last-child) { border-right:1px solid rgba(255,255,255,.06); }
+.pnl-cell-label { font-size:0.62rem; color:var(--text-dim); margin-bottom:3px; letter-spacing:.3px; }
+.pnl-cell-val { font-size:0.78rem; font-weight:700; color:var(--text); }
+.pnl-pos { color:var(--green) !important; }
+.pnl-neg { color:var(--red) !important; }
+.pos-context { font-size:0.76rem; padding:7px 12px; background:rgba(88,166,255,.07); border-radius:6px; color:var(--text-mid); margin-bottom:8px; line-height:1.5; }
+
 /* LINE settings */
 .line-settings-box { background:#060c18; border:1px solid var(--card-bd); border-radius:8px; padding:12px 14px; }
 .line-settings-title { font-size:0.72rem; color:var(--text-dim); font-weight:700; margin-bottom:8px; letter-spacing:.4px; }
@@ -418,6 +432,14 @@
           <button class="mode-btn active" id="modeOff"   onclick="setMonitorMode('off')">關閉</button>
           <button class="mode-btn"        id="modeAuto"  onclick="setMonitorMode('auto')">智慧自動</button>
         </div>
+      </div>
+      <!-- Row 1b: Position -->
+      <div class="monitor-row" id="positionInputRow">
+        <span class="monitor-label">我的持倉</span>
+        <input id="avgPriceInput" class="pos-input" type="number" min="0" step="0.01" placeholder="均價（元）">
+        <input id="sharesInput"   class="pos-input" type="number" min="0" step="1"    placeholder="股數">
+        <button class="pos-save-btn" onclick="savePosition()">儲存</button>
+        <span id="posStatusMsg" style="font-size:0.72rem;color:var(--text-dim)"></span>
       </div>
       <!-- Row 2: Profile (only when auto) -->
       <div class="monitor-row hidden" id="profileRow">
@@ -1113,6 +1135,14 @@ async function renderMonitorPanel(d) {
   if (tok) { $('lineTokenInput').value = tok; }
   if (uid) { $('lineUserIdInput').value = uid; }
   if (tok || uid) { setHTML('lineStatusMsg', '<span style="color:var(--green)">設定已儲存</span>'); }
+  // Restore position inputs
+  const pos = getPosition(d.ticker);
+  if (pos.avgPrice) $('avgPriceInput').value = pos.avgPrice;
+  if (pos.shares)   $('sharesInput').value   = pos.shares;
+  if (pos.avgPrice && pos.shares) {
+    const cost = (pos.avgPrice * pos.shares).toLocaleString('zh-TW', {maximumFractionDigits:0});
+    $('posStatusMsg').textContent = `成本 ${cost} 元`;
+  }
   // Sync server label
   try {
     const r = await fetch('/api/tw/monitor/list');
@@ -1268,6 +1298,7 @@ function _renderSignalCard(sig) {
         <span class="sig-time">${sig.timestamp}</span>
       </div>
       <div class="sig-reason">${sig.reason}</div>
+      ${_buildPnlBlock(sig.price)}
       <div class="sig-details-grid">${detHTML}</div>
       ${sig.stopLoss > 0 ? `
       <div class="sig-stop">
@@ -1345,6 +1376,59 @@ async function saveLineToken() {
 
 function _getLineToken() { return localStorage.getItem('line_channel_token') || ''; }
 function _getLineUserId() { return localStorage.getItem('line_user_id') || ''; }
+
+// ── Position Tracking ────────────────────────────────────────────────────
+function getPosition(ticker) {
+  const all = JSON.parse(localStorage.getItem('positions_tw') || '{}');
+  return all[ticker] || { avgPrice: 0, shares: 0 };
+}
+
+function savePosition() {
+  if (!currentData) return;
+  const ticker   = currentData.ticker;
+  const avgPrice = parseFloat($('avgPriceInput').value) || 0;
+  const shares   = parseInt($('sharesInput').value)     || 0;
+  const all = JSON.parse(localStorage.getItem('positions_tw') || '{}');
+  all[ticker] = { avgPrice, shares };
+  localStorage.setItem('positions_tw', JSON.stringify(all));
+  const msg = $('posStatusMsg');
+  if (avgPrice && shares) {
+    const cost = (avgPrice * shares).toLocaleString('zh-TW', {maximumFractionDigits:0});
+    if (msg) msg.textContent = `成本 ${cost} 元`;
+  } else {
+    if (msg) msg.textContent = avgPrice || shares ? '已儲存' : '已清除';
+  }
+  if (_lastSignal) _renderSignalCard(_lastSignal);
+}
+
+function _buildPnlBlock(price) {
+  if (!currentData) return '';
+  const pos = getPosition(currentData.ticker);
+  if (!pos.avgPrice || !pos.shares || price <= 0) return '';
+  const cost  = pos.avgPrice * pos.shares;
+  const value = price * pos.shares;
+  const pnl   = value - cost;
+  const pct   = (pnl / cost) * 100;
+  const cls   = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+  const sign  = pnl >= 0 ? '+' : '';
+  const fmt   = n => n.toLocaleString('zh-TW', {maximumFractionDigits:0});
+
+  let ctx = '';
+  if (pct < -8)       ctx = `目前低於你的均價 ${Math.abs(pct).toFixed(1)}%，若訊號確認可考慮分批加碼降低成本。`;
+  else if (pct > 15)  ctx = `已高於你的均價 ${pct.toFixed(1)}%，追高需謹慎，建議設好移動停利保護獲利。`;
+  else if (pct > 5)   ctx = `目前小幅獲利 ${pct.toFixed(1)}%，訊號確認後可繼續持有或分批加碼。`;
+  else if (pct < -3)  ctx = `目前略低於均價 ${Math.abs(pct).toFixed(1)}%，可等待訊號更明確再決定加碼或停損。`;
+
+  return `
+    <div class="pnl-strip">
+      <div class="pnl-cell"><div class="pnl-cell-label">均價</div><div class="pnl-cell-val">${pos.avgPrice.toFixed(2)} 元</div></div>
+      <div class="pnl-cell"><div class="pnl-cell-label">股數</div><div class="pnl-cell-val">${pos.shares.toLocaleString()} 股</div></div>
+      <div class="pnl-cell"><div class="pnl-cell-label">成本</div><div class="pnl-cell-val">${fmt(cost)} 元</div></div>
+      <div class="pnl-cell"><div class="pnl-cell-label">現值</div><div class="pnl-cell-val">${fmt(value)} 元</div></div>
+      <div class="pnl-cell"><div class="pnl-cell-label">損益</div><div class="pnl-cell-val ${cls}">${sign}${fmt(pnl)}<br><span style="font-size:0.68rem">${sign}${pct.toFixed(2)}%</span></div></div>
+    </div>
+    ${ctx ? `<div class="pos-context">${ctx}</div>` : ''}`;
+}
 
 function _saveMonitorSettings(ticker, settings) {
   const all = JSON.parse(localStorage.getItem('monitor_settings') || '{}');
