@@ -408,6 +408,7 @@
     <div class="card-title" style="display:flex;align-items:center;gap:10px">
       智慧盯盤設定
       <span id="monitorAutoLabel" class="rt-indicator rt-off" style="margin-left:0"><span class="rt-dot"></span><span id="monitorAutoText">已停止</span></span>
+      <span id="monitorServerLabel" class="rt-indicator hidden" style="margin-left:4px;background:rgba(99,192,255,.12);color:#63c0ff;border:1px solid rgba(99,192,255,.3);font-size:0.68rem;padding:2px 8px;border-radius:20px">伺服器監控中</span>
     </div>
     <div class="monitor-panel">
       <!-- Row 1: Mode -->
@@ -497,6 +498,12 @@
       <span class="tv-ind-badge" data-study="Volume@tv-basicstudies" onclick="toggleTVStudy(this,'Volume@tv-basicstudies')">成交量</span>
       <span class="tv-ind-badge" data-study="Stochastic@tv-basicstudies" onclick="toggleTVStudy(this,'Stochastic@tv-basicstudies')">KD</span>
       <span style="margin-left:auto;font-size:0.7rem;color:var(--text-dim)">Powered by TradingView · 右鍵可畫線、加指標</span>
+    </div>
+    <div id="tvUnsupportedWarn" class="hidden" style="padding:28px 20px;text-align:center;color:var(--text-dim);font-size:0.83rem;line-height:1.7">
+      <div style="font-size:1.3rem;margin-bottom:8px">此代碼 TradingView 不支援</div>
+      槓桿/反向 ETF（如 00631L、00670L、00632R）在 TradingView 上無法正確對應台灣交易所代碼，<br>
+      載入後會顯示完全不相關的標的。<br>
+      <span style="color:var(--green);font-weight:600">請使用下方的 K 線圖（資料來源：Yahoo Finance）作為主要參考。</span>
     </div>
     <div id="tvChartContainer"></div>
   </div>
@@ -1094,32 +1101,70 @@ const PROFILE_DESC = {
   steady:     '採日K，等回測 GMMA 長期均線支撐，量縮打底確認後才通知（通常尾盤後）。適合：0050、0056、00878 存股標的。停損：跌破前波大頸線。',
 };
 
-function renderMonitorPanel(d) {
+async function renderMonitorPanel(d) {
   show('monitorCard');
-  // Restore saved settings for this ticker
   const saved = _loadMonitorSettings(d.ticker);
   _monitorMode    = saved.mode    || 'off';
   _monitorProfile = saved.profile || 'aggressive';
   _applyModeUI();
   _applyProfileUI();
-  // Restore LINE token display
   const tok = _getLineToken();
   const uid = _getLineUserId();
   if (tok) { $('lineTokenInput').value = tok; }
   if (uid) { $('lineUserIdInput').value = uid; }
   if (tok || uid) { setHTML('lineStatusMsg', '<span style="color:var(--green)">設定已儲存</span>'); }
+  // Sync server label
+  try {
+    const r = await fetch('/api/tw/monitor/list');
+    const list = await r.json();
+    _setServerLabel(_monitorMode === 'auto' && !!list[d.ticker]);
+  } catch(e) { _setServerLabel(false); }
+}
+
+async function _serverRegister() {
+  if (!currentData) return;
+  try {
+    await fetch('/api/tw/monitor/register', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        ticker:       currentData.ticker,
+        profile:      _monitorProfile,
+        line_token:   _getLineToken(),
+        line_user_id: _getLineUserId(),
+      }),
+    });
+    _setServerLabel(true);
+  } catch(e) { console.warn('register failed', e); }
+}
+
+async function _serverUnregister() {
+  if (!currentData) return;
+  try {
+    await fetch('/api/tw/monitor/unregister', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ticker: currentData.ticker }),
+    });
+  } catch(e) { console.warn('unregister failed', e); }
+  _setServerLabel(false);
+}
+
+function _setServerLabel(on) {
+  const lbl = $('monitorServerLabel');
+  if (!lbl) return;
+  lbl.classList.toggle('hidden', !on);
 }
 
 function setMonitorMode(mode) {
   _monitorMode = mode;
   _saveMonitorSettings(currentData.ticker, { mode, profile: _monitorProfile });
   _applyModeUI();
-  // Start/stop auto scan
   clearInterval(_monitorTimer); _monitorTimer = null;
   if (mode === 'auto') {
+    _serverRegister();
     _monitorTimer = setInterval(manualScan, 5 * 60 * 1000);
-    manualScan(); // immediate scan
+    manualScan();
   } else {
+    _serverUnregister();
     _setAutoLabel(false);
   }
 }
@@ -1128,7 +1173,7 @@ function setProfile(profile) {
   _monitorProfile = profile;
   _saveMonitorSettings(currentData.ticker, { mode: _monitorMode, profile });
   _applyProfileUI();
-  if (_monitorMode === 'auto') manualScan();
+  if (_monitorMode === 'auto') { _serverRegister(); manualScan(); }
 }
 
 function _applyModeUI() {
@@ -1287,13 +1332,14 @@ function _formatLineMsg(sig) {
 —— 僅供參考，投資有風險 ——`;
 }
 
-function saveLineToken() {
+async function saveLineToken() {
   const tok = ($('lineTokenInput').value || '').trim();
   const uid = ($('lineUserIdInput').value || '').trim();
   localStorage.setItem('line_channel_token', tok);
   localStorage.setItem('line_user_id', uid);
+  if (_monitorMode === 'auto') await _serverRegister();
   setHTML('lineStatusMsg', (tok && uid)
-    ? '<span style="color:var(--green)">設定已儲存（本機）</span>'
+    ? '<span style="color:var(--green)">設定已儲存，伺服器監控已更新</span>'
     : '<span style="color:var(--text-dim)">設定已清除</span>');
 }
 
@@ -1322,12 +1368,31 @@ function twTickerToTV(ticker) {
   return 'TWSE:' + ticker.replace('.TW','');
 }
 
+// TradingView 不支援台灣槓桿/反向ETF（代碼含英文字母，如00631L、00670L、00632R）
+function _isTVUnsupported(ticker) {
+  const code = ticker.replace(/\.(TW|TWO)$/i, '');
+  return /^\d{4,6}[A-Za-z]+$/.test(code);
+}
+
 function renderTradingView(d) {
   const card = $('tvCard');
   card.classList.remove('hidden');
   _tvSymbol = twTickerToTV(d.ticker);
   $('tvSymLabel').textContent = _tvSymbol;
-  _buildTVWidget();
+  const warn = $('tvUnsupportedWarn');
+  if (_isTVUnsupported(d.ticker)) {
+    $('tvChartContainer').innerHTML = '';
+    $('tvTfTabs').style.opacity = '0.35';
+    $('tvTfTabs').style.pointerEvents = 'none';
+    document.querySelectorAll('.tv-ind-badge').forEach(b => { b.style.opacity='0.35'; b.style.pointerEvents='none'; });
+    if (warn) warn.classList.remove('hidden');
+  } else {
+    $('tvTfTabs').style.opacity = '';
+    $('tvTfTabs').style.pointerEvents = '';
+    document.querySelectorAll('.tv-ind-badge').forEach(b => { b.style.opacity=''; b.style.pointerEvents=''; });
+    if (warn) warn.classList.add('hidden');
+    _buildTVWidget();
+  }
 }
 
 function _buildTVWidget() {

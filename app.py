@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 import warnings
 import time
+import threading
+import json
+import os
 import requests as _requests
 from xml.etree import ElementTree as ET
 import urllib.parse
@@ -11,6 +14,97 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
+
+# ── Server-side Monitor ────────────────────────────────────────────────
+MONITOR_FILE = os.path.join(os.path.dirname(__file__), 'monitor_config.json')
+_monitor_lock = threading.Lock()
+
+def _load_monitor_cfg():
+    try:
+        if os.path.exists(MONITOR_FILE):
+            with open(MONITOR_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {'tickers': {}}
+
+def _save_monitor_cfg(cfg):
+    with open(MONITOR_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+def _push_line_msg(token, user_id, text):
+    try:
+        _requests.post(
+            'https://api.line.me/v2/bot/message/push',
+            headers={'Content-Type': 'application/json',
+                     'Authorization': f'Bearer {token}'},
+            json={'to': user_id, 'messages': [{'type': 'text', 'text': text}]},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f'[Monitor] LINE error: {e}')
+
+def _build_line_text(sig):
+    return (
+        f"【伺服器訊號】{sig.get('ticker','')} {sig.get('name','')}\n"
+        f"動作: {sig.get('actionCn','')}\n"
+        f"信心: {sig.get('confidence','-')}\n"
+        f"時間: {sig.get('timestamp','')}\n"
+        f"{sig.get('reason','')[:120]}\n"
+        f"停損: {sig.get('trailingStop','')[:80]}"
+    )
+
+def _run_server_scan():
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    tickers_cfg = cfg.get('tickers', {})
+    if not tickers_cfg:
+        return
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    for ticker, settings in list(tickers_cfg.items()):
+        try:
+            profile = settings.get('profile', 'aggressive')
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+            if price <= 0:
+                continue
+            name = info.get('shortName', info.get('longName', ticker))
+            result = (_aggressive_signal(stock, ticker, price, name)
+                      if profile == 'aggressive'
+                      else _steady_signal(stock, ticker, price, name))
+            action = result.get('action', 'WAIT')
+            with _monitor_lock:
+                cfg2 = _load_monitor_cfg()
+                if ticker not in cfg2['tickers']:
+                    continue
+                cfg2['tickers'][ticker]['last_signal'] = result
+                cfg2['tickers'][ticker]['last_scan'] = now_str
+                line_token   = settings.get('line_token', '')
+                line_user_id = settings.get('line_user_id', '')
+                last_notify  = settings.get('last_notify_time', '')
+                cooldown_ok  = (not last_notify or
+                    (pd.Timestamp.now(tz='Asia/Taipei') -
+                     pd.Timestamp(last_notify, tz='Asia/Taipei')).total_seconds() > 1800)
+                if action == 'BUY' and line_token and line_user_id and cooldown_ok:
+                    cfg2['tickers'][ticker]['last_notify_time'] = now_str
+                    _save_monitor_cfg(cfg2)
+                    _push_line_msg(line_token, line_user_id, _build_line_text(result))
+                else:
+                    _save_monitor_cfg(cfg2)
+        except Exception as e:
+            print(f'[Monitor] scan {ticker}: {e}')
+
+def _server_scan_loop():
+    time.sleep(15)  # let app finish startup
+    while True:
+        try:
+            _run_server_scan()
+        except Exception as e:
+            print(f'[Monitor] loop error: {e}')
+        time.sleep(300)  # 5 minutes
+
+threading.Thread(target=_server_scan_loop, daemon=True).start()
 
 # ── TTL Cache ─────────────────────────────────────────────────────────
 _CACHE = {}
@@ -1866,6 +1960,56 @@ def send_line_notify():
                         'msg': r.text[:200]})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tw/monitor/register', methods=['POST'])
+def monitor_register():
+    data = request.json or {}
+    ticker = tw_normalize(data.get('ticker', '').strip())
+    if not ticker:
+        return jsonify({'error': 'ticker required'}), 400
+    profile      = data.get('profile', 'aggressive')
+    line_token   = data.get('line_token', '').strip()
+    line_user_id = data.get('line_user_id', '').strip()
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        existing = cfg['tickers'].get(ticker, {})
+        cfg['tickers'][ticker] = {
+            'profile':          profile,
+            'line_token':       line_token,
+            'line_user_id':     line_user_id,
+            'last_signal':      existing.get('last_signal'),
+            'last_scan':        existing.get('last_scan', ''),
+            'last_notify_time': existing.get('last_notify_time', ''),
+            'registered_at':    existing.get('registered_at', now_str),
+        }
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'ticker': ticker, 'profile': profile})
+
+
+@app.route('/api/tw/monitor/unregister', methods=['POST'])
+def monitor_unregister():
+    data = request.json or {}
+    ticker = tw_normalize(data.get('ticker', '').strip())
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        cfg['tickers'].pop(ticker, None)
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'ticker': ticker})
+
+
+@app.route('/api/tw/monitor/list')
+def monitor_list():
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    return jsonify(cfg.get('tickers', {}))
+
+
+@app.route('/api/tw/monitor/scan_now', methods=['POST'])
+def monitor_scan_now():
+    threading.Thread(target=_run_server_scan, daemon=True).start()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/tw/intraday/<ticker>')
