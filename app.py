@@ -1963,6 +1963,27 @@ def send_line_notify():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/tw/line/config', methods=['GET', 'POST'])
+def line_config():
+    """Store/retrieve LINE credentials server-side so any browser gets them."""
+    cfg_file = os.path.join(os.path.dirname(__file__), 'monitor_config.json')
+    if request.method == 'POST':
+        data = request.json or {}
+        with _monitor_lock:
+            cfg = _load_monitor_cfg()
+            cfg['line_token']   = data.get('line_token', '').strip()
+            cfg['line_user_id'] = data.get('line_user_id', '').strip()
+            _save_monitor_cfg(cfg)
+        return jsonify({'ok': True})
+    else:
+        with _monitor_lock:
+            cfg = _load_monitor_cfg()
+        return jsonify({
+            'line_token':   cfg.get('line_token', ''),
+            'line_user_id': cfg.get('line_user_id', ''),
+        })
+
+
 @app.route('/api/tw/monitor/register', methods=['POST'])
 def monitor_register():
     data = request.json or {}

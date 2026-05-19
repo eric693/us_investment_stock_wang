@@ -920,6 +920,7 @@ function applyMASettings() {
 document.addEventListener('DOMContentLoaded', () => {
   $('tickerInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchStock(); });
   $('heroInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchFromHero(); });
+  _loadLineConfigFromServer();
   loadMarket();
   renderWatchlist();
   updateAlertBadge();
@@ -1390,16 +1391,32 @@ function _formatLineMsg(sig) {
 async function saveLineToken() {
   const tok = ($('lineTokenInput').value || '').trim();
   const uid = ($('lineUserIdInput').value || '').trim();
+  // Save locally AND to server so any browser gets the settings
   localStorage.setItem('line_channel_token', tok);
   localStorage.setItem('line_user_id', uid);
+  try {
+    await fetch('/api/tw/line/config', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ line_token: tok, line_user_id: uid }),
+    });
+  } catch(e) { console.warn('line config save failed', e); }
   if (_monitorMode === 'auto') await _serverRegister();
   setHTML('lineStatusMsg', (tok && uid)
-    ? '<span style="color:var(--green)">設定已儲存，伺服器監控已更新</span>'
+    ? '<span style="color:var(--green)">設定已儲存（伺服器同步完成）</span>'
     : '<span style="color:var(--text-dim)">設定已清除</span>');
 }
 
 function _getLineToken() { return localStorage.getItem('line_channel_token') || ''; }
 function _getLineUserId() { return localStorage.getItem('line_user_id') || ''; }
+
+async function _loadLineConfigFromServer() {
+  try {
+    const r = await fetch('/api/tw/line/config');
+    const d = await r.json();
+    if (d.line_token)   { localStorage.setItem('line_channel_token', d.line_token); }
+    if (d.line_user_id) { localStorage.setItem('line_user_id', d.line_user_id); }
+  } catch(e) {}
+}
 
 // ── Position Tracking ────────────────────────────────────────────────────
 function getPosition(ticker) {
