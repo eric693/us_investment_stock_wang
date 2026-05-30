@@ -1526,8 +1526,10 @@ function renderTradingView(d) {
 function _buildTVWidget() {
   const container = $('tvChartContainer');
   if (!container) return;
-  container.innerHTML = '';
   if (typeof TradingView === 'undefined') return;
+  // 每次用唯一 id，防止 TradingView 從 localStorage 還原舊股票（如 AAPL）
+  const uid = 'tv_' + Date.now();
+  container.innerHTML = `<div id="${uid}" style="width:100%;height:100%"></div>`;
   _tvWidget = new TradingView.widget({
     autosize:        true,
     symbol:          _tvSymbol,
@@ -1542,7 +1544,7 @@ function _buildTVWidget() {
     hide_side_toolbar: false,
     allow_symbol_change: false,
     save_image:      false,
-    container_id:    'tvChartContainer',
+    container_id:    uid,
     studies:         [..._tvStudies],
     overrides: {
       'paneProperties.background':         '#0c1220',
