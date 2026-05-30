@@ -15,6 +15,44 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
+# ── Taiwan stock Chinese name cache ───────────────────────────────────
+_tw_name_cache: dict[str, str] = {}
+_tw_name_lock  = threading.Lock()
+
+def _load_tw_names():
+    """Fetch Chinese names from TWSE API and cache them."""
+    global _tw_name_cache
+    try:
+        import urllib.request
+        urls = [
+            'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',
+            'https://openapi.twse.com.tw/v1/exchangeReport/TPEX_STOCK_DAY_ALL',
+        ]
+        result = {}
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+                for item in data:
+                    code = item.get('Code') or item.get('SecuritiesCompanyCode', '')
+                    name = item.get('Name') or item.get('CompanyName', '')
+                    if code and name:
+                        result[code] = name
+            except Exception:
+                pass
+        if result:
+            with _tw_name_lock:
+                _tw_name_cache = result
+    except Exception:
+        pass
+
+threading.Thread(target=_load_tw_names, daemon=True).start()
+
+def tw_cn_name(ticker: str, fallback: str) -> str:
+    code = ticker.replace('.TW', '').replace('.TWO', '')
+    with _tw_name_lock:
+        return _tw_name_cache.get(code, fallback)
+
 # ── Server-side Monitor ────────────────────────────────────────────────
 MONITOR_FILE = os.path.join(os.path.dirname(__file__), 'monitor_config.json')
 _monitor_lock = threading.Lock()
@@ -2325,29 +2363,54 @@ def calc_kd(high, low, close, n=9, m1=3, m2=3):
 
 # ── Stock universe for screener ──
 TW_SCREENER_UNIVERSE = {
-    '大型指數ETF':  ['0050','006208','00757','0051'],
-    '高股息ETF':    ['0056','00878','00713','00919','00929','00930','00918','00900'],
-    '科技主題ETF':  ['00662','00646','00770','00881','00830'],
-    '半導體':       ['2330','2303','2344','3034','2379','3711','2454','2408','3481','2302'],
-    '電子製造':     ['2317','2382','2356','2308','2327','2357','3008','2301','2388'],
-    '金融保險':     ['2886','2884','2881','2882','2892','2885','2887','2891','2880','5876','5871'],
-    '傳統產業':     ['1301','1303','1326','2002','1101','1216','2912','2207'],
-    '電信網路':     ['2412','4904','3045','6803'],
-    '能源石化':     ['6505','1590'],
-    '航運物流':     ['2603','2609','2615','2610','2618'],
-    'IC設計':       ['3034','2379','6547','3443','3023','2454'],
-    '生技醫療':     ['4938','4144','6497','1723','4107'],
+    '大型指數ETF':  ['0050','006208','00757','0051','00830','006205'],
+    '高股息ETF':    ['0056','00878','00713','00919','00929','00930','00918','00900','00939','00940','00944','00946','00953'],
+    '科技主題ETF':  ['00662','00646','00770','00881','00830','00893','00905','00911','00912','00913'],
+    '半導體':       ['2330','2303','2344','3034','2379','3711','2454','2408','3481','2302','5347','3046','6274','3563','6533','6770'],
+    'IC設計':       ['3034','2379','6547','3443','3023','2454','3532','6770','4966','3035','3515','6488','8046','5269','3653'],
+    '電子製造':     ['2317','2382','2356','2308','2327','2357','3008','2301','2388','2342','2365','3231','2353','2360','3037','2354','6116'],
+    '伺服器AI':     ['2308','2382','3008','6669','6278','2376','3014','4977','6138','5483'],
+    '電子零組件':   ['2330','6239','3481','2449','3617','5285','4958','6669','3443','2393','2401'],
+    '金融銀行':     ['2886','2884','2881','2882','2892','2885','2887','2891','2880','5876','5871','2823','2816','2812','5880'],
+    '保險證券':     ['2882','2881','2884','2889','2890','2834','2823','6005','2888'],
+    '傳產塑化':     ['1301','1303','1326','1308','1309','1310','1312','1314','1317','2702'],
+    '鋼鐵金屬':     ['2002','2006','2014','2015','9910','2205','2207','2008'],
+    '食品飲料':     ['1216','1203','1210','1215','1225','1229','1231','1232','4205','2103'],
+    '零售百貨':     ['2912','2915','9904','9940','6505','2707','2723','2728'],
+    '電信網路':     ['2412','4904','3045','6803','4977','3515'],
+    '能源石化':     ['6505','1590','1605','1609'],
+    '航運物流':     ['2603','2609','2615','2610','2618','2612','5608','2616'],
+    '生技醫療':     ['4938','4144','6497','1723','4107','6510','4743','1707','1786','6196','4119','4166'],
+    '建設營造':     ['2520','2524','2528','5522','5536','2534','1477','2543'],
+    '汽車機械':     ['2207','1476','1504','1503','2106','2105','1513','1533','1560'],
+    '觀光旅遊':     ['2707','2706','2727','2722','2701','5603'],
 }
 
 US_SCREENER_UNIVERSE = {
-    '科技巨頭':   ['AAPL','MSFT','GOOGL','META','AMZN','NVDA','TSLA'],
-    '半導體':     ['NVDA','AMD','INTC','QCOM','MU','AVGO','TSM','AMAT'],
-    '雲端AI':     ['MSFT','AMZN','GOOGL','CRM','SNOW','PLTR','AI'],
-    '金融':       ['JPM','BAC','GS','MS','V','MA','BRK-B'],
-    '醫療生技':   ['JNJ','UNH','PFE','MRNA','ABBV','BMY'],
-    '消費零售':   ['AMZN','WMT','COST','NKE','MCD','SBUX'],
-    '能源':       ['XOM','CVX','COP','SLB'],
-    'ETF':        ['SPY','QQQ','IWM','GLD','TLT','VTI','VOO'],
+    '科技巨頭':   ['AAPL','MSFT','GOOGL','GOOG','META','AMZN','NVDA','TSLA','ORCL','IBM','ADBE','NOW','INTU','PANW','CRWD'],
+    '半導體':     ['NVDA','AMD','INTC','QCOM','MU','AVGO','TSM','AMAT','LRCX','KLAC','MRVL','ON','TXN','ADI','NXPI','MPWR','WOLF','ONTO','ENTG','AEHR'],
+    '雲端AI':     ['MSFT','AMZN','GOOGL','CRM','SNOW','PLTR','AI','NET','DDOG','ZS','OKTA','MDB','GTLB','HUBS','DOCN','CFLT','TTD','NCNO'],
+    '軟體SaaS':   ['ADBE','NOW','INTU','WDAY','VEEV','COUP','ZM','DOCU','TWLO','BILL','PAYC','WEX','PCOR','SMAR','BRZE'],
+    '金融銀行':   ['JPM','BAC','GS','MS','WFC','C','USB','PNC','TFC','COF','AXP','V','MA','PYPL','SQ','FIS','FI'],
+    '保險資產':   ['BRK-B','AIG','MET','PRU','AFL','ALL','CB','TRV','HIG','PGR','BLK','SCHW','IBKR'],
+    '醫療生技':   ['JNJ','UNH','PFE','MRNA','ABBV','BMY','LLY','AMGN','GILD','REGN','VRTX','BIIB','ISRG','MDT','BSX','EW','ZBH','DXCM','PODD'],
+    '醫療服務':   ['CVS','MCK','CAH','ABC','HCA','THC','CNC','MOH','HUM','ELV','CI'],
+    '消費零售':   ['AMZN','WMT','COST','NKE','MCD','SBUX','TGT','HD','LOW','LULU','ROST','TJX','ULTA','RH','EBAY'],
+    '消費品牌':   ['KO','PEP','PG','CL','EL','MDLZ','GIS','K','CPB','HSY','MKC','CHD','CLX'],
+    '媒體娛樂':   ['NFLX','DIS','CMCSA','WBD','PARA','SIRI','SPOT','LYV','IMAX','AMC'],
+    '電動車':     ['TSLA','RIVN','LCID','NIO','LI','XPEV','FSR','NKLA','RIDE','GOEV'],
+    '能源石油':   ['XOM','CVX','COP','SLB','HAL','BKR','EOG','PXD','MPC','VLO','PSX','OXY','DVN','FANG'],
+    '再生能源':   ['ENPH','SEDG','PLUG','FCEL','BE','NOVA','RUN','NEE','BEP','CWEN','AES','ARRY'],
+    '航空航運':   ['DAL','UAL','AAL','LUV','ALK','JBLU','FDX','UPS','XPO','CHRW','EXPD','GXO'],
+    '汽車製造':   ['F','GM','STLA','HMC','TM','RIVN','TSLA','LCID'],
+    '房地產REIT': ['AMT','PLD','EQIX','O','SPG','VICI','WELL','DLR','CCI','PSA','EXR','AVB','EQR','MAA','UDR'],
+    '工業製造':   ['HON','GE','MMM','CAT','DE','EMR','ETN','ROK','ITW','PH','DHR','AME','ROP','XYL'],
+    '航太國防':   ['LMT','RTX','BA','NOC','GD','L3H','LDOS','CACI','SAIC','HII'],
+    '材料化工':   ['LIN','APD','SHW','NEM','FCX','AA','NUE','CLF','CF','MOS','ALB','MP','LYFT'],
+    '電信通訊':   ['T','VZ','TMUS','LUMN','DISH','CCOI','SHEN'],
+    '大型ETF':    ['SPY','QQQ','IWM','DIA','VTI','VOO','SCHB'],
+    '主題ETF':    ['GLD','SLV','TLT','HYG','LQD','ARKK','ARKG','ARKF','BOTZ','ROBO','HERO','ESPO'],
+    '槓桿ETF':    ['TQQQ','SOXL','UPRO','LABU','FNGU','SOXS','SPXS'],
 }
 
 def _eval_condition(hist, info, cond):
@@ -2559,18 +2622,234 @@ def _eval_condition(hist, info, cond):
             max_p = float(params.get('max', 99999))
             return min_p <= price <= max_p, f'股價 {price:.2f} 在 {min_p}~{max_p}'
 
+        # ── 均線排列 ───────────────────────────────────────
+        elif ctype == 'ma_bull_alignment':
+            ma5  = safe_float(_ma(5).iloc[-1])
+            ma10 = safe_float(_ma(10).iloc[-1])
+            ma20 = safe_float(_ma(20).iloc[-1])
+            ma60 = safe_float(_ma(60).iloc[-1])
+            passed = ma5 > ma10 > ma20 > ma60
+            return passed, f'MA5({ma5:.2f})>MA10({ma10:.2f})>MA20({ma20:.2f})>MA60({ma60:.2f})'
+
+        elif ctype == 'ma_bear_alignment':
+            ma5  = safe_float(_ma(5).iloc[-1])
+            ma10 = safe_float(_ma(10).iloc[-1])
+            ma20 = safe_float(_ma(20).iloc[-1])
+            ma60 = safe_float(_ma(60).iloc[-1])
+            passed = ma5 < ma10 < ma20 < ma60
+            return passed, f'MA5({ma5:.2f})<MA10({ma10:.2f})<MA20({ma20:.2f})<MA60({ma60:.2f})'
+
+        elif ctype == 'ma_golden_cross':
+            short_p = int(params.get('short_period', 5))
+            long_p  = int(params.get('long_period', 20))
+            within  = int(params.get('within_days', 5))
+            ma_s = _ma(short_p)
+            ma_l = _ma(long_p)
+            if n < within + 2:
+                return False, '資料不足'
+            curr_above = safe_float(ma_s.iloc[-1]) > safe_float(ma_l.iloc[-1])
+            was_below  = (ma_s.iloc[-(within+1):-1].values < ma_l.iloc[-(within+1):-1].values).any()
+            return (curr_above and was_below,
+                    f'MA{short_p} 近{within}天突破 MA{long_p}')
+
+        elif ctype == 'ma_death_cross':
+            short_p = int(params.get('short_period', 5))
+            long_p  = int(params.get('long_period', 20))
+            within  = int(params.get('within_days', 5))
+            ma_s = _ma(short_p)
+            ma_l = _ma(long_p)
+            if n < within + 2:
+                return False, '資料不足'
+            curr_below = safe_float(ma_s.iloc[-1]) < safe_float(ma_l.iloc[-1])
+            was_above  = (ma_s.iloc[-(within+1):-1].values > ma_l.iloc[-(within+1):-1].values).any()
+            return (curr_below and was_above,
+                    f'MA{short_p} 近{within}天跌破 MA{long_p}')
+
+        elif ctype == 'ma_trending_down':
+            period     = int(params.get('period', 20))
+            trend_days = int(params.get('trend_days', 5))
+            ma_series  = _ma(period)
+            if n < trend_days + 2:
+                return False, '資料不足'
+            return (safe_float(last_valid(ma_series)) < safe_float(ma_series.iloc[-trend_days]),
+                    f'MA{period} {trend_days}天持續下降')
+
+        # ── 價格形態 ───────────────────────────────────────
+        elif ctype == 'price_near_52w_low':
+            thr = float(params.get('threshold', 10))
+            low52 = safe_float(hist['Low'].rolling(min(252, n)).min().iloc[-1])
+            dist = (price - low52) / low52 * 100 if low52 > 0 else 999
+            return dist <= thr, f'距52週低 {dist:.1f}% ≤ {thr}%'
+
+        elif ctype == 'price_nd_high':
+            days = int(params.get('days', 20))
+            peak = safe_float(hist['High'].iloc[-days:].max()) if n >= days else safe_float(hist['High'].max())
+            prev_peak = safe_float(hist['High'].iloc[-days-1:-1].max()) if n > days else peak
+            passed = price >= prev_peak * 0.995
+            return passed, f'股價 {price:.2f} 創近{days}日新高 {prev_peak:.2f}'
+
+        elif ctype == 'consecutive_up':
+            days = int(params.get('days', 3))
+            if n < days + 1:
+                return False, '資料不足'
+            recent = close.dropna().iloc[-(days+1):]
+            passed = all(recent.iloc[i] > recent.iloc[i-1] for i in range(1, len(recent)))
+            return passed, f'連續上漲 {days} 天'
+
+        elif ctype == 'consecutive_down':
+            days = int(params.get('days', 3))
+            if n < days + 1:
+                return False, '資料不足'
+            recent = close.dropna().iloc[-(days+1):]
+            passed = all(recent.iloc[i] < recent.iloc[i-1] for i in range(1, len(recent)))
+            return passed, f'連續下跌 {days} 天'
+
+        elif ctype == 'price_change_nd':
+            days = int(params.get('days', 3))
+            thr  = float(params.get('threshold', 5))
+            if n < days + 1:
+                return False, '資料不足'
+            base = safe_float(close.dropna().iloc[-days-1])
+            chg  = (price / base - 1) * 100 if base > 0 else 0
+            return chg >= thr, f'近{days}日累計漲幅 {chg:.2f}% ≥ {thr}%'
+
+        elif ctype == 'price_change_nd_down':
+            days = int(params.get('days', 3))
+            thr  = float(params.get('threshold', -5))
+            if n < days + 1:
+                return False, '資料不足'
+            base = safe_float(close.dropna().iloc[-days-1])
+            chg  = (price / base - 1) * 100 if base > 0 else 0
+            return chg <= thr, f'近{days}日累計跌幅 {chg:.2f}% ≤ {thr}%'
+
+        elif ctype == 'price_gap_up':
+            if n < 2:
+                return False, '資料不足'
+            today_open = safe_float(hist['Open'].iloc[-1])
+            yest_high  = safe_float(hist['High'].iloc[-2])
+            passed = today_open > yest_high
+            return passed, f'今日開盤({today_open:.2f}) > 昨日最高({yest_high:.2f})'
+
+        elif ctype == 'high_vol_breakout':
+            days = int(params.get('days', 20))
+            if n < days + 1:
+                return False, '資料不足'
+            prev_peak = safe_float(hist['High'].iloc[-days-1:-1].max())
+            curr_high = safe_float(hist['High'].iloc[-1])
+            avg_vol   = safe_float(vol.rolling(days, min_periods=1).mean().iloc[-1])
+            curr_vol  = safe_float(vol.iloc[-1])
+            vol_ok    = curr_vol >= avg_vol * 1.3
+            price_ok  = curr_high >= prev_peak
+            return (price_ok and vol_ok,
+                    f'突破{days}日高點{prev_peak:.2f}，量比{curr_vol/avg_vol if avg_vol else 0:.2f}x')
+
+        # ── RSI 穿越 ───────────────────────────────────────
+        elif ctype == 'rsi_cross_above':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', 50))
+            within = int(params.get('within_days', 3))
+            rsi_s  = calc_rsi(close, period)
+            if n < within + 2:
+                return False, '資料不足'
+            curr_above = safe_float(rsi_s.iloc[-1]) > thr
+            was_below  = (rsi_s.iloc[-(within+1):-1] < thr).any()
+            return (curr_above and was_below,
+                    f'RSI({period}) 近{within}天上穿 {thr}')
+
+        elif ctype == 'rsi_cross_below':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', 70))
+            within = int(params.get('within_days', 3))
+            rsi_s  = calc_rsi(close, period)
+            if n < within + 2:
+                return False, '資料不足'
+            curr_below = safe_float(rsi_s.iloc[-1]) < thr
+            was_above  = (rsi_s.iloc[-(within+1):-1] > thr).any()
+            return (curr_below and was_above,
+                    f'RSI({period}) 近{within}天下穿 {thr}')
+
+        # ── 布林帶 ─────────────────────────────────────────
+        elif ctype == 'bb_squeeze':
+            thr = float(params.get('threshold', 5))
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbu = safe_float(bb_u.iloc[-1])
+            bbl = safe_float(bb_l.iloc[-1])
+            bbm = safe_float(bb_m.iloc[-1])
+            bw  = (bbu - bbl) / bbm * 100 if bbm > 0 else 999
+            return bw <= thr, f'布林帶寬 {bw:.2f}% ≤ {thr}%（帶寬收窄）'
+
+        elif ctype == 'bb_breakout_up':
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbu = safe_float(bb_u.iloc[-1])
+            return price >= bbu, f'股價 {price:.2f} ≥ 布林上軌 {bbu:.2f}'
+
+        # ── 成交量 ─────────────────────────────────────────
+        elif ctype == 'volume_nd_high':
+            days = int(params.get('days', 20))
+            if n < days + 1:
+                return False, '資料不足'
+            prev_max = safe_float(vol.iloc[-days-1:-1].max())
+            curr_vol = safe_float(vol.iloc[-1])
+            passed   = curr_vol >= prev_max
+            return passed, f'成交量 {curr_vol:.0f} 創近{days}日新高 {prev_max:.0f}'
+
+        elif ctype == 'obv_rising':
+            trend_days = int(params.get('trend_days', 10))
+            if n < trend_days + 2:
+                return False, '資料不足'
+            daily_chg = close.diff()
+            obv = (vol * daily_chg.apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))).cumsum()
+            passed = safe_float(obv.iloc[-1]) > safe_float(obv.iloc[-trend_days])
+            return passed, f'OBV {trend_days}天持續上升'
+
+        # ── 基本面 ─────────────────────────────────────────
+        elif ctype == 'pe_below':
+            thr = float(params.get('threshold', 20))
+            pe  = safe_float(info.get('trailingPE') or info.get('forwardPE') or 0)
+            if pe <= 0:
+                return False, 'PE 資料不足'
+            return pe <= thr, f'PE {pe:.1f} ≤ {thr}'
+
+        elif ctype == 'pe_above':
+            thr = float(params.get('threshold', 30))
+            pe  = safe_float(info.get('trailingPE') or info.get('forwardPE') or 0)
+            if pe <= 0:
+                return False, 'PE 資料不足'
+            return pe >= thr, f'PE {pe:.1f} ≥ {thr}'
+
+        elif ctype == 'div_yield_above':
+            thr = float(params.get('threshold', 3))
+            dy  = safe_float(info.get('dividendYield', 0)) * 100
+            return dy >= thr, f'股息率 {dy:.2f}% ≥ {thr}%'
+
+        elif ctype == 'market_cap_above':
+            thr = float(params.get('threshold', 10)) * 1e9
+            mc  = safe_float(info.get('marketCap', 0))
+            return mc >= thr, f'市值 {mc/1e9:.1f}B ≥ {params.get("threshold",10)}B'
+
+        elif ctype == 'market_cap_below':
+            thr = float(params.get('threshold', 2)) * 1e9
+            mc  = safe_float(info.get('marketCap', 0))
+            if mc <= 0:
+                return False, '市值資料不足'
+            return mc <= thr, f'市值 {mc/1e9:.1f}B ≤ {params.get("threshold",2)}B'
+
     except Exception as e:
         return False, f'計算錯誤: {str(e)[:40]}'
 
     return False, f'未知條件類型: {ctype}'
 
 
-def _scan_ticker(ticker, conditions, is_tw, period='1y'):
+def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
     """Scan a single ticker and return result dict or None."""
     try:
         stock = yf.Ticker(ticker)
         info  = stock.info
-        hist  = stock.history(period=period)
+        # 60分K最多只能抓 60 天，日線用 period 參數
+        if interval == '1h':
+            hist = stock.history(period='60d', interval='1h')
+        else:
+            hist = stock.history(period=period)
         if hist.empty or len(hist) < 20:
             return None
         price = last_valid(hist['Close'])
@@ -2578,12 +2857,14 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y'):
             return None
         prev      = safe_float(hist['Close'].dropna().iloc[-2]) if len(hist['Close'].dropna()) > 1 else price
         chg_pct   = (price / prev - 1) * 100 if prev else 0
-        name      = (info.get('shortName') or info.get('longName') or ticker)[:30]
+        en_name   = (info.get('shortName') or info.get('longName') or ticker)[:30]
+        name      = tw_cn_name(ticker, en_name) if is_tw else en_name
 
         cond_results = []
         all_passed   = True
         for cond in conditions:
             passed, detail = _eval_condition(hist, info, cond)
+            passed = bool(passed)
             cond_results.append({'label': cond.get('label', cond['type']),
                                  'passed': passed, 'detail': detail})
             if not passed:
@@ -2644,9 +2925,7 @@ def screener_run():
     conditions = data.get('conditions', [])
     is_tw      = data.get('isTw', True)
     period     = data.get('period', '1y')
-
-    if not conditions:
-        return jsonify({'error': '請至少設定一個篩選條件'}), 400
+    interval   = data.get('interval', '1d')
 
     # Normalize tickers
     if is_tw:
@@ -2660,16 +2939,23 @@ def screener_run():
     if len(tickers) > 150:
         return jsonify({'error': '最多一次掃描 150 檔'}), 400
 
-    results = []
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        futs = {ex.submit(_scan_ticker, t, conditions, is_tw, period): t for t in tickers}
-        for f in as_completed(futs):
-            r = f.result()
-            if r:
-                results.append(r)
+    try:
+        results = []
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {ex.submit(_scan_ticker, t, conditions, is_tw, period, interval): t for t in tickers}
+            for f in as_completed(futs):
+                try:
+                    r = f.result()
+                    if r:
+                        results.append(r)
+                except Exception:
+                    pass
 
-    results.sort(key=lambda x: x['changePct'], reverse=True)
-    return jsonify({'results': results, 'total': len(tickers), 'matched': len(results)})
+        results.sort(key=lambda x: (x.get('changePct') or 0), reverse=True)
+        return jsonify({'results': results, 'total': len(tickers), 'matched': len(results)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'掃描發生錯誤，請稍後再試（{str(e)[:80]}）'}), 500
 
 
 @app.route('/api/screener/strategies', methods=['GET'])
@@ -2691,6 +2977,7 @@ def screener_strategies_save():
             'tickers':    data.get('tickers', []),
             'isTw':       data.get('isTw', True),
             'period':     data.get('period', '1y'),
+            'interval':   data.get('interval', '1d'),
             'exitAlerts': data.get('exitAlerts', []),
             'savedAt':    pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
         }

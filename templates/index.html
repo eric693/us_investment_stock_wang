@@ -27,8 +27,8 @@
 .wc-price-row { display:flex; align-items:baseline; gap:6px; margin:2px 0 4px; }
 .wc-price { font-size:1rem; font-weight:800; color:var(--text); }
 .wc-pct   { font-size:0.78rem; font-weight:700; }
-.wc-pct.up { color:var(--green); }
-.wc-pct.dn { color:var(--red); }
+.wc-pct.up { color:var(--red); }
+.wc-pct.dn { color:var(--green); }
 .wc-name   { font-size:0.82rem; color:var(--text-mid); min-height:1.2em; }
 .wc-desc   { font-size:0.74rem; color:var(--text-dim); line-height:1.45; min-height:1.2em; }
 .wc-tag    { font-size:0.68rem; }
@@ -538,7 +538,7 @@ function timeAgo(iso) {
   if (s < 86400) return Math.floor(s/3600) + ' 小時前';
   return Math.floor(s/86400) + ' 天前';
 }
-function pctColor(v) { return v > 0 ? 'green' : v < 0 ? 'red' : ''; }
+function pctColor(v) { return v > 0 ? 'red' : v < 0 ? 'green' : ''; }
 function pctStr(v, digits=2) {
   if (v === null || v === undefined) return 'N/A';
   return (v >= 0 ? '+' : '') + v.toFixed(digits) + '%';
@@ -839,7 +839,7 @@ function renderHeader(d) {
   $('hPrice').textContent = '$' + d.price.toFixed(3);
   const up = d.change >= 0;
   $('hDelta').textContent  = (up?'+':'') + d.change.toFixed(3) + '  (' + (up?'+':'') + d.changePct.toFixed(2) + '%)';
-  $('hDelta').className    = 'price-delta ' + (up ? 'green' : 'red');
+  $('hDelta').className    = 'price-delta ' + (up ? 'red' : 'green');
 
   $('sOpen').textContent   = '$' + d.open;
   $('sHigh').textContent   = '$' + d.high;
@@ -872,7 +872,7 @@ function renderPerf(d) {
     const v = r[c.key];
     const cls = v === null ? 'neu-chip' : v >= 0 ? 'pos-chip' : 'neg-chip';
     const txt = v === null ? 'N/A' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-    const col = v === null ? '' : v >= 0 ? 'green' : 'red';
+    const col = v === null ? '' : v >= 0 ? 'red' : 'green';
     return `<div class="perf-chip ${cls}">
       <span class="perf-label">${c.label}</span>
       <span class="perf-value ${col}">${txt}</span>
@@ -1214,7 +1214,7 @@ function renderFinTrends(d) {
   const growthHtml = growthItems.map(g =>
     `<div class="ft-metric">
       <span class="ft-m-label">${g.label}</span>
-      <span class="ft-m-val" style="color:${g.up===null?'var(--text)':g.up?'var(--green)':'var(--red)'}">
+      <span class="ft-m-val" style="color:${g.up===null?'var(--text)':g.up?'var(--red)':'var(--green)'}">
         ${g.value !== null && g.value !== undefined && g.value !== 0
           ? (g.up === null ? g.value : (g.up ? '+' : '') + g.value.toFixed(1) + '%')
           : 'N/A'}
@@ -1308,11 +1308,11 @@ function renderBiz(d) {
 // ── Tech Stats ────────────────────────────────────────────────────────
 function renderTechStats(d) {
   const rows = [
-    ['MA5',   '$'+d.ma5,              d.price > d.ma5  ? 'green':'red',    d.price > d.ma5  ? '站上':'跌破'],
-    ['MA20',  '$'+d.ma20,             d.price > d.ma20 ? 'green':'red',    d.price > d.ma20 ? '站上':'跌破'],
-    ['MA60',  '$'+d.ma60,             d.price > d.ma60 ? 'green':'red',    d.price > d.ma60 ? '站上':'跌破'],
-    ['DIF',   d.macdVal.toFixed(2),   d.macdVal > 0    ? 'green':'red',    d.macdVal > 0    ? '零軸上':'零軸下'],
-    ['DEA',   d.deaVal.toFixed(2),    d.macdVal > d.deaVal ? 'green':'red', d.macdVal > d.deaVal ? '金叉':'死叉'],
+    ['MA5',   '$'+d.ma5,              d.price > d.ma5  ? 'red':'green',    d.price > d.ma5  ? '站上':'跌破'],
+    ['MA20',  '$'+d.ma20,             d.price > d.ma20 ? 'red':'green',    d.price > d.ma20 ? '站上':'跌破'],
+    ['MA60',  '$'+d.ma60,             d.price > d.ma60 ? 'red':'green',    d.price > d.ma60 ? '站上':'跌破'],
+    ['DIF',   d.macdVal.toFixed(2),   d.macdVal > 0    ? 'red':'green',    d.macdVal > 0    ? '零軸上':'零軸下'],
+    ['DEA',   d.deaVal.toFixed(2),    d.macdVal > d.deaVal ? 'red':'green', d.macdVal > d.deaVal ? '金叉':'死叉'],
     ['量比',  d.volRatio.toFixed(2)+'x', d.volRatio >= 1.5 ? 'green':'dim', d.volRatio >= 1.5 ? '放量':'縮量'],
   ];
   setHTML('techStats',
@@ -1379,7 +1379,7 @@ function renderAnalyst(d) {
       ${d.analystTarget ? `<div class="analyst-row"><span class="ar-l">平均目標價</span><span class="ar-v">$${d.analystTarget}</span></div>` : ''}
       ${d.analystHigh   ? `<div class="analyst-row"><span class="ar-l">最高目標價</span><span class="ar-v green">$${d.analystHigh}</span></div>` : ''}
       ${d.analystLow    ? `<div class="analyst-row"><span class="ar-l">最低目標價</span><span class="ar-v red">$${d.analystLow}</span></div>` : ''}
-      ${up ? `<div class="analyst-upside ${parseFloat(up)>=0?'green':'red'}">潛在空間：${parseFloat(up)>=0?'+':''}${up}%</div>` : ''}
+      ${up ? `<div class="analyst-upside ${parseFloat(up)>=0?'red':'green'}">潛在空間：${parseFloat(up)>=0?'+':''}${up}%</div>` : ''}
     ` : '<div class="no-data">分析師資料暫無</div>'}
   </div>`);
 }
@@ -1541,8 +1541,8 @@ async function loadFundamentals(ticker, stockData) {
 }
 
 function renderEarnings(d) {
-  const revGColor = d.revGrowth > 0 ? 'var(--green)' : d.revGrowth < 0 ? 'var(--red)' : 'var(--text-dim)';
-  const epsGColor = d.epsGrowth > 0 ? 'var(--green)' : d.epsGrowth < 0 ? 'var(--red)' : 'var(--text-dim)';
+  const revGColor = d.revGrowth > 0 ? 'var(--red)' : d.revGrowth < 0 ? 'var(--green)' : 'var(--text-dim)';
+  const epsGColor = d.epsGrowth > 0 ? 'var(--red)' : d.epsGrowth < 0 ? 'var(--green)' : 'var(--text-dim)';
   setHTML('earningsPanel', `
     ${d.earningsDate ? `
       <div class="earn-date-wrap">
@@ -1957,7 +1957,7 @@ function renderMonitorTable() {
     if (entry.shares > 0 && entry.avgCost > 0 && price > 0) {
       const pl    = (price - entry.avgCost) * entry.shares;
       const plPct = (price / entry.avgCost - 1) * 100;
-      const cls   = pl >= 0 ? 'green' : 'red';
+      const cls   = pl >= 0 ? 'red' : 'green';
       plHtml = `<span class="${cls}">${pl >= 0 ? '+' : ''}$${Math.abs(pl).toFixed(0)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)</span>
                 <br><small class="dim">${entry.shares}股 @$${entry.avgCost}</small>`;
     } else if (entry.shares > 0 || entry.avgCost > 0) {
@@ -1970,7 +1970,7 @@ function renderMonitorTable() {
     const priceHtml = price > 0
       ? `<strong>$${price.toFixed(2)}</strong>`
       : '<span class="dim">載入中...</span>';
-    const chgCls  = chgPct >= 0 ? 'green' : 'red';
+    const chgCls  = chgPct >= 0 ? 'red' : 'green';
     const chgHtml = d
       ? `<span class="${chgCls}">${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%</span>`
       : '<span class="dim">--</span>';

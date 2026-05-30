@@ -100,8 +100,8 @@ a:hover { text-decoration: underline; }
 .mb-lbl { color: var(--text-dim); font-size: 0.72rem; white-space: nowrap; }
 .mb-val { color: var(--text); font-weight: 700; white-space: nowrap; }
 .mb-pct { font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
-.mb-pct.up { color: var(--green); }
-.mb-pct.dn { color: var(--red); }
+.mb-pct.up { color: var(--red); }
+.mb-pct.dn { color: var(--green); }
 .mb-badge {
   padding: 1px 7px; border-radius: 10px;
   font-size: 0.68rem; font-weight: 800; white-space: nowrap;
@@ -400,8 +400,8 @@ a:hover { text-decoration: underline; }
 }
 .ib-kv { font-size: 0.74rem; color: var(--text-mid); white-space: nowrap; }
 .ib-kv strong { color: var(--text); font-weight: 700; }
-.ib-kv.ib-up strong { color: var(--green); }
-.ib-kv.ib-dn strong { color: var(--red); }
+.ib-kv.ib-up strong { color: var(--red); }
+.ib-kv.ib-dn strong { color: var(--green); }
 .ib-desc { font-size: 0.7rem; color: var(--text-dim); line-height: 1.4; }
 
 .macd-bar {

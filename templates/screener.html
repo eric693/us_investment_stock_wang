@@ -108,8 +108,8 @@ select.inp{cursor:pointer;}
 .strat-acts{display:flex;gap:5px;flex-shrink:0;}
 
 /* ── Signal badges ───────────────────────────── */
-.sig-up{color:var(--green);font-weight:800;}
-.sig-dn{color:var(--red);font-weight:800;}
+.sig-up{color:var(--red);font-weight:800;}
+.sig-dn{color:var(--green);font-weight:800;}
 .bool-yes{color:var(--green);}
 .bool-no{color:var(--red);}
 
@@ -165,16 +165,24 @@ select.inp{cursor:pointer;}
       </div>
       <div style="font-size:0.72rem;color:var(--text-dim);margin-top:4px;" id="tickerCount">已選 0 檔</div>
 
-      <!-- Period -->
-      <div class="section-label">歷史資料週期</div>
-      <select class="inp inp-sm" id="periodSel">
-        <option value="6mo">6 個月</option>
-        <option value="1y" selected>1 年</option>
-        <option value="2y">2 年</option>
+      <!-- Interval + Period -->
+      <div class="section-label">K線週期</div>
+      <select class="inp inp-sm" id="intervalSel" onchange="onIntervalChange()">
+        <option value="1d" selected>日線（1D）</option>
+        <option value="1h">60分K（1H）</option>
       </select>
+      <div id="periodRow" style="margin-top:6px;">
+        <div class="section-label">歷史資料週期</div>
+        <select class="inp inp-sm" id="periodSel">
+          <option value="6mo">6 個月</option>
+          <option value="1y" selected>1 年</option>
+          <option value="2y">2 年</option>
+        </select>
+      </div>
+      <div id="periodHint60" style="display:none;font-size:0.71rem;color:var(--text-dim);margin-top:4px;">60分K 固定抓取最近 60 天資料（yfinance 限制）</div>
 
       <!-- Conditions -->
-      <div class="section-label" style="margin-top:16px;">篩選條件（全部符合才列出）</div>
+      <div class="section-label" style="margin-top:16px;">篩選條件（全部符合才列出，不選則列出所有標的）</div>
       <div class="cond-list" id="condList"></div>
       <button class="btn btn-ghost btn-sm" onclick="addCondition()" style="width:100%;margin-bottom:8px;">＋ 新增條件</button>
 
@@ -276,10 +284,10 @@ const COND_DEFS = {
   price_below_ma_for_months:{ label:'股價長期低於均線後突破',  badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'months',label:'低於月數',default:3,type:'number'}] },
   ma_trending_up:           { label:'N日均線呈上揚趨勢',       badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'trend_days',label:'比較天數',default:5,type:'number'}] },
   // KD
-  kd_k_above:               { label:'KD K值 > 閾值',          badge:'tech', params:[{key:'kd_n',label:'N(天)',default:60,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:50,type:'number'}] },
-  kd_k_below:               { label:'KD K值 < 閾值（超賣）',  badge:'tech', params:[{key:'kd_n',label:'N(天)',default:9,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:20,type:'number'}] },
-  kd_golden_cross:          { label:'KD 金叉',                badge:'tech', params:[{key:'kd_n',label:'N(天)',default:60,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
-  kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'N(天)',default:9,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  kd_k_above:               { label:'KD K值 > 閾值',          badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:50,type:'number'}] },
+  kd_k_below:               { label:'KD K值 < 閾值（超賣）',  badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:20,type:'number'}] },
+  kd_golden_cross:          { label:'KD 金叉',                badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   // MACD
   macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[] },
   macd_golden_cross:        { label:'MACD 金叉',              badge:'tech', params:[{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
@@ -299,6 +307,36 @@ const COND_DEFS = {
   price_change_above:       { label:'今日漲幅 > %',            badge:'tech', params:[{key:'threshold',label:'漲幅%',default:3,type:'number'}] },
   price_from_high_below:    { label:'距52週高點 < %（相對強勢）',badge:'tech', params:[{key:'threshold',label:'距高%',default:15,type:'number'}] },
   price_range:              { label:'股價區間',                 badge:'tech', params:[{key:'min',label:'最低價',default:10,type:'number'},{key:'max',label:'最高價',default:9999,type:'number'}] },
+  // ── 均線排列 ──
+  ma_bull_alignment:        { label:'均線多頭排列（MA5>MA10>MA20>MA60）', badge:'tech', params:[] },
+  ma_bear_alignment:        { label:'均線空頭排列（MA5<MA10<MA20<MA60）', badge:'exit', params:[] },
+  ma_golden_cross:          { label:'短均線金叉長均線',          badge:'tech', params:[{key:'short_period',label:'短均線',default:5,type:'number'},{key:'long_period',label:'長均線',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:5,type:'number'}] },
+  ma_death_cross:           { label:'短均線死叉長均線（警示）',   badge:'exit', params:[{key:'short_period',label:'短均線',default:5,type:'number'},{key:'long_period',label:'長均線',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:5,type:'number'}] },
+  ma_trending_down:         { label:'N日均線呈下降趨勢',         badge:'exit', params:[{key:'period',label:'均線日數',default:20,type:'number'},{key:'trend_days',label:'比較天數',default:5,type:'number'}] },
+  // ── 價格形態 ──
+  price_near_52w_low:       { label:'距52週低點 < %（底部機會）',badge:'tech', params:[{key:'threshold',label:'距低%',default:10,type:'number'}] },
+  price_nd_high:            { label:'股價創N日新高',             badge:'tech', params:[{key:'days',label:'天數',default:20,type:'number'}] },
+  consecutive_up:           { label:'連續上漲N天',               badge:'tech', params:[{key:'days',label:'連漲天數',default:3,type:'number'}] },
+  consecutive_down:         { label:'連續下跌N天（退出）',        badge:'exit', params:[{key:'days',label:'連跌天數',default:3,type:'number'}] },
+  price_change_nd:          { label:'近N日累計漲幅 > %',         badge:'tech', params:[{key:'days',label:'天數',default:5,type:'number'},{key:'threshold',label:'漲幅%',default:5,type:'number'}] },
+  price_change_nd_down:     { label:'近N日累計跌幅 < %（弱勢）', badge:'exit', params:[{key:'days',label:'天數',default:5,type:'number'},{key:'threshold',label:'跌幅%',default:-8,type:'number'}] },
+  price_gap_up:             { label:'跳空缺口向上（強勢訊號）',  badge:'tech', params:[] },
+  high_vol_breakout:        { label:'放量突破近期高點',           badge:'tech', params:[{key:'days',label:'參考天數',default:20,type:'number'}] },
+  // ── RSI 穿越 ──
+  rsi_cross_above:          { label:'RSI 向上穿越閾值',          badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:50,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  rsi_cross_below:          { label:'RSI 向下穿越閾值（退出）',  badge:'exit', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:70,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  // ── 布林帶 ──
+  bb_squeeze:               { label:'布林帶收窄（即將爆發）',    badge:'tech', params:[{key:'threshold',label:'帶寬% ≤',default:5,type:'number'}] },
+  bb_breakout_up:           { label:'股價突破布林上軌',           badge:'tech', params:[] },
+  // ── 成交量 ──
+  volume_nd_high:           { label:'成交量創N日新高',            badge:'tech', params:[{key:'days',label:'天數',default:20,type:'number'}] },
+  obv_rising:               { label:'OBV能量潮上升',             badge:'tech', params:[{key:'trend_days',label:'趨勢天數',default:10,type:'number'}] },
+  // ── 基本面 ──
+  pe_below:                 { label:'PE 低於閾值（低估值）',      badge:'chip', params:[{key:'threshold',label:'PE ≤',default:20,type:'number'}] },
+  pe_above:                 { label:'PE 高於閾值（成長股）',      badge:'chip', params:[{key:'threshold',label:'PE ≥',default:30,type:'number'}] },
+  div_yield_above:          { label:'股息率 > %（高股息）',       badge:'chip', params:[{key:'threshold',label:'股息率%',default:3,type:'number'}] },
+  market_cap_above:         { label:'市值大於N十億（大型股）',    badge:'chip', params:[{key:'threshold',label:'市值B',default:10,type:'number'}] },
+  market_cap_below:         { label:'市值小於N十億（小型股）',    badge:'chip', params:[{key:'threshold',label:'市值B',default:2,type:'number'}] },
 };
 
 const EXIT_COND_OPTIONS = [
@@ -313,6 +351,12 @@ async function initUniverse() {
   const data = await resp.json();
   _universe = data;
   renderUniverseCats();
+}
+
+function onIntervalChange() {
+  const is1h = document.getElementById('intervalSel').value === '1h';
+  document.getElementById('periodRow').style.display    = is1h ? 'none' : '';
+  document.getElementById('periodHint60').style.display = is1h ? 'block' : 'none';
 }
 
 function setMarket(m) {
@@ -497,7 +541,6 @@ function changeExit(idx, newType) {
 // ═══════════════════════════════════════════════════════
 async function runScreener() {
   if (_selectedTickers.size === 0) { showToast('請選擇要掃描的標的', 'red'); return; }
-  if (_conditions.length === 0)   { showToast('請至少設定一個篩選條件', 'red'); return; }
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '掃描中…';
@@ -530,6 +573,7 @@ async function runScreener() {
         conditions: enriched,
         isTw:       _market === 'tw',
         period:     document.getElementById('periodSel').value,
+        interval:   document.getElementById('intervalSel').value,
       }),
     });
     clearInterval(fakeProgress);
@@ -690,6 +734,7 @@ async function saveStrategy() {
         tickers:    [..._selectedTickers],
         isTw:       _market === 'tw',
         period:     document.getElementById('periodSel').value,
+        interval:   document.getElementById('intervalSel').value,
         exitAlerts: exitEnriched,
       }),
     });
@@ -743,7 +788,9 @@ function loadStrategy(name) {
   _selectedTickers = new Set(s.tickers || []);
   _conditions  = s.conditions  || [];
   _exitAlerts  = s.exitAlerts  || [];
-  document.getElementById('periodSel').value = s.period || '1y';
+  document.getElementById('periodSel').value   = s.period   || '1y';
+  document.getElementById('intervalSel').value = s.interval || '1d';
+  onIntervalChange();
   renderUniverseCats();
   renderConditions();
   renderExitAlerts();
