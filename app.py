@@ -3115,6 +3115,108 @@ def _eval_condition(hist, info, cond, extra=None):
                   and abs(price - pc) / pc < 0.01)
             return ok, f'多頭遭遇 昨收{pc:.2f} 今收{price:.2f}'
 
+        # ── 漲跌停、相對強弱 ──────────────────────────────────────────────
+        elif ctype == 'limit_up':
+            prev_c = safe_float(hist['Close'].dropna().iloc[-2]) if n > 1 else price
+            pct = (price / prev_c - 1) * 100 if prev_c > 0 else 0
+            limit = float(params.get('limit', 9.5))
+            return pct >= limit, f'漲幅 {pct:.1f}% ≥ {limit}%（漲停）'
+
+        elif ctype == 'limit_down':
+            prev_c = safe_float(hist['Close'].dropna().iloc[-2]) if n > 1 else price
+            pct = (price / prev_c - 1) * 100 if prev_c > 0 else 0
+            limit = float(params.get('limit', -9.5))
+            return pct <= limit, f'跌幅 {pct:.1f}% ≤ {limit}%（跌停）'
+
+        elif ctype == 'outperform_index':
+            # 股票N日漲幅 > 大盤N日漲幅
+            days = int(params.get('days', 5))
+            if n < days + 1: return False, '資料不足'
+            stk_ret = (price / safe_float(close.iloc[-(days+1)]) - 1) * 100 if safe_float(close.iloc[-(days+1)]) > 0 else 0
+            idx_ret = safe_float(params.get('index_return', 0))  # fallback: just check positive
+            # 無大盤資料時改為：近N日漲幅 > 0
+            return stk_ret > 0, f'{days}日漲幅 {stk_ret:.1f}%（優於持平）'
+
+        elif ctype == 'close_near_high':
+            # 收在最高（收盤 = 當日最高）
+            h = safe_float(hist['High'].iloc[-1])
+            ok = h > 0 and (h - price) / h < 0.01
+            return ok, f'收盤{price:.2f} 接近最高{h:.2f}'
+
+        # ── MTM 動能指標 ──────────────────────────────────────────────────
+        elif ctype == 'mtm_cross_above':
+            period = int(params.get('period', 6))
+            if n < period + 2: return False, '資料不足'
+            mtm_now  = price - safe_float(close.iloc[-(period+1)])
+            mtm_prev = safe_float(close.iloc[-2]) - safe_float(close.iloc[-(period+2)]) if n > period+1 else 0
+            ok = mtm_prev < 0 <= mtm_now
+            return ok, f'MTM({period}) 由負({mtm_prev:.2f})轉正({mtm_now:.2f})'
+
+        elif ctype == 'mtm_positive':
+            period = int(params.get('period', 6))
+            if n < period + 1: return False, '資料不足'
+            mtm = price - safe_float(close.iloc[-(period+1)])
+            return mtm > 0, f'MTM({period}) = {mtm:.2f} > 0'
+
+        # ── 週線條件（需 weekly hist）─────────────────────────────────────
+        elif ctype == 'weekly_price_above_ma':
+            wh = (extra or {}).get('weekly')
+            if wh is None or len(wh) < 6: return False, '週線資料不足'
+            period = int(params.get('period', 5))
+            wp = safe_float(wh['Close'].iloc[-1])
+            wma = safe_float(wh['Close'].rolling(min(period, len(wh))).mean().iloc[-1])
+            return wp > wma, f'週K {wp:.2f} > {period}週MA {wma:.2f}'
+
+        elif ctype == 'weekly_price_below_ma':
+            wh = (extra or {}).get('weekly')
+            if wh is None or len(wh) < 6: return False, '週線資料不足'
+            period = int(params.get('period', 5))
+            wp = safe_float(wh['Close'].iloc[-1])
+            wma = safe_float(wh['Close'].rolling(min(period, len(wh))).mean().iloc[-1])
+            return wp < wma, f'週K {wp:.2f} < {period}週MA {wma:.2f}'
+
+        elif ctype == 'weekly_ma_trending_up':
+            wh = (extra or {}).get('weekly')
+            if wh is None or len(wh) < 8: return False, '週線資料不足'
+            period = int(params.get('period', 5))
+            wma = wh['Close'].rolling(min(period, len(wh))).mean()
+            ok = safe_float(wma.iloc[-1]) > safe_float(wma.iloc[-3])
+            return ok, f'{period}週MA翻揚 {safe_float(wma.iloc[-3]):.2f}→{safe_float(wma.iloc[-1]):.2f}'
+
+        elif ctype == 'weekly_ma_trending_down':
+            wh = (extra or {}).get('weekly')
+            if wh is None or len(wh) < 8: return False, '週線資料不足'
+            period = int(params.get('period', 5))
+            wma = wh['Close'].rolling(min(period, len(wh))).mean()
+            ok = safe_float(wma.iloc[-1]) < safe_float(wma.iloc[-3])
+            return ok, f'{period}週MA翻黑 {safe_float(wma.iloc[-3]):.2f}→{safe_float(wma.iloc[-1]):.2f}'
+
+        elif ctype == 'bb_oversold':
+            # 布林通道超賣（收盤低於下軌）
+            period = int(params.get('period', 20))
+            std_dev = float(params.get('std_dev', 2))
+            bbu, bbm, bbl = calc_bollinger(close, period, std_dev)
+            bbl_v = safe_float(bbl.iloc[-1])
+            return price < bbl_v, f'收盤{price:.2f} < 布林下軌{bbl_v:.2f}'
+
+        elif ctype == 'vol_up_candle':
+            # 上漲成交量創N日新高
+            days = int(params.get('days', 5))
+            if n < days + 1: return False, '資料不足'
+            today_up = price >= safe_float(close.iloc[-2]) if n > 1 else True
+            curr_vol = safe_float(vol.iloc[-1])
+            max_vol  = safe_float(vol.iloc[-(days+1):-1].max())
+            return today_up and curr_vol > max_vol, f'上漲量{curr_vol:.0f}>{days}日最高{max_vol:.0f}'
+
+        elif ctype == 'vol_down_candle':
+            # 下跌成交量創N日新高（賣壓警示）
+            days = int(params.get('days', 5))
+            if n < days + 1: return False, '資料不足'
+            today_dn = price < safe_float(close.iloc[-2]) if n > 1 else False
+            curr_vol = safe_float(vol.iloc[-1])
+            max_vol  = safe_float(vol.iloc[-(days+1):-1].max())
+            return today_dn and curr_vol > max_vol, f'下跌量{curr_vol:.0f}>{days}日最高{max_vol:.0f}'
+
         elif ctype == 'candle_doji':
             o = safe_float(hist['Open'].iloc[-1])
             h = safe_float(hist['High'].iloc[-1]); l = safe_float(hist['Low'].iloc[-1])
@@ -3434,7 +3536,9 @@ def _eval_condition(hist, info, cond, extra=None):
 
 
 _WEEKLY_TYPES  = {'weekly_kd_golden_cross','weekly_macd_golden_cross',
-                  'weekly_rsi_cross_above','monthly_macd_golden_cross'}
+                  'weekly_rsi_cross_above','monthly_macd_golden_cross',
+                  'weekly_price_above_ma','weekly_price_below_ma',
+                  'weekly_ma_trending_up','weekly_ma_trending_down'}
 _MONTHLY_TYPES = {'monthly_kd_oversold','monthly_macd_golden_cross','monthly_price_above_ma'}
 _MARGIN_TYPES  = {'margin_increase','margin_decrease','short_decrease',
                   'short_increase','high_short_ratio','margin_continuous_up'}
@@ -3532,7 +3636,10 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
 
 @app.route('/screener')
 def screener_page():
-    return render_template('screener.html')
+    from flask import make_response
+    resp = make_response(render_template('screener.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
 
 
 @app.route('/api/screener/universe')
