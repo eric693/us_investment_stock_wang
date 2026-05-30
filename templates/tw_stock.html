@@ -519,6 +519,7 @@
         <div style="display:flex;align-items:center;gap:6px">
           <div class="period-tabs">
             <button class="ptab" data-period="1D" onclick="changePeriod('1D')">1D</button>
+            <button class="ptab" data-period="60分" onclick="changePeriod('60分')">60分</button>
             <button class="ptab" data-period="5D" onclick="changePeriod('5D')">5D</button>
             <button class="ptab" data-period="週" onclick="changePeriod('週')">週</button>
             <button class="ptab active" data-period="1M" onclick="changePeriod('1M')">1M</button>
@@ -1032,6 +1033,10 @@ function changePeriod(period) {
   document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b.dataset.period === period));
   if (period === '1D') {
     renderIntraday(currentData.ticker);
+    return;
+  }
+  if (period === '60分') {
+    renderHourly(currentData.ticker);
     return;
   }
   if (period === '週') {
@@ -1982,6 +1987,86 @@ async function renderIntraday(ticker) {
       (last&&first ? `<span style="margin-left:12px;color:${last>=first?'var(--red)':'var(--green)'}">今日 ${last>=first?'+':''}${((last/first-1)*100).toFixed(2)}%</span>` : ''));
   } catch(e) {
     console.error('intraday error', e);
+  }
+}
+
+// ── Hourly 60分K Chart ──────────────────────────────────────────────
+async function renderHourly(ticker) {
+  const BG = '#0c1220', GRID = '#121e30';
+  Plotly.newPlot('priceChart', [], {paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:60,r:8,t:24,b:4},
+    annotations:[{xref:'paper',yref:'paper',x:.5,y:.5,text:'60分K 資料載入中...',showarrow:false,font:{color:'#6888a0',size:13}}]},
+    {responsive:true,displayModeBar:false});
+  try {
+    const r = await fetch('/api/tw/hourly/' + encodeURIComponent(ticker));
+    const d = await r.json();
+    if (d.error) {
+      Plotly.newPlot('priceChart', [], {paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:60,r:8,t:24,b:4},
+        annotations:[{xref:'paper',yref:'paper',x:.5,y:.5,text:d.error,showarrow:false,font:{color:'#6888a0',size:12}}]},
+        {responsive:true,displayModeBar:false});
+      return;
+    }
+    const dates = d.dates, o = d.ohlcv;
+    const volColors = o.close.map((c,i) => i===0?'rgba(100,130,160,0.4)':(c>=o.close[i-1]?'rgba(232,70,70,0.5)':'rgba(0,214,143,0.5)'));
+    Plotly.newPlot('priceChart', [
+      {type:'candlestick',name:currentData.displayTicker||ticker,x:dates,
+       open:o.open,high:o.high,low:o.low,close:o.close,
+       increasing:{line:{color:'#e84646',width:1},fillcolor:'#e84646'},
+       decreasing:{line:{color:'#00d68f',width:1},fillcolor:'#00d68f'},showlegend:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.ma.ma5, name:'MA5',  line:{color:'#ffa000',width:1.2},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.ma.ma20,name:'MA20', line:{color:'#d94fff',width:1.2},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.ma.ma60,name:'MA60', line:{color:'#00aaff',width:1.2},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.bollinger.upper,name:'BB上軌',line:{color:'rgba(100,130,160,0.5)',width:1,dash:'dot'},connectgaps:false,showlegend:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.bollinger.lower,name:'BB下軌',line:{color:'rgba(100,130,160,0.5)',width:1,dash:'dot'},connectgaps:false,showlegend:false},
+    ], {
+      paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:11},showlegend:true,
+      legend:{orientation:'h',x:0,y:1.06,bgcolor:'rgba(0,0,0,0)',font:{size:10,color:'#8aaabf'}},
+      margin:{l:60,r:8,t:24,b:4},
+      yaxis:{gridcolor:GRID,zerolinecolor:GRID,tickfont:{color:'#6888a0'},side:'left',autorange:true},
+      xaxis:{rangeslider:{visible:false},gridcolor:GRID,showticklabels:false},
+      hovermode:'x unified',
+    },{responsive:true,displayModeBar:false});
+    Plotly.newPlot('volumeChart', [
+      {type:'bar',x:dates,y:o.volume,name:'成交量',marker:{color:volColors},showlegend:false},
+    ], {
+      paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:9},
+      margin:{l:60,r:8,t:2,b:22},
+      yaxis:{gridcolor:GRID,tickfont:{color:'#6888a0',size:9},tickformat:'.2s'},
+      xaxis:{rangeslider:{visible:false},gridcolor:GRID,tickfont:{color:'#6888a0'}},
+      hovermode:'x unified',
+    },{responsive:true,displayModeBar:false});
+    // MACD
+    const mc = d.macd;
+    const histColors = mc.hist.map(v => v === null ? 'rgba(0,0,0,0)' : v >= 0 ? 'rgba(232,70,70,0.7)' : 'rgba(0,214,143,0.7)');
+    Plotly.newPlot('macdChart', [
+      {type:'bar',x:dates,y:mc.hist,name:'MACD柱',marker:{color:histColors},showlegend:false},
+      {type:'scatter',mode:'lines',x:dates,y:mc.dif,name:'DIF',line:{color:'#3d8ef8',width:1.5},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:mc.dea,name:'DEA',line:{color:'#e8a020',width:1.5},connectgaps:false},
+    ], {
+      paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:9},showlegend:true,
+      legend:{orientation:'h',x:0,y:1.15,bgcolor:'rgba(0,0,0,0)',font:{size:9,color:'#8aaabf'}},
+      margin:{l:60,r:8,t:8,b:22},
+      yaxis:{gridcolor:GRID,zerolinecolor:'rgba(100,130,160,0.3)',tickfont:{color:'#6888a0',size:9}},
+      xaxis:{rangeslider:{visible:false},gridcolor:GRID,tickfont:{color:'#6888a0'}},
+      hovermode:'x unified',
+    },{responsive:true,displayModeBar:false});
+    // RSI
+    Plotly.newPlot('rsiChart', [
+      {type:'scatter',mode:'lines',x:dates,y:d.rsiSeries,name:'RSI',line:{color:'#9f6aeb',width:1.5},connectgaps:false},
+    ], {
+      paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:9},
+      margin:{l:60,r:8,t:4,b:28},
+      yaxis:{gridcolor:GRID,range:[0,100],tickfont:{color:'#6888a0',size:9},
+        tickvals:[20,30,50,70,80],
+        shapes:[{type:'line',x0:0,x1:1,xref:'paper',y0:70,y1:70,line:{color:'rgba(232,70,70,0.3)',width:1,dash:'dot'}},
+                {type:'line',x0:0,x1:1,xref:'paper',y0:30,y1:30,line:{color:'rgba(0,214,143,0.3)',width:1,dash:'dot'}}]},
+      xaxis:{rangeslider:{visible:false},gridcolor:GRID,tickfont:{color:'#6888a0'}},
+      hovermode:'x unified',
+    },{responsive:true,displayModeBar:false});
+    const last = o.close.filter(v=>v).at(-1), first = o.close.filter(v=>v)[0];
+    setHTML('macdBar', `<span style="color:var(--text-dim);font-size:0.75rem">60分K · 近60天 · 共 ${dates.length} 根K棒</span>` +
+      (last&&first ? `<span style="margin-left:12px;color:${last>=first?'var(--red)':'var(--green)'}">區間 ${last>=first?'+':''}${((last/first-1)*100).toFixed(2)}%</span>` : ''));
+  } catch(e) {
+    console.error('hourly error', e);
   }
 }
 

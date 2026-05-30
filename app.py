@@ -2221,6 +2221,59 @@ def get_tw_intraday(ticker):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/tw/hourly/<ticker>')
+def get_tw_hourly(ticker):
+    """60分K：最近 60 天小時線 OHLCV"""
+    ticker = tw_normalize(ticker)
+    cached = _cache_get(f'tw_hourly:{ticker}')
+    if cached: return jsonify(cached)
+    try:
+        stock = yf.Ticker(ticker)
+        hist  = stock.history(period='60d', interval='1h')
+        if hist.empty:
+            return jsonify({'error': '無小時線資料', 'ticker': ticker}), 404
+
+        def clean(lst):
+            res = []
+            for x in lst:
+                try:
+                    f = float(x)
+                    res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 2))
+                except:
+                    res.append(None)
+            return res
+
+        dates  = hist.index.strftime('%m/%d %H:%M').tolist()
+        close  = hist['Close']
+        n      = len(close)
+        ma5    = close.rolling(min(5,  n), min_periods=1).mean()
+        ma20   = close.rolling(min(20, n), min_periods=1).mean()
+        ma60   = close.rolling(min(60, n), min_periods=1).mean()
+        macd_s, sig_s, hist_s = calc_macd(close)
+        rsi_s  = calc_rsi(close)
+        bb_u, bb_m, bb_l = calc_bollinger(close)
+
+        result = {
+            'ticker': ticker,
+            'dates':  dates,
+            'ohlcv': {
+                'open':   clean(hist['Open'].tolist()),
+                'high':   clean(hist['High'].tolist()),
+                'low':    clean(hist['Low'].tolist()),
+                'close':  clean(close.tolist()),
+                'volume': [safe_int(x) for x in hist['Volume'].tolist()],
+            },
+            'ma':   { 'ma5': clean(ma5.tolist()), 'ma20': clean(ma20.tolist()), 'ma60': clean(ma60.tolist()) },
+            'macd': { 'dif': clean(macd_s.tolist()), 'dea': clean(sig_s.tolist()), 'hist': clean(hist_s.tolist()) },
+            'bollinger': { 'upper': clean(bb_u.tolist()), 'mid': clean(bb_m.tolist()), 'lower': clean(bb_l.tolist()) },
+            'rsiSeries': clean(rsi_s.tolist()),
+        }
+        _cache_set(f'tw_hourly:{ticker}', result, ttl=300)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ── Smart Monitor ─────────────────────────────────────────────────────
 def _quick_signal(stock, ticker, price, name, profile='steady'):
     """Lightweight daily-bar signal for monitor scanning."""
