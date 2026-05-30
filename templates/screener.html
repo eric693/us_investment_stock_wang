@@ -74,6 +74,15 @@ select.inp{cursor:pointer;}
 .cond-badge.chip{background:rgba(159,106,235,.1);color:var(--purple);}
 .cond-badge.exit{background:rgba(240,180,41,.1);color:var(--yellow);}
 
+/* ── Condition picker ───────────────────────── */
+.cond-pick-cat{padding:3px 10px;border-radius:12px;font-size:0.7rem;font-weight:700;cursor:pointer;border:1px solid var(--card-bd2);color:var(--text-dim);background:transparent;transition:all .15s;}
+.cond-pick-cat.active{background:rgba(61,142,248,.15);color:var(--blue);border-color:rgba(61,142,248,.4);}
+.cond-pick-item{padding:8px 10px;border-radius:7px;border:1px solid var(--card-bd);background:#0a1422;cursor:pointer;font-size:0.75rem;font-weight:600;color:var(--text-mid);transition:all .15s;text-align:left;}
+.cond-pick-item:hover{border-color:var(--accent);color:var(--text);background:#0d1a2e;}
+.cond-pick-item .cpbadge{display:inline-block;font-size:0.62rem;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle;}
+.cpbadge.tech{background:rgba(61,142,248,.15);color:var(--blue);}
+.cpbadge.chip{background:rgba(159,106,235,.15);color:var(--purple);}
+.cpbadge.exit{background:rgba(240,180,41,.15);color:var(--yellow);}
 /* ── Exit alerts builder ─────────────────────── */
 .exit-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
 .exit-row{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#060a10;border-radius:7px;border:1px solid var(--card-bd);}
@@ -184,7 +193,18 @@ select.inp{cursor:pointer;}
       <!-- Conditions -->
       <div class="section-label" style="margin-top:16px;">篩選條件（全部符合才列出，不選則列出所有標的）</div>
       <div class="cond-list" id="condList"></div>
-      <button class="btn btn-ghost btn-sm" onclick="addCondition()" style="width:100%;margin-bottom:8px;">＋ 新增條件</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleCondPicker()" style="width:100%;margin-bottom:8px;" id="addCondBtn">＋ 新增條件</button>
+
+      <!-- 條件選擇面板 -->
+      <div id="condPicker" style="display:none;background:#080f1e;border:1px solid var(--card-bd2);border-radius:10px;padding:12px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <input id="condSearch" class="inp inp-sm" placeholder="搜尋條件（如：鎚頭、融資、KD）" style="flex:1;"
+            oninput="renderCondPicker(this.value)">
+          <button class="btn btn-danger btn-sm" onclick="toggleCondPicker()">✕</button>
+        </div>
+        <div id="condPickerCats" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;"></div>
+        <div id="condPickerGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:320px;overflow-y:auto;"></div>
+      </div>
 
       <!-- Exit Alerts -->
       <div class="section-label" style="margin-top:14px;">
@@ -507,6 +527,61 @@ function clearAllTickers() {
 // ═══════════════════════════════════════════════════════
 // CONDITIONS
 // ═══════════════════════════════════════════════════════
+// ── 條件選擇面板 ──────────────────────────────────────
+const COND_CATS = {
+  '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_golden_cross','ma_death_cross','ma_convergence'],
+  'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_death_cross'],
+  'MACD':   ['macd_bullish','macd_golden_cross','macd_death_cross'],
+  'RSI':    ['rsi_above','rsi_below','rsi_cross_above','rsi_cross_below'],
+  '布林':   ['price_near_bb_lower','price_near_bb_upper','bb_squeeze','bb_breakout_up','bb_oversold'],
+  '量能':   ['volume_ratio_above','volume_shrinking','volume_nd_high','obv_rising','vol_up_candle','vol_down_candle','big_vol_red','vol_price_divergence_up','vol_price_divergence_down','price_consolidation_break'],
+  '價格':   ['price_change_above','price_nd_high','price_from_high_below','price_range','consecutive_up','consecutive_down','price_change_nd','price_change_nd_down','price_gap_up','high_vol_breakout','price_near_52w_low','close_near_high','limit_up','limit_down','outperform_index'],
+  '指標':   ['william_r_oversold','william_r_cross_above','cci_oversold','cci_cross_above','adx_strong_trend','bias_low','bias_high','psy_low','psy_high','atr_expand','mtm_cross_above','mtm_positive'],
+  '週期':   ['weekly_kd_golden_cross','weekly_macd_golden_cross','weekly_rsi_cross_above','weekly_price_above_ma','weekly_price_below_ma','weekly_ma_trending_up','weekly_ma_trending_down','monthly_kd_oversold','monthly_macd_golden_cross','monthly_price_above_ma'],
+  'K線型態':['candle_big_red','candle_long_lower_wick','candle_hammer','candle_inv_hammer','candle_bullish_engulfing','candle_harami','candle_morning_star','candle_three_soldiers','candle_belt_hold','candle_meeting_line','candle_doji','candle_shooting_star','candle_hanging_man','candle_bearish_engulfing','candle_evening_star','candle_three_crows'],
+  '基本面': ['pe_below','pe_above','div_yield_above','market_cap_above','market_cap_below','inst_pct_above'],
+  '融資券':  ['margin_increase','margin_decrease','short_decrease','short_increase','high_short_ratio','margin_continuous_up'],
+  '三大法人':['inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell','inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'],
+};
+
+let _pickerCat = '均線';
+function toggleCondPicker() {
+  const p = document.getElementById('condPicker');
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'block' : 'none';
+  if (show) { document.getElementById('condSearch').value = ''; renderCondPicker(''); }
+}
+function renderCondPicker(search) {
+  const s = (search||'').trim().toLowerCase();
+  // 分類 tabs
+  const catWrap = document.getElementById('condPickerCats');
+  catWrap.innerHTML = Object.keys(COND_CATS).map(c =>
+    `<button class="cond-pick-cat ${!s && c===_pickerCat?'active':''}" onclick="_pickerCat='${c}';document.getElementById('condSearch').value='';renderCondPicker('')">${c}</button>`
+  ).join('');
+  // 條件格
+  const grid = document.getElementById('condPickerGrid');
+  let keys;
+  if (s) {
+    keys = Object.keys(COND_DEFS).filter(k => COND_DEFS[k].label.toLowerCase().includes(s));
+  } else {
+    keys = COND_CATS[_pickerCat] || [];
+  }
+  grid.innerHTML = keys.map(k => {
+    const d = COND_DEFS[k]; if (!d) return '';
+    return `<button class="cond-pick-item" onclick="pickCond('${k}')">
+      ${d.label}<span class="cpbadge ${d.badge||'tech'}">${d.badge==='chip'?'籌碼':d.badge==='exit'?'退出':'技術'}</span>
+    </button>`;
+  }).join('');
+}
+function pickCond(type) {
+  const def = COND_DEFS[type] || {};
+  const params = {};
+  (def.params||[]).forEach(p => { params[p.key] = p.default; });
+  _conditions.push({ type, params, label: def.label });
+  renderConditions();
+  document.getElementById('condPicker').style.display = 'none';
+}
+
 function addCondition(typeDefault, paramsDefault) {
   const idx = _conditions.length;
   _conditions.push({ type: typeDefault || 'price_cross_above_ma', params: paramsDefault || {} });
