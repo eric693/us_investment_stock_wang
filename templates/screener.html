@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>策略選股 — 智能篩選</title>
 <link rel="stylesheet" href="/static/css/style.css">
 <style>
@@ -601,18 +604,38 @@ function renderConditions() {
     const div = document.createElement('div');
     div.className = 'cond-row';
 
-    // Head row
+    // Head row — 用 DOM API 建立 select，避免 innerHTML 觸發 onchange bug
     const head = document.createElement('div');
     head.className = 'cond-row-head';
-    head.innerHTML = `
-      <span class="cond-num">${idx+1}</span>
-      <select class="inp inp-sm cond-type-sel" onchange="changeCond(${idx},this.value)">
-        ${Object.entries(COND_DEFS).map(([k,v]) =>
-          `<option value="${k}" ${k===cond.type?'selected':''}>${v.label}</option>`
-        ).join('')}
-      </select>
-      <span class="cond-badge ${def.badge||'tech'}">${def.badge||'技術'}</span>
-      <button class="btn btn-danger btn-sm" onclick="removeCondition(${idx})"></button>`;
+
+    const numSpan = document.createElement('span');
+    numSpan.className = 'cond-num';
+    numSpan.textContent = idx + 1;
+
+    const sel = document.createElement('select');
+    sel.className = 'inp inp-sm cond-type-sel';
+    Object.entries(COND_DEFS).forEach(([k, v]) => {
+      const opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = v.label;
+      sel.appendChild(opt);
+    });
+    sel.value = cond.type;   // 設值在 append 後，不觸發 onchange
+    sel.addEventListener('change', () => changeCond(idx, sel.value));
+
+    const badge = document.createElement('span');
+    badge.className = `cond-badge ${def.badge||'tech'}`;
+    badge.textContent = def.badge || '技術';
+
+    const rmBtn = document.createElement('button');
+    rmBtn.className = 'btn btn-danger btn-sm';
+    rmBtn.textContent = '✕';
+    rmBtn.onclick = () => removeCondition(idx);
+
+    head.appendChild(numSpan);
+    head.appendChild(sel);
+    head.appendChild(badge);
+    head.appendChild(rmBtn);
     div.appendChild(head);
 
     // Params
