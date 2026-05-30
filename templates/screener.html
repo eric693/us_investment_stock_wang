@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>策略選股 — 智能篩選</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+/* ── Nav ─────────────────────────────────────── */
+.sc-nav{position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:rgba(6,10,16,.96);border-bottom:1px solid var(--card-bd);padding:10px 20px;backdrop-filter:blur(12px);}
+.sc-nav .brand{font-size:1rem;font-weight:900;letter-spacing:1px;color:#fff;padding:5px 12px;background:linear-gradient(135deg,#1a6fd4,#0e4a9a);border-radius:6px;}
+.sc-nav .brand span{color:var(--gold);}
+.nav-link{padding:5px 12px;border-radius:6px;color:var(--text-mid);font-size:0.83rem;font-weight:600;border:1px solid transparent;transition:all .15s;text-decoration:none;}
+.nav-link:hover{color:var(--text);border-color:var(--card-bd2);background:#0d1828;}
+.nav-link.active{color:#9f6aeb;border-color:rgba(159,106,235,.4);background:rgba(159,106,235,.08);}
+
+/* ── Layout ──────────────────────────────────── */
+.sc-body{max-width:1500px;margin:0 auto;padding:18px 16px;display:grid;grid-template-columns:380px 1fr;gap:18px;align-items:start;}
+@media(max-width:1100px){.sc-body{grid-template-columns:1fr;}}
+
+/* ── Cards ───────────────────────────────────── */
+.card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:12px;padding:18px;margin-bottom:14px;}
+.card-title{font-size:0.9rem;font-weight:800;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:6px;}
+.section-label{font-size:0.72rem;font-weight:800;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px;}
+
+/* ── Buttons ─────────────────────────────────── */
+.btn{padding:7px 16px;border-radius:7px;border:none;font-size:0.83rem;font-weight:700;cursor:pointer;transition:all .15s;}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-primary:hover{background:#2278e0;}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+.btn-sm{padding:4px 10px;font-size:0.76rem;}
+.btn-ghost{background:rgba(255,255,255,.05);color:var(--text-mid);border:1px solid var(--card-bd);}
+.btn-ghost:hover{background:rgba(255,255,255,.09);color:var(--text);}
+.btn-danger{background:rgba(232,70,70,.12);color:var(--red);border:1px solid rgba(232,70,70,.25);}
+.btn-danger:hover{background:rgba(232,70,70,.22);}
+.btn-green{background:rgba(0,214,143,.1);color:var(--green);border:1px solid rgba(0,214,143,.2);}
+.btn-green:hover{background:rgba(0,214,143,.18);}
+.btn-gold{background:rgba(232,200,74,.1);color:var(--gold);border:1px solid rgba(232,200,74,.25);}
+.btn-gold:hover{background:rgba(232,200,74,.18);}
+
+/* ── Inputs ──────────────────────────────────── */
+.inp{padding:7px 11px;border-radius:7px;border:1px solid var(--card-bd2);background:#0a1320;color:var(--text);font-size:0.85rem;outline:none;transition:border-color .2s;width:100%;}
+.inp:focus{border-color:var(--accent);}
+.inp::placeholder{color:var(--text-dim);}
+.inp-sm{padding:5px 9px;font-size:0.8rem;}
+select.inp{cursor:pointer;}
+
+/* ── Market switch ───────────────────────────── */
+.mkt-switch{display:flex;gap:4px;margin-bottom:12px;}
+.mkt-btn{flex:1;padding:7px;border-radius:7px;border:1px solid var(--card-bd);background:transparent;color:var(--text-dim);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;}
+.mkt-btn.active.tw{color:#00d68f;border-color:rgba(0,214,143,.4);background:rgba(0,214,143,.08);}
+.mkt-btn.active.us{color:#3d8ef8;border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08);}
+
+/* ── Universe selector ───────────────────────── */
+.universe-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;}
+.cat-chip{padding:5px 10px;border-radius:6px;border:1px solid var(--card-bd);background:transparent;color:var(--text-dim);font-size:0.75rem;font-weight:600;cursor:pointer;transition:all .15s;text-align:center;}
+.cat-chip.sel{color:var(--accent);border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08);}
+.cat-chip:hover:not(.sel){background:#0d1828;color:var(--text);}
+.ticker-tags{display:flex;flex-wrap:wrap;gap:4px;padding:6px;background:#060a10;border-radius:6px;min-height:32px;max-height:80px;overflow-y:auto;}
+.ticker-tag{padding:2px 8px;border-radius:4px;font-size:0.72rem;font-weight:700;background:rgba(61,142,248,.1);color:var(--blue);cursor:pointer;border:1px solid rgba(61,142,248,.2);}
+.ticker-tag:hover{background:rgba(232,70,70,.15);color:var(--red);}
+.custom-ticker-row{display:flex;gap:6px;margin-top:6px;}
+
+/* ── Condition builder ───────────────────────── */
+.cond-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
+.cond-row{background:#0d1828;border:1px solid var(--card-bd);border-radius:9px;padding:10px 12px;}
+.cond-row-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.cond-num{width:20px;height:20px;border-radius:50%;background:rgba(61,142,248,.15);color:var(--blue);font-size:0.7rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.cond-type-sel{flex:1;}
+.cond-params{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.cond-param-label{font-size:0.7rem;color:var(--text-dim);margin-bottom:3px;}
+.cond-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:700;}
+.cond-badge.tech{background:rgba(61,142,248,.1);color:var(--blue);}
+.cond-badge.chip{background:rgba(159,106,235,.1);color:var(--purple);}
+.cond-badge.exit{background:rgba(240,180,41,.1);color:var(--yellow);}
+
+/* ── Exit alerts builder ─────────────────────── */
+.exit-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
+.exit-row{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#060a10;border-radius:7px;border:1px solid var(--card-bd);}
+.exit-row select{flex:1;}
+
+/* ── Progress & results ──────────────────────── */
+.progress-wrap{margin-bottom:14px;}
+.progress-bar{height:6px;background:rgba(61,142,248,.15);border-radius:3px;overflow:hidden;}
+.progress-fill{height:100%;background:linear-gradient(90deg,#1a6fd4,#00d68f);border-radius:3px;transition:width .4s;}
+.progress-txt{font-size:0.76rem;color:var(--text-dim);margin-top:5px;}
+
+.result-table-wrap{overflow-x:auto;}
+.result-table{width:100%;border-collapse:collapse;font-size:0.81rem;}
+.result-table th{padding:8px 10px;background:#0d1828;color:var(--text-dim);font-size:0.72rem;font-weight:700;letter-spacing:.3px;text-transform:uppercase;border-bottom:1px solid var(--card-bd);white-space:nowrap;text-align:right;}
+.result-table th:first-child,.result-table th:nth-child(2){text-align:left;}
+.result-table td{padding:9px 10px;border-bottom:1px solid rgba(21,32,48,.6);text-align:right;vertical-align:middle;}
+.result-table td:first-child,.result-table td:nth-child(2){text-align:left;}
+.result-table tr:hover td{background:rgba(61,142,248,.04);}
+.r-sym{font-weight:800;color:var(--blue);cursor:pointer;}
+.r-sym:hover{text-decoration:underline;}
+.r-name{font-size:0.72rem;color:var(--text-dim);}
+.cond-tag{display:inline-block;padding:2px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;margin:1px;}
+.cond-tag.pass{background:rgba(0,214,143,.1);color:var(--green);}
+.empty-hint{text-align:center;padding:40px;color:var(--text-dim);font-size:0.88rem;}
+
+/* ── Saved strategies ────────────────────────── */
+.strat-list{display:flex;flex-direction:column;gap:8px;}
+.strat-item{background:#0d1828;border:1px solid var(--card-bd);border-radius:9px;padding:12px 14px;display:flex;align-items:center;gap:10px;}
+.strat-info{flex:1;}
+.strat-name{font-size:0.85rem;font-weight:800;color:var(--text);}
+.strat-meta{font-size:0.72rem;color:var(--text-dim);margin-top:2px;}
+.strat-acts{display:flex;gap:5px;flex-shrink:0;}
+
+/* ── Signal badges ───────────────────────────── */
+.sig-up{color:var(--green);font-weight:800;}
+.sig-dn{color:var(--red);font-weight:800;}
+.bool-yes{color:var(--green);}
+.bool-no{color:var(--red);}
+
+/* ── Modal ───────────────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:500;justify-content:center;align-items:flex-start;padding-top:60px;}
+.modal-overlay.show{display:flex;}
+.modal{background:var(--card-bg);border:1px solid var(--card-bd2);border-radius:14px;padding:22px;width:100%;max-width:500px;position:relative;max-height:80vh;overflow-y:auto;}
+.modal-title{font-size:0.95rem;font-weight:800;margin-bottom:16px;}
+.modal-close{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;}
+.modal-close:hover{color:var(--text);}
+.form-label{font-size:0.76rem;color:var(--text-dim);margin-bottom:4px;display:block;margin-top:10px;}
+
+/* ── Toast ───────────────────────────────────── */
+.toast{position:fixed;bottom:22px;right:22px;background:#0f1e30;border:1px solid var(--card-bd2);border-radius:9px;padding:11px 16px;font-size:0.83rem;color:var(--text);z-index:1000;opacity:0;transform:translateY(8px);transition:all .3s;pointer-events:none;}
+.toast.show{opacity:1;transform:translateY(0);}
+.toast.green{border-color:rgba(0,214,143,.4);color:var(--green);}
+.toast.red{border-color:rgba(232,70,70,.4);color:var(--red);}
+</style>
+</head>
+<body>
+
+<nav class="sc-nav">
+  <div class="brand">US<span>STOCK</span></div>
+  <a class="nav-link" href="/">美股分析</a>
+  <a class="nav-link" href="/tw">台股分析</a>
+  <a class="nav-link" href="/portfolio">投資組合</a>
+  <a class="nav-link active" href="/screener">策略選股</a>
+</nav>
+
+<div class="sc-body">
+
+  <!-- ═══ LEFT: Strategy Builder ═══════════════════════════════ -->
+  <div>
+    <div class="card">
+      <div class="card-title">⚙️ 策略條件設定</div>
+
+      <!-- Market -->
+      <div class="section-label">市場</div>
+      <div class="mkt-switch">
+        <button class="mkt-btn active tw" id="mktTW" onclick="setMarket('tw')">🇹🇼 台股</button>
+        <button class="mkt-btn us"        id="mktUS" onclick="setMarket('us')">🇺🇸 美股</button>
+      </div>
+
+      <!-- Universe -->
+      <div class="section-label">掃描標的</div>
+      <div class="universe-grid" id="universeCats"></div>
+      <div class="ticker-tags"   id="tickerTagsWrap"></div>
+      <div class="custom-ticker-row">
+        <input class="inp inp-sm" id="customTickerInput" placeholder="自訂代號（逗號分隔）" style="flex:1"
+               onkeydown="if(event.key==='Enter')addCustomTickers()">
+        <button class="btn btn-ghost btn-sm" onclick="addCustomTickers()">加入</button>
+        <button class="btn btn-danger btn-sm" onclick="clearAllTickers()">清除</button>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-dim);margin-top:4px;" id="tickerCount">已選 0 檔</div>
+
+      <!-- Period -->
+      <div class="section-label">歷史資料週期</div>
+      <select class="inp inp-sm" id="periodSel">
+        <option value="6mo">6 個月</option>
+        <option value="1y" selected>1 年</option>
+        <option value="2y">2 年</option>
+      </select>
+
+      <!-- Conditions -->
+      <div class="section-label" style="margin-top:16px;">篩選條件（全部符合才列出）</div>
+      <div class="cond-list" id="condList"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addCondition()" style="width:100%;margin-bottom:8px;">＋ 新增條件</button>
+
+      <!-- Exit Alerts -->
+      <div class="section-label" style="margin-top:14px;">
+        退出警報條件
+        <span style="font-size:0.68rem;color:var(--text-dim);font-weight:400;"> (篩出股票加入監控時自動設定)</span>
+      </div>
+      <div class="exit-list" id="exitList"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addExitAlert()" style="width:100%;margin-bottom:8px;">＋ 新增退出條件</button>
+
+      <!-- Run -->
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="btn btn-primary" id="runBtn" onclick="runScreener()" style="flex:1;padding:10px;">
+          🔍 開始掃描
+        </button>
+        <button class="btn btn-gold btn-sm" onclick="openSaveModal()">儲存策略</button>
+      </div>
+    </div>
+
+    <!-- Saved Strategies -->
+    <div class="card">
+      <div class="card-title">📂 已儲存策略</div>
+      <div class="strat-list" id="stratList">
+        <div style="color:var(--text-dim);font-size:0.82rem;">尚無儲存策略</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ RIGHT: Results ═══════════════════════════════════════ -->
+  <div>
+    <div class="card">
+      <div class="card-title" style="justify-content:space-between;">
+        <span>📊 篩選結果</span>
+        <span id="resultMeta" style="font-size:0.78rem;color:var(--text-dim);font-weight:400;"></span>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="progress-txt" id="progressTxt">掃描中，請稍候…</div>
+      </div>
+
+      <div id="resultArea">
+        <div class="empty-hint">
+          📋 設定篩選條件後點擊「開始掃描」<br>
+          <span style="font-size:0.78rem;">系統將逐一檢查所選標的，符合所有條件的股票將列在此處</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Save Strategy -->
+<div class="modal-overlay" id="saveModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('saveModal')">✕</button>
+    <div class="modal-title">儲存策略</div>
+    <label class="form-label">策略名稱</label>
+    <input class="inp" id="stratNameInput" placeholder="例如：均線突破+KD60金叉" onkeydown="if(event.key==='Enter')saveStrategy()">
+    <button class="btn btn-primary" onclick="saveStrategy()" style="width:100%;margin-top:14px;">儲存</button>
+  </div>
+</div>
+
+<!-- Modal: Add to Monitor (Exit Alert) -->
+<div class="modal-overlay" id="addMonitorModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('addMonitorModal')">✕</button>
+    <div class="modal-title" id="addMonitorTitle">加入監控並設定退出警報</div>
+    <input type="hidden" id="addMonitorTicker">
+    <label class="form-label">退出條件（觸發時 LINE 通知）</label>
+    <div id="modalExitList" style="margin-bottom:10px;"></div>
+    <div style="font-size:0.76rem;color:var(--text-dim);margin-bottom:12px;">
+      退出條件已從左側設定自動帶入，可在此調整
+    </div>
+    <button class="btn btn-primary" onclick="confirmAddMonitor()" style="width:100%;">確認加入監控</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════
+let _market = 'tw';
+let _universe = {};
+let _selectedTickers = new Set();
+let _conditions = [];
+let _exitAlerts = [];
+let _scanResults = [];
+
+// Condition definitions
+const COND_DEFS = {
+  // 均線
+  price_above_ma:           { label:'收盤站上N日均線',         badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'}] },
+  price_below_ma:           { label:'收盤低於N日均線',         badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'}] },
+  price_cross_above_ma:     { label:'收盤剛突破N日均線（進場）',badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'within_days',label:'最近N天內',default:5,type:'number'}] },
+  price_cross_below_ma:     { label:'收盤跌破N日均線（警示）', badge:'exit', params:[{key:'period',label:'均線日數',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  price_below_ma_for_months:{ label:'股價長期低於均線後突破',  badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'months',label:'低於月數',default:3,type:'number'}] },
+  ma_trending_up:           { label:'N日均線呈上揚趨勢',       badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'trend_days',label:'比較天數',default:5,type:'number'}] },
+  // KD
+  kd_k_above:               { label:'KD K值 > 閾值',          badge:'tech', params:[{key:'kd_n',label:'N(天)',default:60,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:50,type:'number'}] },
+  kd_k_below:               { label:'KD K值 < 閾值（超賣）',  badge:'tech', params:[{key:'kd_n',label:'N(天)',default:9,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:20,type:'number'}] },
+  kd_golden_cross:          { label:'KD 金叉',                badge:'tech', params:[{key:'kd_n',label:'N(天)',default:60,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'N(天)',default:9,type:'number'},{key:'kd_m1',label:'m1',default:3,type:'number'},{key:'kd_m2',label:'m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  // MACD
+  macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[] },
+  macd_golden_cross:        { label:'MACD 金叉',              badge:'tech', params:[{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  macd_death_cross:         { label:'MACD 死叉（退出警示）',   badge:'exit', params:[{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  // RSI
+  rsi_above:                { label:'RSI > 閾值',             badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:50,type:'number'}] },
+  rsi_below:                { label:'RSI < 閾值（超賣）',      badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:30,type:'number'}] },
+  // 成交量
+  volume_ratio_above:       { label:'量比 > X 倍（放量）',     badge:'tech', params:[{key:'avg_days',label:'均量天數',default:20,type:'number'},{key:'ratio',label:'量比倍數',default:1.5,type:'number'}] },
+  volume_shrinking:         { label:'量縮（打底訊號）',         badge:'tech', params:[{key:'avg_days',label:'均量天數',default:20,type:'number'},{key:'recent_days',label:'近期天數',default:5,type:'number'}] },
+  // 布林
+  price_near_bb_lower:      { label:'股價接近布林下軌',         badge:'tech', params:[{key:'pct',label:'距離%以內',default:5,type:'number'}] },
+  price_near_bb_upper:      { label:'股價接近布林上軌（壓力）', badge:'exit', params:[{key:'pct',label:'距離%以內',default:3,type:'number'}] },
+  // 籌碼
+  inst_pct_above:           { label:'機構持股% > 閾值',         badge:'chip', params:[{key:'threshold',label:'持股%',default:40,type:'number'}] },
+  // 其他
+  price_change_above:       { label:'今日漲幅 > %',            badge:'tech', params:[{key:'threshold',label:'漲幅%',default:3,type:'number'}] },
+  price_from_high_below:    { label:'距52週高點 < %（相對強勢）',badge:'tech', params:[{key:'threshold',label:'距高%',default:15,type:'number'}] },
+  price_range:              { label:'股價區間',                 badge:'tech', params:[{key:'min',label:'最低價',default:10,type:'number'},{key:'max',label:'最高價',default:9999,type:'number'}] },
+};
+
+const EXIT_COND_OPTIONS = [
+  'price_cross_below_ma','kd_death_cross','macd_death_cross','price_near_bb_upper'
+];
+
+// ═══════════════════════════════════════════════════════
+// MARKET & UNIVERSE
+// ═══════════════════════════════════════════════════════
+async function initUniverse() {
+  const resp = await fetch('/api/screener/universe');
+  const data = await resp.json();
+  _universe = data;
+  renderUniverseCats();
+}
+
+function setMarket(m) {
+  _market = m;
+  _selectedTickers.clear();
+  document.getElementById('mktTW').className = 'mkt-btn' + (m==='tw' ? ' active tw' : '');
+  document.getElementById('mktUS').className = 'mkt-btn' + (m==='us' ? ' active us' : '');
+  renderUniverseCats();
+}
+
+let _selCats = new Set();
+function renderUniverseCats() {
+  const cats = _market === 'tw' ? _universe.tw : _universe.us;
+  if (!cats) return;
+  const grid = document.getElementById('universeCats');
+  grid.innerHTML = '';
+  _selCats.clear();
+  Object.keys(cats).forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'cat-chip';
+    btn.textContent = cat;
+    btn.onclick = () => toggleCat(cat, btn, cats[cat]);
+    grid.appendChild(btn);
+  });
+  renderTickerTags();
+}
+
+function toggleCat(cat, btn, tickers) {
+  if (_selCats.has(cat)) {
+    _selCats.delete(cat);
+    btn.classList.remove('sel');
+    tickers.forEach(t => _selectedTickers.delete(t));
+  } else {
+    _selCats.add(cat);
+    btn.classList.add('sel');
+    tickers.forEach(t => _selectedTickers.add(t));
+  }
+  renderTickerTags();
+}
+
+function renderTickerTags() {
+  const wrap = document.getElementById('tickerTagsWrap');
+  wrap.innerHTML = '';
+  _selectedTickers.forEach(t => {
+    const tag = document.createElement('span');
+    tag.className = 'ticker-tag';
+    tag.title = '點擊移除';
+    tag.textContent = t;
+    tag.onclick = () => { _selectedTickers.delete(t); renderTickerTags(); };
+    wrap.appendChild(tag);
+  });
+  document.getElementById('tickerCount').textContent = `已選 ${_selectedTickers.size} 檔`;
+}
+
+function addCustomTickers() {
+  const val = document.getElementById('customTickerInput').value.trim();
+  if (!val) return;
+  val.split(/[,，\s]+/).forEach(t => {
+    t = t.trim().toUpperCase();
+    if (t) _selectedTickers.add(t);
+  });
+  document.getElementById('customTickerInput').value = '';
+  renderTickerTags();
+}
+
+function clearAllTickers() {
+  _selectedTickers.clear();
+  _selCats.clear();
+  document.querySelectorAll('.cat-chip').forEach(b => b.classList.remove('sel'));
+  renderTickerTags();
+}
+
+// ═══════════════════════════════════════════════════════
+// CONDITIONS
+// ═══════════════════════════════════════════════════════
+function addCondition(typeDefault, paramsDefault) {
+  const idx = _conditions.length;
+  _conditions.push({ type: typeDefault || 'price_cross_above_ma', params: paramsDefault || {} });
+  renderConditions();
+}
+
+function removeCondition(idx) {
+  _conditions.splice(idx, 1);
+  renderConditions();
+}
+
+function renderConditions() {
+  const list = document.getElementById('condList');
+  list.innerHTML = '';
+  _conditions.forEach((cond, idx) => {
+    const def = COND_DEFS[cond.type] || {};
+    const div = document.createElement('div');
+    div.className = 'cond-row';
+
+    // Head row
+    const head = document.createElement('div');
+    head.className = 'cond-row-head';
+    head.innerHTML = `
+      <span class="cond-num">${idx+1}</span>
+      <select class="inp inp-sm cond-type-sel" onchange="changeCond(${idx},this.value)">
+        ${Object.entries(COND_DEFS).map(([k,v]) =>
+          `<option value="${k}" ${k===cond.type?'selected':''}>${v.label}</option>`
+        ).join('')}
+      </select>
+      <span class="cond-badge ${def.badge||'tech'}">${def.badge||'技術'}</span>
+      <button class="btn btn-danger btn-sm" onclick="removeCondition(${idx})">✕</button>`;
+    div.appendChild(head);
+
+    // Params
+    if (def.params && def.params.length) {
+      const pgrid = document.createElement('div');
+      pgrid.className = 'cond-params';
+      def.params.forEach(p => {
+        const pval = cond.params[p.key] !== undefined ? cond.params[p.key] : p.default;
+        pgrid.innerHTML += `
+          <div>
+            <div class="cond-param-label">${p.label}</div>
+            <input class="inp inp-sm" type="${p.type}" value="${pval}"
+              onchange="_conditions[${idx}].params['${p.key}']=parseFloat(this.value)||this.value">
+          </div>`;
+      });
+      div.appendChild(pgrid);
+    }
+
+    list.appendChild(div);
+  });
+}
+
+function changeCond(idx, newType) {
+  const def = COND_DEFS[newType] || {};
+  const defaultParams = {};
+  (def.params || []).forEach(p => { defaultParams[p.key] = p.default; });
+  _conditions[idx] = { type: newType, params: defaultParams, label: def.label };
+  renderConditions();
+}
+
+// ═══════════════════════════════════════════════════════
+// EXIT ALERTS
+// ═══════════════════════════════════════════════════════
+function addExitAlert(typeDefault) {
+  _exitAlerts.push({ type: typeDefault || 'price_cross_below_ma', params: { period: 20, within_days: 3 } });
+  renderExitAlerts();
+}
+
+function renderExitAlerts() {
+  const list = document.getElementById('exitList');
+  list.innerHTML = '';
+  _exitAlerts.forEach((a, idx) => {
+    const def = COND_DEFS[a.type] || {};
+    const row = document.createElement('div');
+    row.className = 'exit-row';
+
+    let selHtml = `<select class="inp inp-sm" style="flex:1" onchange="changeExit(${idx},this.value)">`;
+    EXIT_COND_OPTIONS.forEach(k => {
+      selHtml += `<option value="${k}" ${k===a.type?'selected':''}>${COND_DEFS[k]?.label||k}</option>`;
+    });
+    selHtml += '</select>';
+
+    let paramHtml = '';
+    if (def.params && def.params.length) {
+      const p0 = def.params[0];
+      const p1 = def.params.find(p => p.key === 'within_days') || def.params[1];
+      if (p0) paramHtml += `<input class="inp inp-sm" type="number" value="${a.params[p0.key]||p0.default}" title="${p0.label}" style="width:55px" onchange="_exitAlerts[${idx}].params['${p0.key}']=parseFloat(this.value)">`;
+      if (p1 && p1.key !== p0?.key) paramHtml += `<input class="inp inp-sm" type="number" value="${a.params[p1.key]||p1.default}" title="${p1.label}" style="width:45px" onchange="_exitAlerts[${idx}].params['${p1.key}']=parseFloat(this.value)">`;
+    }
+
+    row.innerHTML = selHtml + paramHtml + `<button class="btn btn-danger btn-sm" onclick="_exitAlerts.splice(${idx},1);renderExitAlerts()">✕</button>`;
+    list.appendChild(row);
+  });
+}
+
+function changeExit(idx, newType) {
+  const def = COND_DEFS[newType] || {};
+  const defaultParams = {};
+  (def.params || []).forEach(p => { defaultParams[p.key] = p.default; });
+  _exitAlerts[idx] = { type: newType, params: defaultParams, label: def.label };
+  renderExitAlerts();
+}
+
+// ═══════════════════════════════════════════════════════
+// SCREENER RUN
+// ═══════════════════════════════════════════════════════
+async function runScreener() {
+  if (_selectedTickers.size === 0) { showToast('請選擇要掃描的標的', 'red'); return; }
+  if (_conditions.length === 0)   { showToast('請至少設定一個篩選條件', 'red'); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '掃描中…';
+
+  // Annotate conditions with labels
+  const enriched = _conditions.map(c => ({
+    ...c,
+    label: COND_DEFS[c.type]?.label || c.type,
+  }));
+
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressTxt  = document.getElementById('progressTxt');
+  progressWrap.style.display = 'block';
+
+  // Fake progress animation while waiting
+  let pct = 0;
+  const fakeProgress = setInterval(() => {
+    pct = Math.min(pct + 2, 88);
+    progressFill.style.width = pct + '%';
+    progressTxt.textContent  = `掃描中… ${pct}%（${_selectedTickers.size} 檔）`;
+  }, 400);
+
+  try {
+    const resp = await fetch('/api/screener/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tickers:    [..._selectedTickers],
+        conditions: enriched,
+        isTw:       _market === 'tw',
+        period:     document.getElementById('periodSel').value,
+      }),
+    });
+    clearInterval(fakeProgress);
+    progressFill.style.width = '100%';
+
+    const data = await resp.json();
+    if (data.error) { showToast(data.error, 'red'); return; }
+
+    _scanResults = data.results || [];
+    document.getElementById('resultMeta').textContent =
+      `共掃描 ${data.total} 檔，符合 ${data.matched} 檔`;
+
+    renderResults(_scanResults);
+    setTimeout(() => { progressWrap.style.display = 'none'; progressFill.style.width = '0%'; }, 1200);
+  } catch (e) {
+    clearInterval(fakeProgress);
+    showToast('掃描失敗: ' + e.message, 'red');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 開始掃描';
+  }
+}
+
+function renderResults(results) {
+  const area = document.getElementById('resultArea');
+  if (!results.length) {
+    area.innerHTML = '<div class="empty-hint">🔍 掃描完成，無符合條件的標的<br><span style="font-size:0.78rem;">嘗試放寬條件或增加掃描標的</span></div>';
+    return;
+  }
+
+  let html = `<div class="result-table-wrap"><table class="result-table">
+    <thead><tr>
+      <th>代號</th><th>名稱</th>
+      <th>現價</th><th>漲跌</th>
+      <th>MA5</th><th>MA20</th><th>MA60</th>
+      <th>RSI</th><th>MACD</th><th>量比</th>
+      <th>機構%</th><th>符合條件</th><th></th>
+    </tr></thead><tbody>`;
+
+  results.forEach(r => {
+    const updn  = r.changePct >= 0;
+    const link  = r.isTw ? `/tw?t=${r.display}` : `/?ticker=${r.ticker}`;
+    const cTags = r.conditions.map(c =>
+      `<span class="cond-tag pass" title="${c.detail}">${c.label.slice(0,10)}…</span>`
+    ).join('');
+    html += `<tr>
+      <td><span class="r-sym" onclick="window.open('${link}','_blank')">${r.display}</span></td>
+      <td><span class="r-name">${esc(r.name)}</span></td>
+      <td>${r.price}</td>
+      <td class="${updn?'sig-up':'sig-dn'}">${updn?'▲':'▼'}${Math.abs(r.changePct).toFixed(2)}%</td>
+      <td>${r.ma5||'--'}</td><td>${r.ma20||'--'}</td><td>${r.ma60||'--'}</td>
+      <td>${r.rsi||'--'}</td>
+      <td class="${r.macdBull?'bool-yes':'bool-no'}">${r.macdBull?'金叉':'死叉'}</td>
+      <td>${r.volRatio}x</td>
+      <td>${r.instPct>0?r.instPct+'%':'--'}</td>
+      <td>${cTags}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-green btn-sm" onclick="openAddMonitor('${r.ticker}','${esc(r.name)}',${r.isTw})">加入監控</button>
+          <button class="btn btn-ghost btn-sm" onclick="window.open('${link}','_blank')">分析</button>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════
+// ADD TO MONITOR (with exit alerts)
+// ═══════════════════════════════════════════════════════
+let _pendingMonitorTicker = '';
+let _pendingIsTw = true;
+let _pendingExitConds = [];
+
+function openAddMonitor(ticker, name, isTw) {
+  _pendingMonitorTicker = ticker;
+  _pendingIsTw = isTw;
+  _pendingExitConds = _exitAlerts.map(a => ({ ...a, label: COND_DEFS[a.type]?.label || a.type }));
+
+  document.getElementById('addMonitorTitle').textContent = `加入監控：${name}`;
+  document.getElementById('addMonitorTicker').value = ticker;
+
+  const list = document.getElementById('modalExitList');
+  if (_pendingExitConds.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-dim);font-size:0.8rem;">未設定退出條件（加入後可在監控頁設定）</div>';
+  } else {
+    list.innerHTML = _pendingExitConds.map(c =>
+      `<div class="cond-tag exit" style="padding:4px 10px;margin:3px 0;display:block;font-size:0.78rem;">
+        ⚠️ ${c.label}
+      </div>`
+    ).join('');
+  }
+  openModal('addMonitorModal');
+}
+
+async function confirmAddMonitor() {
+  const ticker = _pendingMonitorTicker;
+  if (!ticker) return;
+
+  // Fetch saved LINE config
+  let lineToken = '', lineUserId = '';
+  try {
+    const cfg = await fetch('/api/tw/line/config').then(r => r.json());
+    lineToken   = cfg.line_token   || '';
+    lineUserId  = cfg.line_user_id || '';
+  } catch {}
+
+  try {
+    const resp = await fetch('/api/screener/add_alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticker:         ticker,
+        isTw:           _pendingIsTw,
+        exitConditions: _pendingExitConds,
+        line_token:     lineToken,
+        line_user_id:   lineUserId,
+      }),
+    });
+    const j = await resp.json();
+    if (j.ok) {
+      showToast(`${ticker} 已加入監控`, 'green');
+      closeModal('addMonitorModal');
+    } else {
+      showToast('加入失敗: ' + (j.error || ''), 'red');
+    }
+  } catch (e) {
+    showToast('加入失敗: ' + e.message, 'red');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// STRATEGIES CRUD
+// ═══════════════════════════════════════════════════════
+function openSaveModal() {
+  if (_conditions.length === 0) { showToast('請先設定篩選條件', 'red'); return; }
+  document.getElementById('stratNameInput').value = '';
+  openModal('saveModal');
+  setTimeout(() => document.getElementById('stratNameInput').focus(), 100);
+}
+
+async function saveStrategy() {
+  const name = document.getElementById('stratNameInput').value.trim();
+  if (!name) { showToast('請輸入策略名稱', 'red'); return; }
+  const enriched = _conditions.map(c => ({
+    ...c, label: COND_DEFS[c.type]?.label || c.type
+  }));
+  const exitEnriched = _exitAlerts.map(a => ({
+    ...a, label: COND_DEFS[a.type]?.label || a.type
+  }));
+  try {
+    const resp = await fetch('/api/screener/strategies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, conditions: enriched,
+        tickers:    [..._selectedTickers],
+        isTw:       _market === 'tw',
+        period:     document.getElementById('periodSel').value,
+        exitAlerts: exitEnriched,
+      }),
+    });
+    const j = await resp.json();
+    if (j.ok) {
+      showToast(`策略「${name}」已儲存`, 'green');
+      closeModal('saveModal');
+      loadStrategies();
+    }
+  } catch (e) {
+    showToast('儲存失敗', 'red');
+  }
+}
+
+async function loadStrategies() {
+  try {
+    const resp = await fetch('/api/screener/strategies');
+    const data = await resp.json();
+    const list = document.getElementById('stratList');
+    const names = Object.keys(data);
+    if (!names.length) {
+      list.innerHTML = '<div style="color:var(--text-dim);font-size:0.82rem;">尚無儲存策略</div>';
+      return;
+    }
+    list.innerHTML = '';
+    names.forEach(name => {
+      const s = data[name];
+      const div = document.createElement('div');
+      div.className = 'strat-item';
+      div.innerHTML = `
+        <div class="strat-info">
+          <div class="strat-name">${esc(name)}</div>
+          <div class="strat-meta">${s.isTw?'台股':'美股'} · ${(s.tickers||[]).length}檔 · ${(s.conditions||[]).length}個條件 · ${s.savedAt||''}</div>
+        </div>
+        <div class="strat-acts">
+          <button class="btn btn-green btn-sm" onclick="loadStrategy('${esc(name)}')">載入</button>
+          <button class="btn btn-ghost btn-sm" onclick="runStrategy('${esc(name)}')">執行</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteStrategy('${esc(name)}')">刪除</button>
+        </div>`;
+      list.appendChild(div);
+    });
+    list._data = data;
+  } catch {}
+}
+
+function loadStrategy(name) {
+  const data = document.getElementById('stratList')._data || {};
+  const s = data[name];
+  if (!s) return;
+  setMarket(s.isTw ? 'tw' : 'us');
+  _selectedTickers = new Set(s.tickers || []);
+  _conditions  = s.conditions  || [];
+  _exitAlerts  = s.exitAlerts  || [];
+  document.getElementById('periodSel').value = s.period || '1y';
+  renderUniverseCats();
+  renderConditions();
+  renderExitAlerts();
+  showToast(`策略「${name}」已載入`, 'green');
+}
+
+async function runStrategy(name) {
+  loadStrategy(name);
+  await new Promise(r => setTimeout(r, 300));
+  runScreener();
+}
+
+async function deleteStrategy(name) {
+  if (!confirm(`確定刪除策略「${name}」？`)) return;
+  await fetch(`/api/screener/strategies/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  loadStrategies();
+}
+
+// ═══════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show' + (type ? ' '+type : '');
+  clearTimeout(t._tm); t._tm = setTimeout(() => { t.className='toast'; }, 2800);
+}
+
+function openModal(id)  { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target===o) o.classList.remove('show'); }));
+
+// ═══════════════════════════════════════════════════════
+// INIT — preload a useful default strategy
+// ═══════════════════════════════════════════════════════
+(async function init() {
+  await initUniverse();
+  loadStrategies();
+
+  // Default strategy: user's described strategy
+  addCondition('price_below_ma_for_months', { period: 60, months: 3 });
+  addCondition('price_cross_above_ma',      { period: 60, within_days: 5 });
+  addCondition('ma_trending_up',            { period: 60, trend_days: 5 });
+  addCondition('kd_k_above',               { kd_n: 60, kd_m1: 3, kd_m2: 3, threshold: 50 });
+  addCondition('kd_golden_cross',          { kd_n: 60, kd_m1: 3, kd_m2: 3, within_days: 5 });
+  addCondition('volume_ratio_above',       { avg_days: 20, ratio: 1.3 });
+
+  // Default exit alerts
+  addExitAlert('price_cross_below_ma');
+  _exitAlerts[0].params = { period: 5, within_days: 2 };
+  addExitAlert('price_cross_below_ma');
+  _exitAlerts[1].params = { period: 10, within_days: 2 };
+  addExitAlert('kd_death_cross');
+
+  renderExitAlerts();
+})();
+</script>
+</body>
+</html>

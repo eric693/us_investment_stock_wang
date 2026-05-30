@@ -1364,6 +1364,112 @@ def gen_tw_catalysts(price, ma5, ma20, ma60, macd, dea, rsi,
 
 
 # ── Taiwan Routes ─────────────────────────────────────────────────────
+@app.route('/portfolio')
+def portfolio():
+    return render_template('portfolio.html')
+
+
+@app.route('/api/compare')
+def compare_stocks():
+    tickers_raw = request.args.get('tickers', '')
+    tickers = [t.strip().upper() for t in tickers_raw.split(',') if t.strip()][:5]
+    if not tickers:
+        return jsonify([])
+
+    def fetch_compare(ticker):
+        is_tw = ticker.endswith('.TW') or ticker.endswith('.TWO')
+        cache_key = f'cmp:{ticker}'
+        cached = _cache_get(cache_key)
+        if cached:
+            return cached
+        try:
+            t = tw_normalize(ticker) if is_tw else ticker
+            stock = yf.Ticker(t)
+            info  = stock.info
+            hist  = stock.history(period='6mo')
+            if hist.empty:
+                return {'ticker': ticker, 'error': '找不到資料'}
+
+            close = hist['Close']
+            price = safe_float(close.iloc[-1])
+            prev  = safe_float(close.iloc[-2]) if len(close) > 1 else price
+            change_pct = (price / prev - 1) * 100 if prev else 0
+
+            n = len(close)
+            ma20 = safe_float(close.rolling(min(20, n)).mean().iloc[-1])
+            ma60 = safe_float(close.rolling(min(60, n)).mean().iloc[-1])
+            rsi  = safe_float(calc_rsi(close).iloc[-1])
+            macd_s, sig_s, hist_s = calc_macd(close)
+            macd_v = safe_float(macd_s.iloc[-1])
+            sig_v  = safe_float(sig_s.iloc[-1])
+
+            week52h = safe_float(info.get('fiftyTwoWeekHigh', hist['High'].max()))
+            week52l = safe_float(info.get('fiftyTwoWeekLow',  hist['Low'].min()))
+            from52h = round((price / week52h - 1) * 100, 1) if week52h > 0 else 0
+
+            avg_vol   = safe_float(hist['Volume'].rolling(min(20, n)).mean().iloc[-1])
+            curr_vol  = safe_float(hist['Volume'].iloc[-1])
+            vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
+
+            bull = sum([price > ma20, price > ma60,
+                        macd_v > sig_v, rsi < 50, vol_ratio > 1.3])
+            if   bull >= 4: sig_label, sig_cls = '強勢多頭', 'sv-strong-buy'
+            elif bull >= 3: sig_label, sig_cls = '偏多',     'sv-buy'
+            elif bull >= 2: sig_label, sig_cls = '中性',     'sv-hold'
+            else:           sig_label, sig_cls = '偏弱',     'sv-caution'
+
+            div_yield = safe_float(info.get('dividendYield', 0))
+            if not is_tw and div_yield < 1:
+                div_yield = round(div_yield * 100, 2)
+            else:
+                div_yield = round(div_yield, 2)
+
+            analyst_target = round(safe_float(info.get('targetMeanPrice', 0)), 2)
+            upside = round((analyst_target / price - 1) * 100, 1) if analyst_target > 0 and price > 0 else 0
+
+            result = {
+                'ticker':       ticker,
+                'name':         (info.get('shortName') or info.get('longName') or ticker)[:25],
+                'price':        round(price, 2),
+                'changePct':    round(change_pct, 2),
+                'pe':           round(safe_float(info.get('trailingPE',  0)), 1),
+                'fwdPe':        round(safe_float(info.get('forwardPE',   0)), 1),
+                'roe':          round(safe_float(info.get('returnOnEquity', 0)) * 100, 1),
+                'divYield':     div_yield,
+                'beta':         round(safe_float(info.get('beta', 0)), 2),
+                'instPct':      round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1),
+                'revGrowth':    round(safe_float(info.get('revenueGrowth', 0)) * 100, 1),
+                'profitMargin': round(safe_float(info.get('profitMargins', 0)) * 100, 1),
+                'mktCap':       safe_float(info.get('marketCap', 0)),
+                'rsi':          round(rsi, 1),
+                'macdBull':     macd_v > sig_v,
+                'volRatio':     round(vol_ratio, 2),
+                'week52High':   round(week52h, 2),
+                'week52Low':    round(week52l, 2),
+                'from52High':   from52h,
+                'analystTarget':analyst_target,
+                'upside':       upside,
+                'signal':       sig_label,
+                'signalCls':    sig_cls,
+                'aboveMa20':    price > ma20,
+                'aboveMa60':    price > ma60,
+                'isTw':         is_tw,
+            }
+            _cache_set(cache_key, result, ttl=180)
+            return result
+        except Exception as e:
+            return {'ticker': ticker, 'error': str(e)[:80]}
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(fetch_compare, t): t for t in tickers}
+        results = {}
+        for f in as_completed(futures):
+            r = f.result()
+            results[r.get('ticker', '')] = r
+
+    return jsonify([results.get(t, {'ticker': t, 'error': '載入失敗'}) for t in tickers])
+
+
 @app.route('/tw')
 def tw_index():
     return render_template('tw_stock.html')
@@ -2173,6 +2279,534 @@ def monitor_scan():
             results_map[futures[f]] = f.result()
 
     return jsonify([results_map[t] for t in tickers if t in results_map])
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SCREENER MODULE
+# ═══════════════════════════════════════════════════════════════════
+
+STRATEGIES_FILE = os.path.join(os.path.dirname(__file__), 'strategies.json')
+_strat_lock = threading.Lock()
+
+def _load_strategies():
+    try:
+        if os.path.exists(STRATEGIES_FILE):
+            with open(STRATEGIES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_strategies(s):
+    with open(STRATEGIES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+
+# ── KD Stochastic (Taiwan standard: K = prev_K*(1-1/m1) + RSV/m1) ──
+def calc_kd(high, low, close, n=9, m1=3, m2=3):
+    low_n  = low.rolling(n, min_periods=1).min()
+    high_n = high.rolling(n, min_periods=1).max()
+    denom  = (high_n - low_n).replace(0, np.nan)
+    rsv    = ((close - low_n) / denom * 100).fillna(50).clip(0, 100)
+    alpha_k = 1.0 / m1
+    alpha_d = 1.0 / m2
+    k_list, d_list = [], []
+    k = d = 50.0
+    for r in rsv:
+        k = alpha_k * r + (1 - alpha_k) * k
+        d = alpha_d * k + (1 - alpha_d) * d
+        k_list.append(k)
+        d_list.append(d)
+    return (pd.Series(k_list, index=close.index),
+            pd.Series(d_list, index=close.index))
+
+# ── Stock universe for screener ──
+TW_SCREENER_UNIVERSE = {
+    '大型指數ETF':  ['0050','006208','00757','0051'],
+    '高股息ETF':    ['0056','00878','00713','00919','00929','00930','00918','00900'],
+    '科技主題ETF':  ['00662','00646','00770','00881','00830'],
+    '半導體':       ['2330','2303','2344','3034','2379','3711','2454','2408','3481','2302'],
+    '電子製造':     ['2317','2382','2356','2308','2327','2357','3008','2301','2388'],
+    '金融保險':     ['2886','2884','2881','2882','2892','2885','2887','2891','2880','5876','5871'],
+    '傳統產業':     ['1301','1303','1326','2002','1101','1216','2912','2207'],
+    '電信網路':     ['2412','4904','3045','6803'],
+    '能源石化':     ['6505','1590'],
+    '航運物流':     ['2603','2609','2615','2610','2618'],
+    'IC設計':       ['3034','2379','6547','3443','3023','2454'],
+    '生技醫療':     ['4938','4144','6497','1723','4107'],
+}
+
+US_SCREENER_UNIVERSE = {
+    '科技巨頭':   ['AAPL','MSFT','GOOGL','META','AMZN','NVDA','TSLA'],
+    '半導體':     ['NVDA','AMD','INTC','QCOM','MU','AVGO','TSM','AMAT'],
+    '雲端AI':     ['MSFT','AMZN','GOOGL','CRM','SNOW','PLTR','AI'],
+    '金融':       ['JPM','BAC','GS','MS','V','MA','BRK-B'],
+    '醫療生技':   ['JNJ','UNH','PFE','MRNA','ABBV','BMY'],
+    '消費零售':   ['AMZN','WMT','COST','NKE','MCD','SBUX'],
+    '能源':       ['XOM','CVX','COP','SLB'],
+    'ETF':        ['SPY','QQQ','IWM','GLD','TLT','VTI','VOO'],
+}
+
+def _eval_condition(hist, info, cond):
+    """Evaluate a single condition. Returns (passed:bool, detail:str)."""
+    ctype  = cond.get('type', '')
+    params = cond.get('params', {})
+    close  = hist['Close']
+    high   = hist['High']
+    low    = hist['Low']
+    vol    = hist['Volume']
+    n      = len(close)
+    price  = safe_float(close.iloc[-1])
+
+    def _ma(period):
+        return close.rolling(min(int(period), n), min_periods=1).mean()
+
+    try:
+        # ── 均線條件 ──────────────────────────────────────
+        if ctype == 'price_above_ma':
+            period = int(params.get('period', 20))
+            ma = safe_float(_ma(period).iloc[-1])
+            return price > ma, f'收盤 {price:.2f} > MA{period} {ma:.2f}'
+
+        elif ctype == 'price_below_ma':
+            period = int(params.get('period', 20))
+            ma = safe_float(_ma(period).iloc[-1])
+            return price < ma, f'收盤 {price:.2f} < MA{period} {ma:.2f}'
+
+        elif ctype == 'price_cross_above_ma':
+            period    = int(params.get('period', 60))
+            within    = int(params.get('within_days', 5))
+            ma_series = _ma(period)
+            if n < within + 2:
+                return False, '資料不足'
+            # 最新收盤站上均線，且 within 天前有在均線下
+            curr_above = close.iloc[-1] > ma_series.iloc[-1]
+            was_below  = (close.iloc[-(within+1):-1].values <
+                          ma_series.iloc[-(within+1):-1].values).any()
+            return (curr_above and was_below,
+                    f'近{within}天突破 MA{period} {safe_float(ma_series.iloc[-1]):.2f}')
+
+        elif ctype == 'price_cross_below_ma':
+            period    = int(params.get('period', 20))
+            within    = int(params.get('within_days', 3))
+            ma_series = _ma(period)
+            if n < within + 2:
+                return False, '資料不足'
+            curr_below = close.iloc[-1] < ma_series.iloc[-1]
+            was_above  = (close.iloc[-(within+1):-1].values >
+                          ma_series.iloc[-(within+1):-1].values).any()
+            return (curr_below and was_above,
+                    f'近{within}天跌破 MA{period} {safe_float(ma_series.iloc[-1]):.2f}')
+
+        elif ctype == 'price_below_ma_for_months':
+            period = int(params.get('period', 60))
+            months = int(params.get('months', 3))
+            days   = months * 21
+            ma_series = _ma(period)
+            if n < days + 5:
+                return False, '歷史資料不足'
+            window_close = close.iloc[-days:-1]
+            window_ma    = ma_series.iloc[-days:-1]
+            below_ratio  = (window_close.values < window_ma.values).mean()
+            passed = below_ratio >= 0.70 and close.iloc[-1] >= ma_series.iloc[-1] * 0.98
+            return passed, f'過去{months}月 {below_ratio*100:.0f}% 時間低於 MA{period}'
+
+        elif ctype == 'ma_trending_up':
+            period     = int(params.get('period', 60))
+            trend_days = int(params.get('trend_days', 5))
+            ma_series  = _ma(period)
+            if n < trend_days + 2:
+                return False, '資料不足'
+            return (safe_float(ma_series.iloc[-1]) > safe_float(ma_series.iloc[-trend_days]),
+                    f'MA{period} {trend_days}天持續上揚')
+
+        # ── KD 指標 ───────────────────────────────────────
+        elif ctype == 'kd_k_above':
+            kn  = int(params.get('kd_n', 9))
+            m1  = int(params.get('kd_m1', 3))
+            m2  = int(params.get('kd_m2', 3))
+            thr = float(params.get('threshold', 50))
+            k, _ = calc_kd(high, low, close, kn, m1, m2)
+            kv   = safe_float(k.iloc[-1])
+            return kv > thr, f'K({kn},{m1},{m2}) = {kv:.1f} > {thr}'
+
+        elif ctype == 'kd_k_below':
+            kn  = int(params.get('kd_n', 9))
+            m1  = int(params.get('kd_m1', 3))
+            m2  = int(params.get('kd_m2', 3))
+            thr = float(params.get('threshold', 20))
+            k, _ = calc_kd(high, low, close, kn, m1, m2)
+            kv   = safe_float(k.iloc[-1])
+            return kv < thr, f'K({kn},{m1},{m2}) = {kv:.1f} < {thr}'
+
+        elif ctype == 'kd_golden_cross':
+            kn     = int(params.get('kd_n', 9))
+            m1     = int(params.get('kd_m1', 3))
+            m2     = int(params.get('kd_m2', 3))
+            within = int(params.get('within_days', 3))
+            k, d   = calc_kd(high, low, close, kn, m1, m2)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and k.iloc[i] > d.iloc[i] and k.iloc[i-1] <= d.iloc[i-1]:
+                    passed = True; break
+            kv = safe_float(k.iloc[-1])
+            return passed, f'KD({kn}) 近{within}天金叉，K={kv:.1f}'
+
+        elif ctype == 'kd_death_cross':
+            kn     = int(params.get('kd_n', 9))
+            m1     = int(params.get('kd_m1', 3))
+            m2     = int(params.get('kd_m2', 3))
+            within = int(params.get('within_days', 3))
+            k, d   = calc_kd(high, low, close, kn, m1, m2)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and k.iloc[i] < d.iloc[i] and k.iloc[i-1] >= d.iloc[i-1]:
+                    passed = True; break
+            return passed, f'KD({kn}) 近{within}天死叉'
+
+        # ── MACD 指標 ─────────────────────────────────────
+        elif ctype == 'macd_bullish':
+            macd_s, sig_s, _ = calc_macd(close)
+            mv, sv = safe_float(macd_s.iloc[-1]), safe_float(sig_s.iloc[-1])
+            return mv > sv, f'DIF {mv:.4f} > DEA {sv:.4f}'
+
+        elif ctype == 'macd_golden_cross':
+            within = int(params.get('within_days', 3))
+            macd_s, sig_s, _ = calc_macd(close)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and macd_s.iloc[i] > sig_s.iloc[i] and macd_s.iloc[i-1] <= sig_s.iloc[i-1]:
+                    passed = True; break
+            return passed, f'MACD 近{within}天金叉'
+
+        elif ctype == 'macd_death_cross':
+            within = int(params.get('within_days', 3))
+            macd_s, sig_s, _ = calc_macd(close)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and macd_s.iloc[i] < sig_s.iloc[i] and macd_s.iloc[i-1] >= sig_s.iloc[i-1]:
+                    passed = True; break
+            return passed, f'MACD 近{within}天死叉'
+
+        # ── RSI ────────────────────────────────────────────
+        elif ctype == 'rsi_above':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', 50))
+            rv     = safe_float(calc_rsi(close, period).iloc[-1])
+            return rv > thr, f'RSI({period}) = {rv:.1f} > {thr}'
+
+        elif ctype == 'rsi_below':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', 30))
+            rv     = safe_float(calc_rsi(close, period).iloc[-1])
+            return rv < thr, f'RSI({period}) = {rv:.1f} < {thr}'
+
+        # ── 成交量 ─────────────────────────────────────────
+        elif ctype == 'volume_ratio_above':
+            avg_days = int(params.get('avg_days', 20))
+            ratio    = float(params.get('ratio', 1.5))
+            avg_vol  = safe_float(vol.rolling(avg_days, min_periods=1).mean().iloc[-1])
+            curr_vol = safe_float(vol.iloc[-1])
+            vr = curr_vol / avg_vol if avg_vol > 0 else 0
+            return vr >= ratio, f'量比 {vr:.2f}x ≥ {ratio}x'
+
+        elif ctype == 'volume_shrinking':
+            avg_days    = int(params.get('avg_days', 20))
+            recent_days = int(params.get('recent_days', 5))
+            older_vol  = safe_float(vol.iloc[-(avg_days):-recent_days].mean())
+            recent_vol = safe_float(vol.iloc[-recent_days:].mean())
+            ratio      = recent_vol / older_vol if older_vol > 0 else 1
+            return ratio < 0.85, f'量縮比 {ratio:.2f}（< 0.85）'
+
+        # ── 布林通道 ───────────────────────────────────────
+        elif ctype == 'price_near_bb_lower':
+            pct = float(params.get('pct', 5))
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbl = safe_float(bb_l.iloc[-1])
+            dist = (price - bbl) / bbl * 100 if bbl > 0 else 999
+            return dist <= pct, f'距布林下軌 {dist:.1f}% ≤ {pct}%'
+
+        elif ctype == 'price_near_bb_upper':
+            pct = float(params.get('pct', 3))
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbu = safe_float(bb_u.iloc[-1])
+            dist = (bbu - price) / bbu * 100 if bbu > 0 else 999
+            return dist <= pct, f'距布林上軌 {dist:.1f}% ≤ {pct}%'
+
+        # ── 機構籌碼 ───────────────────────────────────────
+        elif ctype == 'inst_pct_above':
+            thr      = float(params.get('threshold', 40))
+            inst_pct = safe_float(info.get('heldPercentInstitutions', 0)) * 100
+            return inst_pct >= thr, f'機構持股 {inst_pct:.1f}% ≥ {thr}%'
+
+        elif ctype == 'price_change_above':
+            thr = float(params.get('threshold', 3))
+            prev = safe_float(close.iloc[-2]) if n > 1 else price
+            chg_pct = (price / prev - 1) * 100 if prev else 0
+            return chg_pct >= thr, f'今日漲幅 {chg_pct:.2f}% ≥ {thr}%'
+
+        elif ctype == 'price_from_high_below':
+            thr = float(params.get('threshold', 20))
+            peak = safe_float(hist['High'].rolling(min(252, n)).max().iloc[-1])
+            dist = (peak - price) / peak * 100 if peak > 0 else 0
+            return dist <= thr, f'距52週高 {dist:.1f}% ≤ {thr}%'
+
+        elif ctype == 'price_range':
+            min_p = float(params.get('min', 0))
+            max_p = float(params.get('max', 99999))
+            return min_p <= price <= max_p, f'股價 {price:.2f} 在 {min_p}~{max_p}'
+
+    except Exception as e:
+        return False, f'計算錯誤: {str(e)[:40]}'
+
+    return False, f'未知條件類型: {ctype}'
+
+
+def _scan_ticker(ticker, conditions, is_tw, period='1y'):
+    """Scan a single ticker and return result dict or None."""
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+        hist  = stock.history(period=period)
+        if hist.empty or len(hist) < 20:
+            return None
+        price = safe_float(hist['Close'].iloc[-1])
+        if price <= 0:
+            return None
+        prev      = safe_float(hist['Close'].iloc[-2]) if len(hist) > 1 else price
+        chg_pct   = (price / prev - 1) * 100 if prev else 0
+        name      = (info.get('shortName') or info.get('longName') or ticker)[:30]
+
+        cond_results = []
+        all_passed   = True
+        for cond in conditions:
+            passed, detail = _eval_condition(hist, info, cond)
+            cond_results.append({'label': cond.get('label', cond['type']),
+                                 'passed': passed, 'detail': detail})
+            if not passed:
+                all_passed = False
+
+        if not all_passed:
+            return None
+
+        n      = len(hist['Close'])
+        close  = hist['Close']
+        ma5    = safe_float(close.rolling(min(5,  n), min_periods=1).mean().iloc[-1])
+        ma10   = safe_float(close.rolling(min(10, n), min_periods=1).mean().iloc[-1])
+        ma20   = safe_float(close.rolling(min(20, n), min_periods=1).mean().iloc[-1])
+        ma60   = safe_float(close.rolling(min(60, n), min_periods=1).mean().iloc[-1])
+        rsi    = safe_float(calc_rsi(close).iloc[-1])
+        macd_s, sig_s, _ = calc_macd(close)
+        avg_vol   = safe_float(hist['Volume'].rolling(min(20,n), min_periods=1).mean().iloc[-1])
+        curr_vol  = safe_float(hist['Volume'].iloc[-1])
+        vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
+        inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
+        div_yield = safe_float(info.get('dividendYield', 0))
+        if not is_tw and div_yield < 1: div_yield = round(div_yield * 100, 2)
+        display = ticker.replace('.TW','').replace('.TWO','') if is_tw else ticker
+
+        return {
+            'ticker':    ticker,
+            'display':   display,
+            'name':      name,
+            'price':     round(price, 2),
+            'changePct': round(chg_pct, 2),
+            'ma5':  round(ma5,  2), 'ma10': round(ma10, 2),
+            'ma20': round(ma20, 2), 'ma60': round(ma60, 2),
+            'rsi':       round(rsi, 1),
+            'macdBull':  safe_float(macd_s.iloc[-1]) > safe_float(sig_s.iloc[-1]),
+            'volRatio':  round(vol_ratio, 2),
+            'instPct':   inst_pct,
+            'divYield':  round(div_yield, 2),
+            'isTw':      is_tw,
+            'conditions': cond_results,
+        }
+    except Exception:
+        return None
+
+
+@app.route('/screener')
+def screener_page():
+    return render_template('screener.html')
+
+
+@app.route('/api/screener/universe')
+def screener_universe():
+    return jsonify({'tw': TW_SCREENER_UNIVERSE, 'us': US_SCREENER_UNIVERSE})
+
+
+@app.route('/api/screener/run', methods=['POST'])
+def screener_run():
+    data       = request.json or {}
+    tickers_in = data.get('tickers', [])
+    conditions = data.get('conditions', [])
+    is_tw      = data.get('isTw', True)
+    period     = data.get('period', '1y')
+
+    if not conditions:
+        return jsonify({'error': '請至少設定一個篩選條件'}), 400
+
+    # Normalize tickers
+    if is_tw:
+        tickers = [tw_normalize(t.strip()) for t in tickers_in if t.strip()]
+    else:
+        tickers = [t.strip().upper() for t in tickers_in if t.strip()]
+
+    tickers = list(dict.fromkeys(tickers))  # deduplicate, preserve order
+    if not tickers:
+        return jsonify({'error': '請選擇要掃描的股票'}), 400
+    if len(tickers) > 150:
+        return jsonify({'error': '最多一次掃描 150 檔'}), 400
+
+    results = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(_scan_ticker, t, conditions, is_tw, period): t for t in tickers}
+        for f in as_completed(futs):
+            r = f.result()
+            if r:
+                results.append(r)
+
+    results.sort(key=lambda x: x['changePct'], reverse=True)
+    return jsonify({'results': results, 'total': len(tickers), 'matched': len(results)})
+
+
+@app.route('/api/screener/strategies', methods=['GET'])
+def screener_strategies_get():
+    with _strat_lock:
+        return jsonify(_load_strategies())
+
+
+@app.route('/api/screener/strategies', methods=['POST'])
+def screener_strategies_save():
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    with _strat_lock:
+        s = _load_strategies()
+        s[name] = {
+            'conditions': data.get('conditions', []),
+            'tickers':    data.get('tickers', []),
+            'isTw':       data.get('isTw', True),
+            'period':     data.get('period', '1y'),
+            'exitAlerts': data.get('exitAlerts', []),
+            'savedAt':    pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+        }
+        _save_strategies(s)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/screener/strategies/<name>', methods=['DELETE'])
+def screener_strategies_delete(name):
+    with _strat_lock:
+        s = _load_strategies()
+        s.pop(name, None)
+        _save_strategies(s)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/screener/add_alert', methods=['POST'])
+def screener_add_alert():
+    """Add a ticker to monitor with custom exit alert conditions."""
+    data   = request.json or {}
+    ticker_raw    = data.get('ticker', '').strip()
+    exit_conds    = data.get('exitConditions', [])
+    line_token    = data.get('line_token', '')
+    line_user_id  = data.get('line_user_id', '')
+    is_tw         = data.get('isTw', True)
+
+    if not ticker_raw:
+        return jsonify({'error': 'ticker required'}), 400
+
+    ticker = tw_normalize(ticker_raw) if is_tw else ticker_raw.upper()
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        existing = cfg['tickers'].get(ticker, {})
+        # Preserve existing keys, add/update exit conditions
+        cfg['tickers'][ticker] = {
+            'profile':        existing.get('profile', 'steady'),
+            'line_token':     line_token or existing.get('line_token', cfg.get('line_token', '')),
+            'line_user_id':   line_user_id or existing.get('line_user_id', cfg.get('line_user_id', '')),
+            'last_signal':    existing.get('last_signal'),
+            'last_scan':      existing.get('last_scan', ''),
+            'last_notify_time': existing.get('last_notify_time', ''),
+            'registered_at':  existing.get('registered_at', now_str),
+            'exit_conditions': exit_conds,
+            'exit_last_alert': existing.get('exit_last_alert', {}),
+        }
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'ticker': ticker})
+
+
+def _check_exit_alerts(stock, ticker, price, entry):
+    """Check exit conditions and return list of triggered alerts."""
+    exit_conds = entry.get('exit_conditions', [])
+    if not exit_conds:
+        return []
+
+    triggered = []
+    try:
+        hist = stock.history(period='3mo')
+        if hist.empty or len(hist) < 5:
+            return []
+        info = stock.info
+        for cond in exit_conds:
+            passed, detail = _eval_condition(hist, info, cond)
+            if passed:
+                label = cond.get('label', cond.get('type', ''))
+                triggered.append(f'【出場警示】{label}：{detail}')
+    except Exception as e:
+        print(f'[ExitAlert] {ticker}: {e}')
+    return triggered
+
+
+# Extend server scan to check exit alerts
+_orig_run_server_scan = _run_server_scan
+
+def _run_server_scan_with_exit():
+    _orig_run_server_scan()
+    # Check exit alerts
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    for ticker, entry in list(cfg.get('tickers', {}).items()):
+        if not entry.get('exit_conditions'):
+            continue
+        try:
+            stock = yf.Ticker(ticker)
+            info  = stock.info
+            price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+            if price <= 0:
+                continue
+            alerts = _check_exit_alerts(stock, ticker, price, entry)
+            if not alerts:
+                continue
+            # Cooldown: don't spam same exit alert within 4 hours
+            last_alerts = entry.get('exit_last_alert', {})
+            line_token   = entry.get('line_token', '')
+            line_user_id = entry.get('line_user_id', '')
+            for alert_text in alerts:
+                key = alert_text[:40]
+                last_t = last_alerts.get(key, '')
+                cooldown_ok = not last_t or (
+                    pd.Timestamp.now(tz='Asia/Taipei') -
+                    pd.Timestamp(last_t, tz='Asia/Taipei')).total_seconds() > 14400
+                if cooldown_ok and line_token and line_user_id:
+                    name = info.get('shortName', ticker)
+                    msg  = f'【{name}】{alert_text}\n現價: {price}\n時間: {now_str}'
+                    _push_line_msg(line_token, line_user_id, msg)
+                    with _monitor_lock:
+                        cfg2 = _load_monitor_cfg()
+                        if ticker in cfg2['tickers']:
+                            cfg2['tickers'][ticker].setdefault('exit_last_alert', {})[key] = now_str
+                            _save_monitor_cfg(cfg2)
+        except Exception as e:
+            print(f'[ExitAlert scan] {ticker}: {e}')
+
+# Replace the scan function used by the loop
+import sys
+sys.modules[__name__].__dict__['_run_server_scan'] = _run_server_scan_with_exit
 
 
 if __name__ == '__main__':

@@ -23,6 +23,16 @@
 .tv-ind-label { font-size:0.7rem; color:var(--text-dim); margin-right:4px; }
 #tvChartContainer { width:100%; height:560px; }
 #tvChartContainer iframe { border:none !important; }
+/* Welcome card live data */
+.wc-price-row { display:flex; align-items:baseline; gap:6px; margin:2px 0 4px; }
+.wc-price { font-size:1rem; font-weight:800; color:var(--text); }
+.wc-pct   { font-size:0.78rem; font-weight:700; }
+.wc-pct.up { color:var(--green); }
+.wc-pct.dn { color:var(--red); }
+.wc-name   { font-size:0.82rem; color:var(--text-mid); min-height:1.2em; }
+.wc-desc   { font-size:0.74rem; color:var(--text-dim); line-height:1.45; min-height:1.2em; }
+.wc-tag    { font-size:0.68rem; }
+.wc-skeleton .wc-name, .wc-skeleton .wc-desc { opacity:.5; }
 </style>
 </head>
 <body>
@@ -30,7 +40,9 @@
 <!-- Navigation -->
 <nav class="topnav">
   <div class="brand">US<span>STOCK</span></div>
-  <a class="market-switch" href="/tw">台股 →</a>
+  <a class="market-switch" href="/tw">台股</a>
+  <a class="market-switch" href="/portfolio" style="background:rgba(159,106,235,.15);color:#9f6aeb;border-color:rgba(159,106,235,.3);">投資組合</a>
+  <a class="market-switch" href="/screener" style="background:rgba(240,180,41,.1);color:var(--gold);border-color:rgba(240,180,41,.25);">策略選股</a>
   <button class="mon-nav-btn" onclick="toggleMonitorPanel()" title="智能即時監控">
     監控
     <span id="monitorBadge" class="mon-badge hidden">0</span>
@@ -194,47 +206,15 @@
 
     <div class="stocks-section">
       <div class="stocks-title">熱門股票</div>
-      <div class="sample-grid">
-        <div class="sample-card" onclick="loadStock('NVDA')">
-          <div class="sc-top"><span class="s-ticker">NVDA</span><span class="s-tag">半導體</span></div>
-          <div class="s-name">輝達 NVIDIA</div>
-          <div class="s-desc">AI 晶片龍頭，GPU 運算市場主宰者</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('AAPL')">
-          <div class="sc-top"><span class="s-ticker">AAPL</span><span class="s-tag">科技</span></div>
-          <div class="s-name">蘋果 Apple</div>
-          <div class="s-desc">全球市值最大公司，生態系護城河深厚</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('TSLA')">
-          <div class="sc-top"><span class="s-ticker">TSLA</span><span class="s-tag">電動車</span></div>
-          <div class="s-name">特斯拉 Tesla</div>
-          <div class="s-desc">電動車龍頭，AI 與自駕多元布局</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('MSFT')">
-          <div class="sc-top"><span class="s-ticker">MSFT</span><span class="s-tag">雲端</span></div>
-          <div class="s-name">微軟 Microsoft</div>
-          <div class="s-desc">Azure + AI Copilot，企業軟體霸主</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('AMZN')">
-          <div class="sc-top"><span class="s-ticker">AMZN</span><span class="s-tag">電商</span></div>
-          <div class="s-name">亞馬遜 Amazon</div>
-          <div class="s-desc">AWS 雲端 + 電商 + 廣告三引擎驅動</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('META')">
-          <div class="sc-top"><span class="s-ticker">META</span><span class="s-tag">社群</span></div>
-          <div class="s-name">Meta Platforms</div>
-          <div class="s-desc">社群媒體帝國，AI 廣告高速成長</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('GOOGL')">
-          <div class="sc-top"><span class="s-ticker">GOOGL</span><span class="s-tag">廣告</span></div>
-          <div class="s-name">字母 Alphabet</div>
-          <div class="s-desc">搜尋引擎 + YouTube + GCP 雲端</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('CRCL')">
-          <div class="sc-top"><span class="s-ticker">CRCL</span><span class="s-tag">加密</span></div>
-          <div class="s-name">Circle Internet</div>
-          <div class="s-desc">USDC 穩定幣發行商，加密金融基礎設施</div>
-        </div>
+      <div class="sample-grid" id="welcomeCards">
+        <div class="sample-card wc-skeleton" data-ticker="NVDA"  onclick="loadStock('NVDA')"><div class="sc-top"><span class="s-ticker">NVDA</span><span class="s-tag wc-tag" id="wctag-NVDA">--</span></div><div class="s-name wc-name" id="wcname-NVDA">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-NVDA">--</span><span class="wc-pct" id="wcpct-NVDA"></span></div><div class="s-desc wc-desc" id="wcdesc-NVDA">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="AAPL"  onclick="loadStock('AAPL')"><div class="sc-top"><span class="s-ticker">AAPL</span><span class="s-tag wc-tag" id="wctag-AAPL">--</span></div><div class="s-name wc-name" id="wcname-AAPL">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-AAPL">--</span><span class="wc-pct" id="wcpct-AAPL"></span></div><div class="s-desc wc-desc" id="wcdesc-AAPL">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="TSLA"  onclick="loadStock('TSLA')"><div class="sc-top"><span class="s-ticker">TSLA</span><span class="s-tag wc-tag" id="wctag-TSLA">--</span></div><div class="s-name wc-name" id="wcname-TSLA">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-TSLA">--</span><span class="wc-pct" id="wcpct-TSLA"></span></div><div class="s-desc wc-desc" id="wcdesc-TSLA">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="MSFT"  onclick="loadStock('MSFT')"><div class="sc-top"><span class="s-ticker">MSFT</span><span class="s-tag wc-tag" id="wctag-MSFT">--</span></div><div class="s-name wc-name" id="wcname-MSFT">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-MSFT">--</span><span class="wc-pct" id="wcpct-MSFT"></span></div><div class="s-desc wc-desc" id="wcdesc-MSFT">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="AMZN"  onclick="loadStock('AMZN')"><div class="sc-top"><span class="s-ticker">AMZN</span><span class="s-tag wc-tag" id="wctag-AMZN">--</span></div><div class="s-name wc-name" id="wcname-AMZN">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-AMZN">--</span><span class="wc-pct" id="wcpct-AMZN"></span></div><div class="s-desc wc-desc" id="wcdesc-AMZN">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="META"  onclick="loadStock('META')"><div class="sc-top"><span class="s-ticker">META</span><span class="s-tag wc-tag" id="wctag-META">--</span></div><div class="s-name wc-name" id="wcname-META">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-META">--</span><span class="wc-pct" id="wcpct-META"></span></div><div class="s-desc wc-desc" id="wcdesc-META">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="GOOGL" onclick="loadStock('GOOGL')"><div class="sc-top"><span class="s-ticker">GOOGL</span><span class="s-tag wc-tag" id="wctag-GOOGL">--</span></div><div class="s-name wc-name" id="wcname-GOOGL">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-GOOGL">--</span><span class="wc-pct" id="wcpct-GOOGL"></span></div><div class="s-desc wc-desc" id="wcdesc-GOOGL">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="CRCL"  onclick="loadStock('CRCL')"><div class="sc-top"><span class="s-ticker">CRCL</span><span class="s-tag wc-tag" id="wctag-CRCL">--</span></div><div class="s-name wc-name" id="wcname-CRCL">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-CRCL">--</span><span class="wc-pct" id="wcpct-CRCL"></span></div><div class="s-desc wc-desc" id="wcdesc-CRCL">--</div></div>
       </div>
     </div>
   </div>
@@ -585,9 +565,47 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMarket();
   renderWatchlist();
   updateAlertBadge();
+  loadWelcomeCards();
   const urlTicker = new URLSearchParams(location.search).get('ticker');
   if (urlTicker) loadStock(urlTicker.toUpperCase());
 });
+
+async function loadWelcomeCards() {
+  const tickers = ['NVDA','AAPL','TSLA','MSFT','AMZN','META','GOOGL','CRCL'];
+  try {
+    const resp = await fetch('/api/compare?tickers=' + tickers.join(','));
+    const data = await resp.json();
+    data.forEach(s => {
+      if (s.error) return;
+      const t = s.ticker;
+      const nameEl  = document.getElementById('wcname-'  + t);
+      const priceEl = document.getElementById('wcprice-' + t);
+      const pctEl   = document.getElementById('wcpct-'   + t);
+      const descEl  = document.getElementById('wcdesc-'  + t);
+      const tagEl   = document.getElementById('wctag-'   + t);
+      if (nameEl)  nameEl.textContent  = s.name || t;
+      if (priceEl) priceEl.textContent = s.price ? '$' + s.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+      if (pctEl) {
+        const up = s.changePct >= 0;
+        pctEl.textContent = (up ? '▲' : '▼') + Math.abs(s.changePct).toFixed(2) + '%';
+        pctEl.className = 'wc-pct ' + (up ? 'up' : 'dn');
+      }
+      if (descEl) {
+        const parts = [];
+        if (s.pe > 0) parts.push('本益比 ' + s.pe.toFixed(1) + 'x');
+        if (s.divYield > 0) parts.push('殖利率 ' + s.divYield.toFixed(2) + '%');
+        if (s.revGrowth) parts.push('營收成長 ' + (s.revGrowth >= 0 ? '+' : '') + s.revGrowth.toFixed(1) + '%');
+        if (s.signal) parts.push('信號：' + s.signal);
+        descEl.textContent = parts.join('　') || '--';
+      }
+      if (tagEl) tagEl.textContent = s.isTw ? (s.sector || '--') : (s.sector || '--');
+      const card = document.querySelector(`.sample-card[data-ticker="${t}"]`);
+      if (card) card.classList.remove('wc-skeleton');
+    });
+  } catch(e) {
+    console.warn('Welcome cards load failed:', e);
+  }
+}
 
 window.addEventListener('resize', () => {
   if (document.getElementById('rsiChart')?.offsetParent) Plotly.Plots.resize('rsiChart');

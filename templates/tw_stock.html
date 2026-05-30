@@ -172,6 +172,16 @@
 .ma-cfg-close { padding:5px 10px; background:transparent; border:1px solid var(--border); border-radius:5px; color:var(--text-dim); font-size:0.75rem; cursor:pointer; }
 .ma-cfg-apply:hover { filter:brightness(1.15); }
 .ma-cfg-close:hover { border-color:var(--text-mid); color:var(--text-mid); }
+/* Welcome card live data */
+.wc-price-row { display:flex; align-items:baseline; gap:6px; margin:2px 0 4px; }
+.wc-price { font-size:1rem; font-weight:800; color:var(--text); }
+.wc-pct   { font-size:0.78rem; font-weight:700; }
+.wc-pct.up { color:var(--green); }
+.wc-pct.dn { color:var(--red); }
+.wc-name   { font-size:0.82rem; color:var(--text-mid); min-height:1.2em; }
+.wc-desc   { font-size:0.74rem; color:var(--text-dim); line-height:1.45; min-height:1.2em; }
+.wc-tag    { font-size:0.68rem; }
+.wc-skeleton .wc-name, .wc-skeleton .wc-desc { opacity:.5; }
 </style>
 </head>
 <body>
@@ -179,7 +189,9 @@
 <!-- Navigation -->
 <nav class="topnav">
   <div class="brand">TW<span>STOCK</span></div>
-  <a class="market-switch" href="/">美股 →</a>
+  <a class="market-switch" href="/">美股</a>
+  <a class="market-switch" href="/portfolio" style="background:rgba(159,106,235,.15);color:#9f6aeb;border-color:rgba(159,106,235,.3);">投資組合</a>
+  <a class="market-switch" href="/screener" style="background:rgba(240,180,41,.1);color:var(--gold);border-color:rgba(240,180,41,.25);">策略選股</a>
   <div class="search-wrap">
     <input id="tickerInput" type="text" placeholder="輸入股票代碼 (2330, 0050, 2454...)" autocomplete="off" spellcheck="false">
     <button onclick="searchStock()">查詢</button>
@@ -277,78 +289,18 @@
     </div>
 
     <div class="stocks-section">
-      <div class="stocks-title">熱門 ETF</div>
-      <div class="sample-grid">
-        <div class="sample-card" onclick="loadStock('0050')">
-          <div class="sc-top"><span class="s-ticker">0050</span><span class="s-tag">指數型</span></div>
-          <div class="s-name">元大台灣50</div>
-          <div class="s-desc">追蹤台灣50指數，市值最大ETF，長線首選</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('0056')">
-          <div class="sc-top"><span class="s-ticker">0056</span><span class="s-tag">高股息</span></div>
-          <div class="s-name">元大高股息</div>
-          <div class="s-desc">精選高殖利率成分股，適合存股族</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('006208')">
-          <div class="sc-top"><span class="s-ticker">006208</span><span class="s-tag">指數型</span></div>
-          <div class="s-name">富邦台灣50</div>
-          <div class="s-desc">費用率低廉，追蹤台灣50指數</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00878')">
-          <div class="sc-top"><span class="s-ticker">00878</span><span class="s-tag">高股息</span></div>
-          <div class="s-name">國泰永續高股息</div>
-          <div class="s-desc">ESG篩選＋高股息，近年最熱門ETF</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00662')">
-          <div class="sc-top"><span class="s-ticker">00662</span><span class="s-tag">指數型</span></div>
-          <div class="s-name">富邦NASDAQ</div>
-          <div class="s-desc">追蹤NASDAQ-100指數，科技成長首選</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00631L')">
-          <div class="sc-top"><span class="s-ticker">00631L</span><span class="s-tag">槓桿型</span></div>
-          <div class="s-name">元大台灣50正2</div>
-          <div class="s-desc">台灣50指數每日正向2倍，積極操作</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00670L')">
-          <div class="sc-top"><span class="s-ticker">00670L</span><span class="s-tag">槓桿型</span></div>
-          <div class="s-name">富邦NASDAQ正2</div>
-          <div class="s-desc">NASDAQ-100每日正向2倍槓桿ETF</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00647L')">
-          <div class="sc-top"><span class="s-ticker">00647L</span><span class="s-tag">槓桿型</span></div>
-          <div class="s-name">元大S&amp;P500正2</div>
-          <div class="s-desc">追蹤S&amp;P500每日正向2倍，美股槓桿</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00675L')">
-          <div class="sc-top"><span class="s-ticker">00675L</span><span class="s-tag">槓桿型</span></div>
-          <div class="s-name">富邦臺灣加權正2</div>
-          <div class="s-desc">追蹤台股加權指數每日正向2倍</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('00865B')">
-          <div class="sc-top"><span class="s-ticker">00865B</span><span class="s-tag">債券型</span></div>
-          <div class="s-name">中信美國公債20年</div>
-          <div class="s-desc">追蹤美國長天期公債，避險配置首選</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('2330')">
-          <div class="sc-top"><span class="s-ticker">2330</span><span class="s-tag">半導體</span></div>
-          <div class="s-name">台積電</div>
-          <div class="s-desc">全球晶圓代工龍頭，台股護國神山</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('2317')">
-          <div class="sc-top"><span class="s-ticker">2317</span><span class="s-tag">電子製造</span></div>
-          <div class="s-name">鴻海</div>
-          <div class="s-desc">全球最大代工廠，AI伺服器積極布局</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('2454')">
-          <div class="sc-top"><span class="s-ticker">2454</span><span class="s-tag">IC設計</span></div>
-          <div class="s-name">聯發科</div>
-          <div class="s-desc">全球手機晶片龍頭，AI邊緣運算佈局</div>
-        </div>
-        <div class="sample-card" onclick="loadStock('2308')">
-          <div class="sc-top"><span class="s-ticker">2308</span><span class="s-tag">電源</span></div>
-          <div class="s-name">台達電</div>
-          <div class="s-desc">電源管理龍頭，AI資料中心受惠股</div>
-        </div>
+      <div class="stocks-title">熱門 ETF 與個股</div>
+      <div class="sample-grid" id="twWelcomeCards">
+        <div class="sample-card wc-skeleton" data-ticker="0050.TW"   onclick="loadStock('0050')"><div class="sc-top"><span class="s-ticker">0050</span><span class="s-tag wc-tag" id="wctag-0050TW">--</span></div><div class="s-name wc-name" id="wcname-0050TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-0050TW">--</span><span class="wc-pct" id="wcpct-0050TW"></span></div><div class="s-desc wc-desc" id="wcdesc-0050TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="0056.TW"   onclick="loadStock('0056')"><div class="sc-top"><span class="s-ticker">0056</span><span class="s-tag wc-tag" id="wctag-0056TW">--</span></div><div class="s-name wc-name" id="wcname-0056TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-0056TW">--</span><span class="wc-pct" id="wcpct-0056TW"></span></div><div class="s-desc wc-desc" id="wcdesc-0056TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="006208.TW" onclick="loadStock('006208')"><div class="sc-top"><span class="s-ticker">006208</span><span class="s-tag wc-tag" id="wctag-006208TW">--</span></div><div class="s-name wc-name" id="wcname-006208TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-006208TW">--</span><span class="wc-pct" id="wcpct-006208TW"></span></div><div class="s-desc wc-desc" id="wcdesc-006208TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="00878.TW"  onclick="loadStock('00878')"><div class="sc-top"><span class="s-ticker">00878</span><span class="s-tag wc-tag" id="wctag-00878TW">--</span></div><div class="s-name wc-name" id="wcname-00878TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-00878TW">--</span><span class="wc-pct" id="wcpct-00878TW"></span></div><div class="s-desc wc-desc" id="wcdesc-00878TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="00662.TW"  onclick="loadStock('00662')"><div class="sc-top"><span class="s-ticker">00662</span><span class="s-tag wc-tag" id="wctag-00662TW">--</span></div><div class="s-name wc-name" id="wcname-00662TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-00662TW">--</span><span class="wc-pct" id="wcpct-00662TW"></span></div><div class="s-desc wc-desc" id="wcdesc-00662TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="00631L.TW" onclick="loadStock('00631L')"><div class="sc-top"><span class="s-ticker">00631L</span><span class="s-tag wc-tag" id="wctag-00631LTW">--</span></div><div class="s-name wc-name" id="wcname-00631LTW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-00631LTW">--</span><span class="wc-pct" id="wcpct-00631LTW"></span></div><div class="s-desc wc-desc" id="wcdesc-00631LTW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="00670L.TW" onclick="loadStock('00670L')"><div class="sc-top"><span class="s-ticker">00670L</span><span class="s-tag wc-tag" id="wctag-00670LTW">--</span></div><div class="s-name wc-name" id="wcname-00670LTW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-00670LTW">--</span><span class="wc-pct" id="wcpct-00670LTW"></span></div><div class="s-desc wc-desc" id="wcdesc-00670LTW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="2330.TW"   onclick="loadStock('2330')"><div class="sc-top"><span class="s-ticker">2330</span><span class="s-tag wc-tag" id="wctag-2330TW">--</span></div><div class="s-name wc-name" id="wcname-2330TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-2330TW">--</span><span class="wc-pct" id="wcpct-2330TW"></span></div><div class="s-desc wc-desc" id="wcdesc-2330TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="2317.TW"   onclick="loadStock('2317')"><div class="sc-top"><span class="s-ticker">2317</span><span class="s-tag wc-tag" id="wctag-2317TW">--</span></div><div class="s-name wc-name" id="wcname-2317TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-2317TW">--</span><span class="wc-pct" id="wcpct-2317TW"></span></div><div class="s-desc wc-desc" id="wcdesc-2317TW">--</div></div>
+        <div class="sample-card wc-skeleton" data-ticker="2454.TW"   onclick="loadStock('2454')"><div class="sc-top"><span class="s-ticker">2454</span><span class="s-tag wc-tag" id="wctag-2454TW">--</span></div><div class="s-name wc-name" id="wcname-2454TW">載入中…</div><div class="wc-price-row"><span class="wc-price" id="wcprice-2454TW">--</span><span class="wc-pct" id="wcpct-2454TW"></span></div><div class="s-desc wc-desc" id="wcdesc-2454TW">--</div></div>
       </div>
     </div>
   </div>
@@ -924,9 +876,54 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMarket();
   renderWatchlist();
   updateAlertBadge();
+  loadTwWelcomeCards();
   const urlTicker = new URLSearchParams(location.search).get('ticker');
   if (urlTicker) loadStock(displayTW(urlTicker.toUpperCase()));
 });
+
+async function loadTwWelcomeCards() {
+  // Fetch in two batches of 5 (compare API limit)
+  const batches = [
+    ['0050.TW','0056.TW','006208.TW','00878.TW','00662.TW'],
+    ['00631L.TW','00670L.TW','2330.TW','2317.TW','2454.TW'],
+  ];
+  for (const batch of batches) {
+    try {
+      const resp = await fetch('/api/compare?tickers=' + batch.join(','));
+      const data = await resp.json();
+      data.forEach(s => {
+        if (s.error) return;
+        // ID suffix: remove dots e.g. 0050.TW → 0050TW
+        const id = s.ticker.replace(/\./g, '');
+        const nameEl  = document.getElementById('wcname-'  + id);
+        const priceEl = document.getElementById('wcprice-' + id);
+        const pctEl   = document.getElementById('wcpct-'   + id);
+        const descEl  = document.getElementById('wcdesc-'  + id);
+        const tagEl   = document.getElementById('wctag-'   + id);
+        if (nameEl)  nameEl.textContent  = s.name || s.ticker;
+        if (priceEl) priceEl.textContent = s.price ? '$' + s.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--';
+        if (pctEl) {
+          const up = s.changePct >= 0;
+          pctEl.textContent = (up ? '▲' : '▼') + Math.abs(s.changePct).toFixed(2) + '%';
+          pctEl.className = 'wc-pct ' + (up ? 'up' : 'dn');
+        }
+        if (tagEl) tagEl.textContent = s.isTw ? (s.sector || 'ETF') : '--';
+        if (descEl) {
+          const parts = [];
+          if (s.divYield > 0)    parts.push('殖利率 ' + s.divYield.toFixed(2) + '%');
+          if (s.pe > 0)          parts.push('本益比 ' + s.pe.toFixed(1) + 'x');
+          if (s.revGrowth != null && s.revGrowth !== 0) parts.push('營收 ' + (s.revGrowth >= 0 ? '+' : '') + s.revGrowth.toFixed(1) + '%');
+          if (s.signal)          parts.push('信號：' + s.signal);
+          descEl.textContent = parts.join('　') || '--';
+        }
+        const card = document.querySelector(`#twWelcomeCards [data-ticker="${s.ticker}"]`);
+        if (card) card.classList.remove('wc-skeleton');
+      });
+    } catch(e) {
+      console.warn('TW welcome cards load failed:', e);
+    }
+  }
+}
 
 window.addEventListener('resize', () => {
   if (document.getElementById('rsiChart')?.offsetParent) Plotly.Plots.resize('rsiChart');
@@ -1737,65 +1734,71 @@ function renderEtfHoldings(e) {
 }
 
 function renderEtfStrategy(d) {
-  const code  = (d.displayTicker || d.ticker).replace('.TW','').replace('.TWO','');
-  const name  = d.name || '';
-  const cat   = (d.etfData && d.etfData.category) || '';
+  const code = (d.displayTicker || d.ticker).replace('.TW','').replace('.TWO','');
+  const name = d.name || '';
+  const ed   = d.etfData || {};
 
-  // Classify ETF type from name/code
-  let etfType = '', etfLogic = '', etfRisk = '', etfSuitable = '';
-
-  if (/正2|2x|2倍|槓桿|Leveraged/i.test(name) || code.includes('L')) {
+  // ── ETF 類型：從真實名稱/代號推斷（不含主觀描述）
+  let etfType = '';
+  if (/正2|2x|2倍|槓桿|Leveraged/i.test(name) || code.endsWith('L'))
     etfType = '槓桿型 ETF';
-    etfLogic = '每日追蹤標的指數 2 倍正向報酬。由於每日重置槓桿特性，長期持有存在「波動率衰減」效應，指數震盪時實際報酬可能低於 2 倍。選股邏輯完全被動，複製底層指數成分並使用衍生性金融商品放大報酬。';
-    etfRisk  = '高度波動，建議短線波段操作，不適合長期持有；劇烈震盪市場中衰損效應顯著，須嚴格設定停損點。';
-    etfSuitable = '適合短線積極交易者，對底層指數有強烈看多判斷時使用，建議部位控制在總資金 10% 以內。';
-  } else if (/反1|反向|Inverse|-1x/i.test(name)) {
+  else if (/反1|反向|Inverse/i.test(name) || code.endsWith('R'))
     etfType = '反向型 ETF';
-    etfLogic = '每日追蹤標的指數負 1 倍報酬，即指數跌時獲利。同樣存在每日重置特性，長期持有效果與預期有落差。';
-    etfRisk  = '不適合長期持有；需精準判斷下跌時機，市場反彈時虧損可能迅速擴大。';
-    etfSuitable = '僅適合看空短期市場的積極交易者作為避險或短線工具，嚴設停損。';
-  } else if (/高股息|高息|高配息|Dividend/i.test(name) || /0056|00878|00713|00919|00929|00930/i.test(code)) {
+  else if (/高股息|高息|高配息|Dividend/i.test(name))
     etfType = '高股息型 ETF';
-    etfLogic = '以高殖利率為篩選核心，優先選入預期殖利率高或股息評分高的成分股。部分採「季配息」或「月配息」機制，持續提供現金流。選股通常結合基本面評分（ROE、獲利穩定度）與技術面動能排除虧損或高波動個股。';
-    etfRisk  = '市場大跌時成分股同樣受衝擊；配息來自股息與可能的資本利得分配，需確認是否為「真實獲利」的配息；高殖利率時期可能有填息壓力。';
-    etfSuitable = '適合追求穩定現金流的存股族、退休族，建議搭配定期定額長期投資，利用複利效應最大化配息再投入報酬。';
-  } else if (/NASDAQ|那斯達克|科技|Tech/i.test(name) || /00662|00670/i.test(code)) {
-    etfType = '科技/NASDAQ型 ETF';
-    etfLogic = '追蹤 NASDAQ-100 或科技類股指數，成分股以美國大型科技公司（Apple、NVIDIA、Microsoft 等）為主，按市值加權。受 AI、半導體、雲端等長期趨勢驅動，歷史報酬優異但波動性也高。';
-    etfRisk  = '高度集中於美國科技股，利率上升對高本益比科技股衝擊大；匯率風險（美元兌台幣）影響報酬；科技股本益比普遍偏高，本益比修正時跌幅可能放大。';
-    etfSuitable = '適合看好美國科技長期成長的投資人，建議長期持有並忽略短期波動，可搭配定期定額降低進場成本。';
-  } else if (/S&P|S&P500|標普/i.test(name) || /00646|00647|00757/i.test(code)) {
-    etfType = 'S&P500型 ETF';
-    etfLogic = '追蹤美國標普500指數，涵蓋美國500大市值公司，採市值加權。高度多元分散，長期年化報酬約 10%，為全球最受推崇的被動投資工具之一。';
-    etfRisk  = '美股整體下跌時無處躲避；美元匯率影響台幣計報酬；近年成分高度集中前10大科技股，分散效果下降。';
-    etfSuitable = '適合所有長期投資人作為核心持倉，搭配定期定額可有效平滑進場成本，歷史上長期持有勝率極高。';
-  } else if (/債|Bond|公債/i.test(name) || /00865|00687|00697/i.test(code)) {
+  else if (/NASDAQ|那斯達克/i.test(name))
+    etfType = 'NASDAQ 追蹤型 ETF';
+  else if (/S&P|標普/i.test(name))
+    etfType = 'S&P500 追蹤型 ETF';
+  else if (/債|Bond|公債/i.test(name) || code.endsWith('B'))
     etfType = '債券型 ETF';
-    etfLogic = '追蹤特定債券指數，提供固定收益並降低組合波動性。長天期債券（如20年期）對利率高度敏感，降息環境中有顯著資本利得；短天期債券波動小，適合資金停泊。';
-    etfRisk  = '利率上升時債券價格下跌，長天期尤甚；信用風險（公司債）；匯率風險（美元計價）；目前若利率仍在高位，需等待降息題材發酵。';
-    etfSuitable = '適合保守型投資人或作為股票部位的避險配置，降息預期下可作為波段工具。長天期公債在景氣衰退時是最佳避險資產。';
-  } else if (/台灣50|0050|006208/i.test(code) || /Taiwan 50/i.test(name)) {
-    etfType = '台灣大型股指數 ETF';
-    etfLogic = '追蹤台灣50指數，選入台灣市值前50大上市公司，以台積電為最大持股（佔比超過30%）。費用率極低，完全被動追蹤，是台股最具代表性的指數投資工具。';
-    etfRisk  = '高度集中台積電等科技股，若半導體景氣反轉衝擊大；台灣地緣政治風險；外資大量撤離時跌幅可能超預期。';
-    etfSuitable = '適合作為台股核心持倉，長期定期定額為最佳策略。歷史報酬優異，搭配配息再投入，長期複利效果顯著。';
-  } else {
-    etfType = '被動指數型 ETF';
-    etfLogic = '追蹤特定市場指數，採被動管理策略，費用率低廉。成分股依指數規則定期調整，投資人藉此以低成本分散持有市場。具體選股邏輯請參閱各 ETF 公開說明書或發行商官網。';
-    etfRisk  = '市場整體下跌時無法迴避系統性風險；追蹤誤差可能存在；需注意折溢價情況。';
-    etfSuitable = '適合長期投資人作為分散風險的核心持倉，搭配定期定額策略最佳化進場成本。';
-  }
+  else if (/ESG|永續/i.test(name))
+    etfType = 'ESG 永續型 ETF';
+  else
+    etfType = ed.category || '被動指數型 ETF';
+
+  // ── 真實數據統計欄
+  const statsRows = [];
+  if (ed.totalAssets > 0)   statsRows.push(['規模（億元）', ed.totalAssets.toLocaleString('en-US',{maximumFractionDigits:1})]);
+  if (ed.expenseRatio > 0)  statsRows.push(['管理費用率', ed.expenseRatio + '%']);
+  if (d.divYield > 0)       statsRows.push(['殖利率（年化）', d.divYield.toFixed(2) + '%']);
+  if (ed.dividendFrequency && ed.dividendFrequency !== '未知') statsRows.push(['配息頻率', ed.dividendFrequency]);
+  if (ed.threeYrReturn)     statsRows.push(['3年年化報酬', (ed.threeYrReturn >= 0 ? '+' : '') + ed.threeYrReturn + '%']);
+  if (ed.fiveYrReturn)      statsRows.push(['5年年化報酬', (ed.fiveYrReturn  >= 0 ? '+' : '') + ed.fiveYrReturn  + '%']);
+  if (ed.ytdReturn)         statsRows.push(['今年以來', (ed.ytdReturn >= 0 ? '+' : '') + ed.ytdReturn + '%']);
+  if (ed.category)          statsRows.push(['基金分類', ed.category]);
+  if (ed.fundFamily)        statsRows.push(['發行商', ed.fundFamily]);
+
+  const statsHtml = statsRows.length ? `
+    <div class="etf-strategy-title">ETF 基本資料</div>
+    <div class="etf-grid" style="margin-bottom:14px">${
+      statsRows.map(([l,v]) => `<div class="etf-stat"><div class="etf-label">${l}</div><div class="etf-value">${v}</div></div>`).join('')
+    }</div>` : '';
+
+  // ── 真實風險：來自後端 gen_tw_risks() 動態計算
+  const risksHtml = (d.risks && d.risks.length) ? `
+    <div class="etf-strategy-title">風險評估（依當前市況）</div>
+    <div style="margin-bottom:14px">${d.risks.map(r => `
+      <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;">
+        <span style="flex-shrink:0;font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;margin-top:1px;
+          background:${r.level==='high'?'rgba(232,70,70,.15)':r.level==='medium'?'rgba(240,180,41,.1)':'rgba(0,214,143,.08)'};
+          color:${r.level==='high'?'var(--red)':r.level==='medium'?'var(--yellow)':'var(--green)'}">
+          ${r.level==='high'?'高':r.level==='medium'?'中':'低'} ${r.category}
+        </span>
+        <span style="font-size:0.8rem;color:var(--text-mid);line-height:1.55">${r.text}</span>
+      </div>`).join('')}</div>` : '';
+
+  // ── 真實描述：longBusinessSummary（通常英文，若有則顯示）
+  const descHtml = d.description ? `
+    <div class="etf-strategy-title">基金說明</div>
+    <div class="etf-strategy-text" style="margin-bottom:14px;font-size:0.78rem;line-height:1.6">${d.description}</div>` : '';
 
   return `
     <div class="etf-strategy-box">
-      <div class="etf-strategy-title">ETF 類型</div>
       <div style="margin-bottom:12px"><span class="etf-badge etf-type">${etfType}</span></div>
-      <div class="etf-strategy-title">選股邏輯</div>
-      <div class="etf-strategy-text" style="margin-bottom:14px">${etfLogic}</div>
-      <div class="etf-strategy-title">主要風險</div>
-      <div class="etf-strategy-text" style="margin-bottom:14px;color:var(--red)">${etfRisk}</div>
-      <div class="etf-strategy-title">適合對象</div>
-      <div class="etf-strategy-text">${etfSuitable}</div>
+      ${statsHtml}
+      ${risksHtml}
+      ${descHtml}
     </div>`;
 }
 

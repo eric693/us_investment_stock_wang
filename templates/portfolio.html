@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>投資組合管理</title>
+<script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+/* ── Portfolio-specific styles ─────────────────────────── */
+.pf-nav { position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:rgba(6,10,16,.96);border-bottom:1px solid var(--card-bd);padding:10px 22px;backdrop-filter:blur(12px); }
+.pf-nav .brand { font-size:1rem;font-weight:900;letter-spacing:1px;color:#fff;padding:5px 12px;background:linear-gradient(135deg,#1a6fd4,#0e4a9a);border-radius:6px; }
+.pf-nav .brand span { color:var(--gold); }
+.nav-link { padding:6px 14px;border-radius:6px;color:var(--text-mid);font-size:0.85rem;font-weight:600;border:1px solid transparent;transition:all .15s;cursor:pointer;text-decoration:none; }
+.nav-link:hover { color:var(--text);border-color:var(--card-bd2);background:#0d1828; }
+.nav-link.active { color:var(--blue);border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08); }
+
+.pf-body { max-width:1400px;margin:0 auto;padding:20px 18px; }
+
+/* Tabs */
+.pf-tabs { display:flex;gap:6px;margin-bottom:24px;border-bottom:2px solid var(--card-bd);padding-bottom:0; }
+.pf-tab { padding:10px 22px;font-size:0.88rem;font-weight:700;color:var(--text-mid);border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s; }
+.pf-tab.active { color:var(--blue);border-bottom-color:var(--blue); }
+.pf-tab:hover:not(.active) { color:var(--text); }
+.pf-section { display:none; }
+.pf-section.active { display:block; }
+
+/* Cards */
+.card { background:var(--card-bg);border:1px solid var(--card-bd);border-radius:12px;padding:20px;margin-bottom:16px; }
+.card-title { font-size:0.95rem;font-weight:800;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:8px; }
+.card-title .icon { font-size:1.1rem; }
+
+/* Buttons */
+.btn { padding:7px 16px;border-radius:7px;border:none;font-size:0.83rem;font-weight:700;cursor:pointer;transition:all .15s; }
+.btn-primary { background:var(--accent);color:#fff; }
+.btn-primary:hover { background:#2278e0; }
+.btn-sm { padding:4px 10px;font-size:0.76rem; }
+.btn-danger { background:rgba(232,70,70,.15);color:var(--red);border:1px solid rgba(232,70,70,.3); }
+.btn-danger:hover { background:rgba(232,70,70,.25); }
+.btn-ghost { background:rgba(255,255,255,.05);color:var(--text-mid);border:1px solid var(--card-bd); }
+.btn-ghost:hover { background:rgba(255,255,255,.09);color:var(--text); }
+.btn-green { background:rgba(0,214,143,.12);color:var(--green);border:1px solid rgba(0,214,143,.25); }
+.btn-green:hover { background:rgba(0,214,143,.2); }
+
+/* Input */
+.inp { padding:7px 12px;border-radius:7px;border:1px solid var(--card-bd2);background:#0a1320;color:var(--text);font-size:0.88rem;outline:none;transition:border-color .2s; }
+.inp:focus { border-color:var(--accent); }
+.inp::placeholder { color:var(--text-dim); }
+.inp-sm { padding:5px 10px;font-size:0.82rem; }
+
+/* ── GROUP section ─────────────────────────── */
+.group-toolbar { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px; }
+.group-tabs { display:flex;gap:6px;flex-wrap:wrap; }
+.gtab { padding:5px 14px;border-radius:20px;font-size:0.8rem;font-weight:700;cursor:pointer;border:1px solid var(--card-bd);background:transparent;color:var(--text-mid);transition:all .15s; }
+.gtab.active { background:rgba(61,142,248,.12);color:var(--blue);border-color:rgba(61,142,248,.4); }
+.gtab:hover:not(.active) { background:#0d1828;color:var(--text); }
+.gtab-all { border-color:rgba(0,214,143,.3);color:var(--green); }
+.gtab-all.active { background:rgba(0,214,143,.1); }
+
+.group-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px; }
+.group-card { background:#0d1828;border:1px solid var(--card-bd);border-radius:10px;padding:14px; }
+.group-card-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:10px; }
+.group-card-name { font-size:0.88rem;font-weight:800;color:var(--text); }
+.group-count { font-size:0.72rem;color:var(--text-dim);margin-left:6px; }
+.group-add-row { display:flex;gap:6px;margin-bottom:10px; }
+.group-tickers { display:flex;flex-direction:column;gap:5px; }
+.gticker-row { display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#060a10;border-radius:6px; }
+.gticker-sym { font-size:0.82rem;font-weight:700;color:var(--blue); }
+.gticker-name { font-size:0.72rem;color:var(--text-dim);flex:1;margin:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.gticker-pct { font-size:0.8rem;font-weight:700; }
+.gticker-actions { display:flex;gap:4px; }
+
+/* ── PORTFOLIO section ─────────────────────────── */
+.port-toolbar { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px; }
+.port-summary { display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px; }
+.sum-card { background:#0d1828;border:1px solid var(--card-bd);border-radius:10px;padding:14px; }
+.sum-label { font-size:0.72rem;color:var(--text-dim);margin-bottom:4px; }
+.sum-val { font-size:1.15rem;font-weight:800;color:var(--text); }
+.sum-val.green { color:var(--green); }
+.sum-val.red { color:var(--red); }
+
+.port-table-wrap { overflow-x:auto;margin-bottom:24px; }
+.port-table { width:100%;border-collapse:collapse;font-size:0.82rem; }
+.port-table th { padding:8px 10px;background:#0d1828;color:var(--text-dim);font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--card-bd);white-space:nowrap;text-align:right; }
+.port-table th:first-child { text-align:left; }
+.port-table td { padding:9px 10px;border-bottom:1px solid rgba(21,32,48,.6);color:var(--text);text-align:right;vertical-align:middle; }
+.port-table td:first-child { text-align:left; }
+.port-table tr:hover td { background:rgba(61,142,248,.04); }
+.port-table tr.total-row td { background:#0d1828;font-weight:800;color:var(--text);border-top:1px solid var(--card-bd2); }
+.port-sym { font-weight:800;color:var(--blue);cursor:pointer; }
+.port-sym:hover { text-decoration:underline; }
+.port-name { font-size:0.72rem;color:var(--text-dim); }
+.port-group-badge { display:inline-block;padding:2px 7px;border-radius:10px;font-size:0.68rem;font-weight:700;background:rgba(61,142,248,.1);color:var(--blue);border:1px solid rgba(61,142,248,.2); }
+.price-loading { color:var(--text-dim);font-size:0.78rem; }
+
+.chart-row { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+@media(max-width:900px){.chart-row{grid-template-columns:1fr;}}
+#pieChart,#barChart { height:320px; }
+
+/* ── COMPARE section ─────────────────────────── */
+.cmp-toolbar { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:20px; }
+.cmp-inputs { display:flex;gap:6px;flex-wrap:wrap; }
+.cmp-table-wrap { overflow-x:auto; }
+.cmp-table { width:100%;border-collapse:collapse;font-size:0.82rem; }
+.cmp-table th { padding:10px 12px;text-align:center;border-bottom:2px solid var(--card-bd2);color:var(--text-dim);font-size:0.74rem;font-weight:700;white-space:nowrap; }
+.cmp-table th.row-label { text-align:left;color:var(--text-mid); }
+.cmp-table td { padding:9px 12px;text-align:center;border-bottom:1px solid rgba(21,32,48,.6);color:var(--text);white-space:nowrap; }
+.cmp-table td.row-label { text-align:left;color:var(--text-dim);font-size:0.78rem;font-weight:600; }
+.cmp-table tr:hover td { background:rgba(61,142,248,.04); }
+.cmp-table th.ticker-head { background:#0d1828;color:var(--text);font-size:0.88rem; }
+.cmp-best { color:var(--green);font-weight:800; }
+.cmp-worst { color:var(--red); }
+.cmp-sig { display:inline-block;padding:3px 9px;border-radius:12px;font-size:0.75rem;font-weight:700; }
+.sv-strong-buy { background:rgba(0,214,143,.15);color:var(--green); }
+.sv-buy        { background:rgba(61,142,248,.12);color:var(--blue); }
+.sv-hold       { background:rgba(240,180,41,.1);color:var(--yellow); }
+.sv-caution    { background:rgba(232,70,70,.1);color:var(--red); }
+.bool-yes { color:var(--green);font-weight:800; }
+.bool-no  { color:var(--red); }
+.cmp-ticker-head { font-weight:900;color:var(--text);font-size:0.9rem; }
+.cmp-subname { font-size:0.7rem;color:var(--text-dim);font-weight:400; }
+.cmp-loading { text-align:center;padding:40px;color:var(--text-dim);font-size:0.9rem; }
+.cmp-section-divider td { background:rgba(21,32,48,.5);font-size:0.72rem;font-weight:800;color:var(--text-dim);letter-spacing:.5px;text-transform:uppercase;padding:5px 12px; }
+
+/* Modal */
+.modal-overlay { display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:500;justify-content:center;align-items:flex-start;padding-top:80px; }
+.modal-overlay.show { display:flex; }
+.modal { background:var(--card-bg);border:1px solid var(--card-bd2);border-radius:14px;padding:24px;width:100%;max-width:480px;position:relative; }
+.modal-title { font-size:1rem;font-weight:800;margin-bottom:18px; }
+.modal-close { position:absolute;top:14px;right:14px;background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer; }
+.modal-close:hover { color:var(--text); }
+.form-row { margin-bottom:12px; }
+.form-label { font-size:0.78rem;color:var(--text-dim);margin-bottom:5px;display:block; }
+.form-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+
+/* Toast */
+.toast { position:fixed;bottom:24px;right:24px;background:#0f1e30;border:1px solid var(--card-bd2);border-radius:9px;padding:12px 18px;font-size:0.84rem;color:var(--text);z-index:1000;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none;max-width:300px; }
+.toast.show { opacity:1;transform:translateY(0); }
+.toast.green { border-color:rgba(0,214,143,.4);color:var(--green); }
+.toast.red { border-color:rgba(232,70,70,.4);color:var(--red); }
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="pf-nav">
+  <div class="brand">US<span>STOCK</span></div>
+  <a class="nav-link" href="/">美股分析</a>
+  <a class="nav-link" href="/tw">台股分析</a>
+  <a class="nav-link active" href="/portfolio">投資組合</a>
+</nav>
+
+<div class="pf-body">
+  <!-- Page Title -->
+  <div style="margin-bottom:20px;">
+    <h1 style="font-size:1.3rem;font-weight:900;color:var(--text);">投資組合管理</h1>
+    <p style="color:var(--text-dim);font-size:0.84rem;margin-top:4px;">群組管理・持倉損益・多股比較　｜　資料即時更新，所有資料存放於本機</p>
+  </div>
+
+  <!-- Tabs -->
+  <div class="pf-tabs">
+    <button class="pf-tab active" onclick="switchTab('groups')">自選群組</button>
+    <button class="pf-tab" onclick="switchTab('portfolio')">持倉損益</button>
+    <button class="pf-tab" onclick="switchTab('compare')">多股比較</button>
+  </div>
+
+  <!-- ══ TAB: 自選群組 ══════════════════════════════════════ -->
+  <div id="tab-groups" class="pf-section active">
+    <div class="group-toolbar">
+      <button class="btn btn-primary btn-sm" onclick="openNewGroupModal()">＋ 新增群組</button>
+      <div class="group-tabs" id="groupFilterTabs">
+        <button class="gtab gtab-all active" onclick="filterGroup('__all__')">全部</button>
+      </div>
+    </div>
+    <div class="group-grid" id="groupGrid">
+      <div style="color:var(--text-dim);font-size:0.88rem;padding:20px;">尚無群組，點擊「新增群組」開始建立</div>
+    </div>
+  </div>
+
+  <!-- ══ TAB: 持倉損益 ══════════════════════════════════════ -->
+  <div id="tab-portfolio" class="pf-section">
+    <div class="port-toolbar">
+      <button class="btn btn-primary btn-sm" onclick="openAddHoldingModal()">＋ 新增持倉</button>
+      <button class="btn btn-ghost btn-sm" onclick="refreshPortfolioPrices()">↻ 更新報價</button>
+      <span id="portUpdateTime" style="font-size:0.76rem;color:var(--text-dim);margin-left:6px;"></span>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="port-summary" id="portSummary">
+      <div class="sum-card"><div class="sum-label">總市值</div><div class="sum-val" id="sumTotalVal">--</div></div>
+      <div class="sum-card"><div class="sum-label">總成本</div><div class="sum-val" id="sumTotalCost">--</div></div>
+      <div class="sum-card"><div class="sum-label">未實現損益</div><div class="sum-val" id="sumPnL">--</div></div>
+      <div class="sum-card"><div class="sum-label">報酬率</div><div class="sum-val" id="sumRetPct">--</div></div>
+      <div class="sum-card"><div class="sum-label">持倉標的數</div><div class="sum-val" id="sumCount">--</div></div>
+    </div>
+
+    <!-- Holdings Table -->
+    <div class="card">
+      <div class="card-title"><span class="icon">📋</span>持倉明細</div>
+      <div class="port-table-wrap">
+        <table class="port-table">
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th>群組</th>
+              <th>股數</th>
+              <th>成本均價</th>
+              <th>現價</th>
+              <th>損益 $</th>
+              <th>損益 %</th>
+              <th>市值</th>
+              <th>買入日</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="portTbody">
+            <tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:30px;">尚無持倉紀錄</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-row">
+      <div class="card">
+        <div class="card-title"><span class="icon">🥧</span>持倉配置（市值）</div>
+        <div id="pieChart"></div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">📊</span>各標的損益率 %</div>
+        <div id="barChart"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TAB: 多股比較 ══════════════════════════════════════ -->
+  <div id="tab-compare" class="pf-section">
+    <div class="card">
+      <div class="card-title"><span class="icon">⚖️</span>多股比較（最多 5 檔）</div>
+      <div class="cmp-toolbar">
+        <div class="cmp-inputs" id="cmpInputs">
+          <input class="inp inp-sm" style="width:110px" placeholder="AAPL">
+          <input class="inp inp-sm" style="width:110px" placeholder="MSFT">
+          <input class="inp inp-sm" style="width:110px" placeholder="NVDA">
+          <input class="inp inp-sm" style="width:110px" placeholder="(選填)">
+          <input class="inp inp-sm" style="width:110px" placeholder="(選填)">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="runCompare()">比較</button>
+        <button class="btn btn-ghost btn-sm" onclick="fillCompareFromPortfolio()">從持倉帶入</button>
+        <span style="font-size:0.76rem;color:var(--text-dim);">支援美股/台股代號（台股加 .TW）</span>
+      </div>
+      <div class="cmp-table-wrap">
+        <div id="cmpResult">
+          <div class="cmp-loading">輸入股票代碼後點擊「比較」</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Modal: 新增群組 ══ -->
+<div class="modal-overlay" id="newGroupModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('newGroupModal')">✕</button>
+    <div class="modal-title">新增自選群組</div>
+    <div class="form-row">
+      <label class="form-label">群組名稱</label>
+      <input class="inp" id="newGroupName" placeholder="例如：高息ETF、半導體、觀察中" style="width:100%"
+             onkeydown="if(event.key==='Enter')saveNewGroup()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <span style="font-size:0.76rem;color:var(--text-dim);">快速選擇：</span>
+      <button class="btn btn-ghost btn-sm" onclick="setGroupPreset('高息ETF')">高息ETF</button>
+      <button class="btn btn-ghost btn-sm" onclick="setGroupPreset('半導體')">半導體</button>
+      <button class="btn btn-ghost btn-sm" onclick="setGroupPreset('核心持倉')">核心持倉</button>
+      <button class="btn btn-ghost btn-sm" onclick="setGroupPreset('觀察中')">觀察中</button>
+      <button class="btn btn-ghost btn-sm" onclick="setGroupPreset('AI概念')">AI概念</button>
+    </div>
+    <button class="btn btn-primary" onclick="saveNewGroup()">建立群組</button>
+  </div>
+</div>
+
+<!-- ══ Modal: 新增標的到群組 ══ -->
+<div class="modal-overlay" id="addTickerModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('addTickerModal')">✕</button>
+    <div class="modal-title" id="addTickerModalTitle">加入標的</div>
+    <div class="form-row">
+      <label class="form-label">股票代碼</label>
+      <input class="inp" id="addTickerInput" placeholder="AAPL / 0056.TW / NVDA" style="width:100%"
+             onkeydown="if(event.key==='Enter')saveAddTicker()">
+    </div>
+    <button class="btn btn-primary" onclick="saveAddTicker()">加入</button>
+  </div>
+</div>
+
+<!-- ══ Modal: 新增持倉 ══ -->
+<div class="modal-overlay" id="addHoldingModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('addHoldingModal')">✕</button>
+    <div class="modal-title" id="addHoldingTitle">新增持倉</div>
+    <input type="hidden" id="editHoldingIdx" value="">
+    <div class="form-row">
+      <label class="form-label">股票代碼</label>
+      <input class="inp" id="holdingTicker" placeholder="AAPL / 0056.TW" style="width:100%">
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">股數 / 張數</label>
+        <input class="inp" id="holdingShares" type="number" min="0" step="1" placeholder="100" style="width:100%">
+      </div>
+      <div class="form-row">
+        <label class="form-label">成本均價</label>
+        <input class="inp" id="holdingCost" type="number" min="0" step="0.01" placeholder="150.00" style="width:100%">
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">買入日期</label>
+        <input class="inp" id="holdingDate" type="date" style="width:100%">
+      </div>
+      <div class="form-row">
+        <label class="form-label">群組（選填）</label>
+        <select class="inp" id="holdingGroup" style="width:100%">
+          <option value="">-- 不分群組 --</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">備註（選填）</label>
+      <input class="inp" id="holdingNote" placeholder="例如：定期定額" style="width:100%">
+    </div>
+    <button class="btn btn-primary" onclick="saveHolding()" style="width:100%">儲存持倉</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// DATA LAYER — localStorage
+// ═══════════════════════════════════════════
+const STORE_KEY = 'pflio_v2';
+function loadData() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || { groups: {}, holdings: [] }; }
+  catch { return { groups: {}, holdings: [] }; }
+}
+function saveData(d) { localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
+function getData() { return loadData(); }
+
+// ═══════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => { t.className = 'toast'; }, 2800);
+}
+
+// ═══════════════════════════════════════════
+// TAB
+// ═══════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.pf-tab').forEach((b,i) => b.classList.toggle('active', ['groups','portfolio','compare'][i]===name));
+  document.querySelectorAll('.pf-section').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if (name==='portfolio') { renderPortfolio(); refreshPortfolioPrices(); }
+  if (name==='groups')    renderGroups();
+}
+
+// ═══════════════════════════════════════════
+// MODAL HELPERS
+// ═══════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target===o) o.classList.remove('show'); }));
+
+// ═══════════════════════════════════════════
+// GROUPS
+// ═══════════════════════════════════════════
+let _groupFilter = '__all__';
+let _groupTickerPrices = {};
+
+function renderGroups() {
+  const d = getData();
+  const groups = d.groups || {};
+  const names = Object.keys(groups);
+
+  // Filter tabs
+  const tabs = document.getElementById('groupFilterTabs');
+  tabs.innerHTML = `<button class="gtab gtab-all ${_groupFilter==='__all__'?'active':''}" onclick="filterGroup('__all__')">全部</button>`;
+  names.forEach(n => {
+    tabs.innerHTML += `<button class="gtab ${_groupFilter===n?'active':''}" onclick="filterGroup('${esc(n)}')">${esc(n)} <span style="color:var(--text-dim)">${(groups[n]||[]).length}</span></button>`;
+  });
+
+  // Group cards
+  const grid = document.getElementById('groupGrid');
+  const display = _groupFilter === '__all__' ? names : [_groupFilter];
+  if (display.length === 0) {
+    grid.innerHTML = '<div style="color:var(--text-dim);font-size:0.88rem;padding:20px;">尚無群組，點擊「新增群組」開始建立</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  display.forEach(name => {
+    const tickers = groups[name] || [];
+    const card = document.createElement('div');
+    card.className = 'group-card';
+    card.innerHTML = `
+      <div class="group-card-head">
+        <div><span class="group-card-name">${esc(name)}</span><span class="group-count">${tickers.length} 檔</span></div>
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-ghost btn-sm" onclick="openAddTickerToGroup('${esc(name)}')">＋</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteGroup('${esc(name)}')">刪除</button>
+        </div>
+      </div>
+      <div class="group-add-row">
+        <input class="inp inp-sm" id="ginput_${esc(name)}" placeholder="股票代碼" style="flex:1" onkeydown="if(event.key==='Enter')addTickerToGroup('${esc(name)}')">
+        <button class="btn btn-green btn-sm" onclick="addTickerToGroup('${esc(name)}')">加入</button>
+      </div>
+      <div class="group-tickers" id="gtickers_${esc(name)}">
+        ${tickers.length ? '' : '<div style="color:var(--text-dim);font-size:0.76rem;padding:4px;">尚無標的</div>'}
+      </div>`;
+    grid.appendChild(card);
+
+    const tickerContainer = card.querySelector(`#gtickers_${CSS.escape(name)}`);
+    tickers.forEach(ticker => {
+      const row = document.createElement('div');
+      row.className = 'gticker-row';
+      const cached = _groupTickerPrices[ticker];
+      const pctHtml = cached
+        ? `<span class="gticker-pct ${cached.pct>=0?'green':'red'}">${cached.pct>=0?'+':''}${cached.pct?.toFixed(2)}%</span>`
+        : `<span class="gticker-pct" style="color:var(--text-dim)">--</span>`;
+      row.innerHTML = `
+        <span class="gticker-sym">${esc(ticker)}</span>
+        <span class="gticker-name">${cached ? esc(cached.name||'') : ''}</span>
+        ${pctHtml}
+        <div class="gticker-actions">
+          <button class="btn btn-ghost btn-sm" onclick="goAnalyze('${esc(ticker)}')">查看</button>
+          <button class="btn btn-danger btn-sm" onclick="removeFromGroup('${esc(name)}','${esc(ticker)}')">✕</button>
+        </div>`;
+      tickerContainer.appendChild(row);
+    });
+  });
+
+  // Fetch prices for visible tickers
+  const allTickers = display.flatMap(n => groups[n] || []);
+  const unique = [...new Set(allTickers)].filter(t => !_groupTickerPrices[t]);
+  if (unique.length) fetchGroupPrices(unique);
+}
+
+async function fetchGroupPrices(tickers) {
+  for (const t of tickers) {
+    try {
+      const isTw = t.endsWith('.TW') || t.endsWith('.TWO');
+      const url = isTw ? `/api/tw/realtime/${t}` : `/api/stock/${t}`;
+      const r = await fetch(url);
+      const j = await r.json();
+      _groupTickerPrices[t] = { price: j.price, pct: j.changePct, name: j.name };
+    } catch {}
+  }
+  renderGroups();
+}
+
+function filterGroup(name) {
+  _groupFilter = name;
+  renderGroups();
+}
+
+function openNewGroupModal() {
+  document.getElementById('newGroupName').value = '';
+  openModal('newGroupModal');
+  setTimeout(() => document.getElementById('newGroupName').focus(), 100);
+}
+function setGroupPreset(name) { document.getElementById('newGroupName').value = name; }
+function saveNewGroup() {
+  const name = document.getElementById('newGroupName').value.trim();
+  if (!name) { showToast('請輸入群組名稱', 'red'); return; }
+  const d = getData();
+  if (d.groups[name]) { showToast('群組已存在', 'red'); return; }
+  d.groups[name] = [];
+  saveData(d);
+  closeModal('newGroupModal');
+  renderGroups();
+  showToast(`群組「${name}」建立成功`, 'green');
+}
+
+let _addTickerTargetGroup = '';
+function openAddTickerToGroup(groupName) {
+  _addTickerTargetGroup = groupName;
+  document.getElementById('addTickerModalTitle').textContent = `加入標的 → ${groupName}`;
+  document.getElementById('addTickerInput').value = '';
+  openModal('addTickerModal');
+  setTimeout(() => document.getElementById('addTickerInput').focus(), 100);
+}
+function saveAddTicker() {
+  const ticker = document.getElementById('addTickerInput').value.trim().toUpperCase();
+  if (!ticker) return;
+  addTickerToGroupByName(_addTickerTargetGroup, ticker);
+  closeModal('addTickerModal');
+}
+
+function addTickerToGroup(groupName) {
+  const inp = document.getElementById(`ginput_${groupName}`);
+  const ticker = (inp?.value || '').trim().toUpperCase();
+  if (!ticker) return;
+  addTickerToGroupByName(groupName, ticker);
+  if (inp) inp.value = '';
+}
+
+function addTickerToGroupByName(groupName, ticker) {
+  const d = getData();
+  if (!d.groups[groupName]) d.groups[groupName] = [];
+  if (d.groups[groupName].includes(ticker)) { showToast(`${ticker} 已在群組中`, 'red'); return; }
+  d.groups[groupName].push(ticker);
+  saveData(d);
+  renderGroups();
+  showToast(`已加入 ${ticker} 到「${groupName}」`, 'green');
+}
+
+function removeFromGroup(groupName, ticker) {
+  const d = getData();
+  if (!d.groups[groupName]) return;
+  d.groups[groupName] = d.groups[groupName].filter(t => t !== ticker);
+  saveData(d);
+  renderGroups();
+  showToast(`已移除 ${ticker}`, '');
+}
+
+function deleteGroup(name) {
+  if (!confirm(`確定要刪除群組「${name}」嗎？（標的不會刪除）`)) return;
+  const d = getData();
+  delete d.groups[name];
+  saveData(d);
+  if (_groupFilter === name) _groupFilter = '__all__';
+  renderGroups();
+  showToast(`群組「${name}」已刪除`);
+}
+
+function goAnalyze(ticker) {
+  const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO');
+  const code = ticker.replace('.TW','').replace('.TWO','');
+  window.open(isTw ? `/tw?t=${code}` : `/?t=${ticker}`, '_blank');
+}
+
+// ═══════════════════════════════════════════
+// PORTFOLIO
+// ═══════════════════════════════════════════
+let _portPrices = {};
+
+function openAddHoldingModal(idx) {
+  const d = getData();
+  document.getElementById('addHoldingTitle').textContent = idx != null ? '編輯持倉' : '新增持倉';
+  document.getElementById('editHoldingIdx').value = idx != null ? idx : '';
+  document.getElementById('holdingTicker').value = '';
+  document.getElementById('holdingShares').value = '';
+  document.getElementById('holdingCost').value = '';
+  document.getElementById('holdingDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('holdingNote').value = '';
+
+  // Populate group select
+  const sel = document.getElementById('holdingGroup');
+  sel.innerHTML = '<option value="">-- 不分群組 --</option>';
+  Object.keys(d.groups || {}).forEach(g => {
+    sel.innerHTML += `<option value="${esc(g)}">${esc(g)}</option>`;
+  });
+
+  if (idx != null) {
+    const h = d.holdings[idx];
+    document.getElementById('holdingTicker').value = h.ticker;
+    document.getElementById('holdingShares').value = h.shares;
+    document.getElementById('holdingCost').value = h.costPrice;
+    document.getElementById('holdingDate').value = h.buyDate || '';
+    document.getElementById('holdingNote').value = h.note || '';
+    sel.value = h.group || '';
+  }
+  openModal('addHoldingModal');
+  setTimeout(() => document.getElementById('holdingTicker').focus(), 100);
+}
+
+function saveHolding() {
+  const ticker = document.getElementById('holdingTicker').value.trim().toUpperCase();
+  const shares = parseFloat(document.getElementById('holdingShares').value);
+  const cost   = parseFloat(document.getElementById('holdingCost').value);
+  const date   = document.getElementById('holdingDate').value;
+  const group  = document.getElementById('holdingGroup').value;
+  const note   = document.getElementById('holdingNote').value.trim();
+
+  if (!ticker) { showToast('請輸入股票代碼', 'red'); return; }
+  if (!shares || shares <= 0) { showToast('請輸入有效股數', 'red'); return; }
+  if (!cost || cost <= 0) { showToast('請輸入成本均價', 'red'); return; }
+
+  const d = getData();
+  const entry = { ticker, shares, costPrice: cost, buyDate: date, group, note };
+  const idx = document.getElementById('editHoldingIdx').value;
+
+  if (idx !== '') {
+    d.holdings[parseInt(idx)] = entry;
+    showToast('持倉已更新', 'green');
+  } else {
+    d.holdings.push(entry);
+    showToast(`已加入 ${ticker}`, 'green');
+  }
+  saveData(d);
+  closeModal('addHoldingModal');
+  renderPortfolio();
+  refreshPortfolioPrices();
+}
+
+function deleteHolding(idx) {
+  const d = getData();
+  const h = d.holdings[idx];
+  if (!confirm(`確定刪除 ${h.ticker} 的持倉紀錄？`)) return;
+  d.holdings.splice(idx, 1);
+  saveData(d);
+  renderPortfolio();
+  showToast('已刪除', '');
+}
+
+function renderPortfolio() {
+  const d = getData();
+  const holdings = d.holdings || [];
+  const tbody = document.getElementById('portTbody');
+
+  if (holdings.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:30px;">尚無持倉紀錄，點擊「新增持倉」開始記錄</td></tr>';
+    document.getElementById('sumTotalVal').textContent = '--';
+    document.getElementById('sumTotalCost').textContent = '--';
+    document.getElementById('sumPnL').textContent = '--';
+    document.getElementById('sumRetPct').textContent = '--';
+    document.getElementById('sumCount').textContent = '0';
+    document.getElementById('pieChart').innerHTML = '';
+    document.getElementById('barChart').innerHTML = '';
+    return;
+  }
+
+  let totalVal = 0, totalCost = 0;
+  tbody.innerHTML = '';
+
+  holdings.forEach((h, i) => {
+    const p = _portPrices[h.ticker];
+    const currentPrice = p ? p.price : null;
+    const cost = h.shares * h.costPrice;
+    const val  = currentPrice != null ? h.shares * currentPrice : null;
+    const pnl  = val != null ? val - cost : null;
+    const pnlPct = pnl != null ? (pnl / cost * 100) : null;
+
+    if (cost > 0) totalCost += cost;
+    if (val != null) totalVal += val;
+
+    const priceHtml = currentPrice != null
+      ? `<span>${fmt(currentPrice)}</span>` + (p.pct != null
+          ? `<span style="font-size:0.7rem;color:${p.pct>=0?'var(--green)':'var(--red)'};margin-left:4px;">${p.pct>=0?'+':''}${p.pct?.toFixed(2)}%</span>` : '')
+      : `<span class="price-loading">載入中…</span>`;
+
+    const pnlHtml = pnl != null
+      ? `<span class="${pnl>=0?'green':'red'}">${pnl>=0?'+':''}${fmtK(pnl)}</span>`
+      : '<span style="color:var(--text-dim)">--</span>';
+    const pctHtml = pnlPct != null
+      ? `<span class="${pnlPct>=0?'green':'red'}">${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span>`
+      : '<span style="color:var(--text-dim)">--</span>';
+    const valHtml = val != null ? fmtK(val) : '<span style="color:var(--text-dim)">--</span>';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <div class="port-sym" onclick="goAnalyze('${esc(h.ticker)}')">${esc(h.ticker)}</div>
+        <div class="port-name">${esc(p?.name || h.note || '')}</div>
+      </td>
+      <td>${h.group ? `<span class="port-group-badge">${esc(h.group)}</span>` : '<span style="color:var(--text-dim)">--</span>'}</td>
+      <td>${fmtNum(h.shares)}</td>
+      <td>${fmt(h.costPrice)}</td>
+      <td>${priceHtml}</td>
+      <td>${pnlHtml}</td>
+      <td>${pctHtml}</td>
+      <td>${valHtml}</td>
+      <td style="color:var(--text-dim);font-size:0.76rem;">${h.buyDate || '--'}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="openAddHoldingModal(${i})">編輯</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteHolding(${i})">刪除</button>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Total row
+  const totalPnL = totalVal > 0 ? totalVal - totalCost : null;
+  const totalPct = totalPnL != null && totalCost > 0 ? totalPnL / totalCost * 100 : null;
+  const tr = document.createElement('tr');
+  tr.className = 'total-row';
+  tr.innerHTML = `
+    <td colspan="6" style="text-align:right;color:var(--text-dim);font-size:0.76rem;">合計</td>
+    <td><span class="${totalPct>=0?'green':'red'}">${totalPct!=null?(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%':'--'}</span></td>
+    <td>${totalVal>0?fmtK(totalVal):'--'}</td>
+    <td colspan="2"></td>`;
+  tbody.appendChild(tr);
+
+  // Summary cards
+  document.getElementById('sumTotalVal').textContent = totalVal > 0 ? fmtK(totalVal) : '--';
+  document.getElementById('sumTotalCost').textContent = totalCost > 0 ? fmtK(totalCost) : '--';
+  document.getElementById('sumCount').textContent = holdings.length;
+  if (totalPnL != null) {
+    const el = document.getElementById('sumPnL');
+    el.textContent = (totalPnL >= 0 ? '+' : '') + fmtK(totalPnL);
+    el.className = 'sum-val ' + (totalPnL >= 0 ? 'green' : 'red');
+  }
+  if (totalPct != null) {
+    const el = document.getElementById('sumRetPct');
+    el.textContent = (totalPct >= 0 ? '+' : '') + totalPct.toFixed(2) + '%';
+    el.className = 'sum-val ' + (totalPct >= 0 ? 'green' : 'red');
+  }
+
+  renderCharts(holdings);
+}
+
+function renderCharts(holdings) {
+  const hasPrices = holdings.some(h => _portPrices[h.ticker]);
+  if (!hasPrices) return;
+
+  const labels = [], vals = [], pcts = [], colors = [];
+  const palette = ['#3d8ef8','#00d68f','#f0b429','#9f6aeb','#e84646','#1ac8f0','#e8c84a','#8e44ad','#27ae60','#e67e22'];
+
+  holdings.forEach((h, i) => {
+    const p = _portPrices[h.ticker];
+    if (!p || !p.price) return;
+    const val = h.shares * p.price;
+    const pnlPct = (p.price / h.costPrice - 1) * 100;
+    labels.push(h.ticker);
+    vals.push(val);
+    pcts.push(parseFloat(pnlPct.toFixed(2)));
+    colors.push(palette[i % palette.length]);
+  });
+
+  if (labels.length === 0) return;
+
+  // Pie
+  Plotly.newPlot('pieChart', [{
+    type: 'pie', labels, values: vals,
+    marker: { colors },
+    textinfo: 'label+percent',
+    hovertemplate: '%{label}<br>市值：%{value:,.0f}<br>佔比：%{percent}<extra></extra>',
+    hole: 0.35,
+  }], {
+    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+    margin: {t:10,b:10,l:10,r:10},
+    legend: { font: { color: '#7a9ab8', size: 11 } },
+    showlegend: true,
+  }, { displayModeBar: false, responsive: true });
+
+  // Bar
+  const barColors = pcts.map(p => p >= 0 ? '#00d68f' : '#e84646');
+  Plotly.newPlot('barChart', [{
+    type: 'bar', x: labels, y: pcts,
+    marker: { color: barColors },
+    text: pcts.map(p => (p>=0?'+':'')+p.toFixed(2)+'%'),
+    textposition: 'outside',
+    hovertemplate: '%{x}<br>損益率：%{y:.2f}%<extra></extra>',
+  }], {
+    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+    margin: {t:10,b:40,l:40,r:10},
+    xaxis: { color: '#7a9ab8', gridcolor: '#152030' },
+    yaxis: { color: '#7a9ab8', gridcolor: '#152030', ticksuffix: '%' },
+    bargap: 0.35,
+  }, { displayModeBar: false, responsive: true });
+}
+
+async function refreshPortfolioPrices() {
+  const d = getData();
+  const holdings = d.holdings || [];
+  if (holdings.length === 0) return;
+
+  document.getElementById('portUpdateTime').textContent = '更新中…';
+  const tickers = [...new Set(holdings.map(h => h.ticker))];
+
+  await Promise.all(tickers.map(async ticker => {
+    try {
+      const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO');
+      const url = isTw ? `/api/tw/realtime/${ticker}` : `/api/stock/${ticker}`;
+      const r = await fetch(url);
+      const j = await r.json();
+      _portPrices[ticker] = { price: j.price, pct: j.changePct, name: j.name };
+    } catch {}
+  }));
+
+  renderPortfolio();
+  document.getElementById('portUpdateTime').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW');
+}
+
+// ═══════════════════════════════════════════
+// COMPARE
+// ═══════════════════════════════════════════
+async function runCompare() {
+  const inputs = document.querySelectorAll('#cmpInputs input');
+  const tickers = [...inputs].map(i => i.value.trim().toUpperCase()).filter(Boolean);
+  if (tickers.length < 2) { showToast('請至少輸入 2 個股票代碼', 'red'); return; }
+
+  const res = document.getElementById('cmpResult');
+  res.innerHTML = '<div class="cmp-loading">載入中，請稍候…</div>';
+
+  try {
+    const resp = await fetch(`/api/compare?tickers=${tickers.join(',')}`);
+    const data = await resp.json();
+    renderCompareTable(data);
+  } catch (e) {
+    res.innerHTML = `<div class="cmp-loading" style="color:var(--red)">載入失敗：${e.message}</div>`;
+  }
+}
+
+function fillCompareFromPortfolio() {
+  const d = getData();
+  const tickers = [...new Set((d.holdings || []).map(h => h.ticker))].slice(0, 5);
+  const inputs = document.querySelectorAll('#cmpInputs input');
+  inputs.forEach((inp, i) => { inp.value = tickers[i] || ''; });
+  if (tickers.length >= 2) runCompare();
+}
+
+function renderCompareTable(stocks) {
+  const container = document.getElementById('cmpResult');
+  if (!stocks || stocks.length === 0) { container.innerHTML = '<div class="cmp-loading">無資料</div>'; return; }
+
+  const cols = stocks.length;
+  const errors = stocks.filter(s => s.error);
+  if (errors.length === cols) {
+    container.innerHTML = `<div class="cmp-loading" style="color:var(--red)">所有股票載入失敗</div>`;
+    return;
+  }
+
+  // Helper: find best/worst index for a metric (higher = better if ascending=true)
+  function markBestWorst(vals, ascending) {
+    const numVals = vals.map((v,i) => ({v: parseFloat(v), i})).filter(x => !isNaN(x.v) && x.v !== 0);
+    if (numVals.length < 2) return vals.map(() => '');
+    const sorted = [...numVals].sort((a,b) => ascending ? b.v - a.v : a.v - b.v);
+    const bestIdx  = sorted[0].i;
+    const worstIdx = sorted[sorted.length-1].i;
+    return vals.map((_,i) => i === bestIdx ? 'cmp-best' : i === worstIdx ? 'cmp-worst' : '');
+  }
+
+  const rows = [
+    { label: '── 價格行情', section: true },
+    { label: '現價', key: 'price', fmt: v => v ? fmt(v) : '--', asc: null },
+    { label: '今日漲跌', key: 'changePct', fmt: v => v!=null ? `${v>=0?'+':''}${v.toFixed(2)}%` : '--', asc: true },
+    { label: '距52週高點', key: 'from52High', fmt: v => v!=null ? `${v.toFixed(1)}%` : '--', asc: true },
+    { label: '── 估值', section: true },
+    { label: '本益比（TTM）', key: 'pe', fmt: v => v > 0 ? v.toFixed(1)+'x' : '--', asc: false },
+    { label: '預估本益比', key: 'fwdPe', fmt: v => v > 0 ? v.toFixed(1)+'x' : '--', asc: false },
+    { label: '分析師目標', key: 'analystTarget', fmt: v => v > 0 ? fmt(v) : '--', asc: null },
+    { label: '上漲空間', key: 'upside', fmt: v => v != 0 ? `${v>=0?'+':''}${v.toFixed(1)}%` : '--', asc: true },
+    { label: '── 基本面', section: true },
+    { label: 'ROE', key: 'roe', fmt: v => v ? v.toFixed(1)+'%' : '--', asc: true },
+    { label: '淨利率', key: 'profitMargin', fmt: v => v ? v.toFixed(1)+'%' : '--', asc: true },
+    { label: '營收成長', key: 'revGrowth', fmt: v => v != null ? `${v>=0?'+':''}${v.toFixed(1)}%` : '--', asc: true },
+    { label: '殖利率', key: 'divYield', fmt: v => v > 0 ? v.toFixed(2)+'%' : '--', asc: true },
+    { label: '機構持股', key: 'instPct', fmt: v => v > 0 ? v.toFixed(1)+'%' : '--', asc: null },
+    { label: 'Beta 波動', key: 'beta', fmt: v => v > 0 ? v.toFixed(2) : '--', asc: null },
+    { label: '── 技術面', section: true },
+    { label: 'RSI', key: 'rsi', fmt: v => v ? v.toFixed(1) : '--', asc: null },
+    { label: 'MACD', key: 'macdBull', fmt: v => v ? '<span class="bool-yes">金叉↑</span>' : '<span class="bool-no">死叉↓</span>', asc: null, html: true },
+    { label: '站穩 MA20', key: 'aboveMa20', fmt: v => v ? '<span class="bool-yes">✓</span>' : '<span class="bool-no">✗</span>', asc: null, html: true },
+    { label: '站穩 MA60', key: 'aboveMa60', fmt: v => v ? '<span class="bool-yes">✓</span>' : '<span class="bool-no">✗</span>', asc: null, html: true },
+    { label: '量比', key: 'volRatio', fmt: v => v ? v.toFixed(2)+'x' : '--', asc: true },
+    { label: '── 綜合', section: true },
+    { label: '技術信號', key: 'signal', fmt: (v, s) => `<span class="cmp-sig ${s.signalCls}">${v||'--'}</span>`, asc: null, html: true },
+  ];
+
+  let html = '<table class="cmp-table"><thead><tr><th class="row-label">指標</th>';
+  stocks.forEach(s => {
+    html += s.error
+      ? `<th class="ticker-head"><div class="cmp-ticker-head">${esc(s.ticker)}</div><div class="cmp-subname" style="color:var(--red)">載入失敗</div></th>`
+      : `<th class="ticker-head"><div class="cmp-ticker-head">${esc(s.ticker)}</div><div class="cmp-subname">${esc(s.name||'')}</div></th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  rows.forEach(row => {
+    if (row.section) {
+      html += `<tr><td class="cmp-section-divider" colspan="${cols+1}">${row.label.replace('── ','')}</td></tr>`;
+      return;
+    }
+
+    const vals = stocks.map(s => s.error ? '--' : s[row.key]);
+    let classes = Array(cols).fill('');
+    if (row.asc !== null) {
+      classes = markBestWorst(vals, row.asc);
+    }
+
+    html += `<tr><td class="row-label">${row.label}</td>`;
+    stocks.forEach((s, i) => {
+      if (s.error) { html += '<td style="color:var(--text-dim)">--</td>'; return; }
+      const v = s[row.key];
+      const cell = row.fmt(v, s);
+      if (row.html) {
+        html += `<td class="${classes[i]}">${cell}</td>`;
+      } else {
+        html += `<td class="${classes[i]}">${esc(String(cell))}</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmt(v) { if (!v && v!==0) return '--'; return parseFloat(v).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtK(v) { const n=parseFloat(v); if(isNaN(n)) return '--'; if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+'M'; if(Math.abs(n)>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(0); }
+function fmtNum(v) { return parseFloat(v).toLocaleString('en-US'); }
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+renderGroups();
+</script>
+</body>
+</html>
