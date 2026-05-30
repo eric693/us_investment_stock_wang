@@ -292,14 +292,14 @@ a:hover { text-decoration: underline; }
   border-left: 3px solid var(--card-bd2);
 }
 .con-item.star     { border-left-color: var(--gold); }
-.con-item.positive { border-left-color: var(--green); }
-.con-item.negative { border-left-color: var(--red); }
+.con-item.positive { border-left-color: var(--red); }
+.con-item.negative { border-left-color: var(--green); }
 .con-item.warning  { border-left-color: var(--yellow); }
 .con-item.neutral  { border-left-color: var(--text-dim); }
 .con-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .con-item.star     .con-dot { background: var(--gold); }
-.con-item.positive .con-dot { background: var(--green); }
-.con-item.negative .con-dot { background: var(--red); }
+.con-item.positive .con-dot { background: var(--red); }
+.con-item.negative .con-dot { background: var(--green); }
 .con-item.warning  .con-dot { background: var(--yellow); }
 .con-item.neutral  .con-dot { background: var(--text-dim); }
 .con-text { font-size: 0.88rem; color: var(--text); line-height: 1.4; }
@@ -314,8 +314,8 @@ a:hover { text-decoration: underline; }
 }
 .perf-label  { font-size: 0.67rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
 .perf-value  { font-size: 1.1rem; font-weight: 800; }
-.perf-chip.pos-chip { border-top: 2px solid var(--green); }
-.perf-chip.neg-chip { border-top: 2px solid var(--red); }
+.perf-chip.pos-chip { border-top: 2px solid var(--red); }
+.perf-chip.neg-chip { border-top: 2px solid var(--green); }
 .perf-chip.neu-chip { border-top: 2px solid var(--text-dim); }
 
 /* ── Info Metrics (shared) ───────────────────────────────────────── */
@@ -538,8 +538,8 @@ a:hover { text-decoration: underline; }
 .qtable td:first-child { text-align: left; color: var(--text-dim); font-size: 0.75rem; }
 .qtable tr:last-child td { border-bottom: none; }
 .qtable .q-val { font-weight: 700; color: var(--text); }
-.qtable .q-chg.pos { color: var(--green); }
-.qtable .q-chg.neg { color: var(--red); }
+.qtable .q-chg.pos { color: var(--red); }
+.qtable .q-chg.neg { color: var(--green); }
 
 /* ── Volume Analysis ──────────────────────────────────────────────── */
 .vol-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -555,17 +555,17 @@ a:hover { text-decoration: underline; }
 /* ── Scenarios ────────────────────────────────────────────────────── */
 .scenario { padding: 12px 14px; border-radius: 8px; margin-bottom: 9px; border-left: 3px solid; background: #080e1e; }
 .scenario:last-child { margin-bottom: 0; }
-.bull-s { border-color: var(--green); }
+.bull-s { border-color: var(--red); }
 .neut-s { border-color: var(--yellow); }
-.bear-s { border-color: var(--red); }
+.bear-s { border-color: var(--green); }
 .sc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .sc-badge {
   padding: 2px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 800;
   letter-spacing: 0.5px; text-transform: uppercase;
 }
-.bull-s .sc-badge { background: rgba(0,214,143,.15); color: var(--green); border: 1px solid rgba(0,214,143,.25); }
+.bull-s .sc-badge { background: rgba(232,70,70,.15);  color: var(--red);   border: 1px solid rgba(232,70,70,.25); }
 .neut-s .sc-badge { background: rgba(240,180,41,.15); color: var(--yellow); border: 1px solid rgba(240,180,41,.25); }
-.bear-s .sc-badge { background: rgba(232,70,70,.15);  color: var(--red);    border: 1px solid rgba(232,70,70,.25); }
+.bear-s .sc-badge { background: rgba(0,214,143,.15);  color: var(--green);  border: 1px solid rgba(0,214,143,.25); }
 .sc-name   { font-size: 0.86rem; font-weight: 700; color: var(--text); }
 .sc-prob   { margin-left: auto; font-size: 0.72rem; font-weight: 700; }
 .sc-target { font-size: 0.88rem; margin-bottom: 4px; font-weight: 600; }
@@ -590,7 +590,7 @@ a:hover { text-decoration: underline; }
   background: #07101c; border: 1px solid var(--card-bd2);
   border-top: 3px solid;
 }
-.long-t  { border-top-color: var(--green); }
+.long-t  { border-top-color: var(--red); }
 .swing-t { border-top-color: var(--blue); }
 .short-t { border-top-color: var(--yellow); }
 .st-badge {
@@ -598,7 +598,7 @@ a:hover { text-decoration: underline; }
   font-size: 0.67rem; font-weight: 800; letter-spacing: 0.5px;
   text-transform: uppercase; margin-bottom: 8px;
 }
-.long-t  .st-badge { background: rgba(0,214,143,.12); color: var(--green); }
+.long-t  .st-badge { background: rgba(232,70,70,.12); color: var(--red); }
 .swing-t .st-badge { background: rgba(61,142,248,.12); color: var(--blue); }
 .short-t .st-badge { background: rgba(240,180,41,.12); color: var(--yellow); }
 .st-desc { font-size: 0.75rem; color: var(--text-mid); line-height: 1.5; }
@@ -655,7 +655,7 @@ a:hover { text-decoration: underline; }
 }
 .iv-signal-en { font-size: 0.9rem; font-weight: 900; letter-spacing: 1px; opacity: 0.7; }
 .iv-signal-cn { font-size: 1.6rem; font-weight: 900; margin-top: 2px; }
-.sv-strong-buy { border-color: var(--green); background: rgba(0,214,143,0.08); color: var(--green); }
+.sv-strong-buy { border-color: var(--red); background: rgba(232,70,70,0.08); color: var(--red); }
 .sv-buy        { border-color: #50c8ff;      background: rgba(80,200,255,0.08); color: #50c8ff; }
 .sv-hold       { border-color: var(--yellow); background: rgba(240,180,41,0.08); color: var(--yellow); }
 .sv-caution    { border-color: #ff8040;      background: rgba(255,128,64,0.08); color: #ff8040; }
@@ -732,8 +732,8 @@ a:hover { text-decoration: underline; }
 .ft-m-val   { font-size: 0.9rem; font-weight: 800; }
 .ft-m-bar-bg  { width: 80px; height: 3px; background: var(--card-bd2); border-radius: 2px; overflow: hidden; }
 .ft-m-bar-fill { height: 100%; border-radius: 2px; }
-.trend-up { color: var(--green); font-weight: 800; }
-.trend-dn { color: var(--red);   font-weight: 800; }
+.trend-up { color: var(--red);   font-weight: 800; }
+.trend-dn { color: var(--green); font-weight: 800; }
 
 /* ── Risks Enhanced ───────────────────────────────────────────────── */
 .risk-left { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
