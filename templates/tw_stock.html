@@ -1507,19 +1507,28 @@ function renderTradingView(d) {
   card.classList.remove('hidden');
   _tvSymbol = twTickerToTV(d.ticker);
   $('tvSymLabel').textContent = _tvSymbol;
+
+  // 台股 TradingView 嵌入 widget 需付費訂閱，改顯示外部連結
+  $('tvTfTabs').style.opacity = '0.35';
+  $('tvTfTabs').style.pointerEvents = 'none';
+  document.querySelectorAll('.tv-ind-badge').forEach(b => { b.style.opacity='0.35'; b.style.pointerEvents='none'; });
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(_tvSymbol)}`;
+  $('tvChartContainer').innerHTML = '';
   const warn = $('tvUnsupportedWarn');
-  if (_isTVUnsupported(d.ticker)) {
-    $('tvChartContainer').innerHTML = '';
-    $('tvTfTabs').style.opacity = '0.35';
-    $('tvTfTabs').style.pointerEvents = 'none';
-    document.querySelectorAll('.tv-ind-badge').forEach(b => { b.style.opacity='0.35'; b.style.pointerEvents='none'; });
-    if (warn) warn.classList.remove('hidden');
-  } else {
-    $('tvTfTabs').style.opacity = '';
-    $('tvTfTabs').style.pointerEvents = '';
-    document.querySelectorAll('.tv-ind-badge').forEach(b => { b.style.opacity=''; b.style.pointerEvents=''; });
-    if (warn) warn.classList.add('hidden');
-    _buildTVWidget();
+  if (warn) {
+    warn.classList.remove('hidden');
+    warn.innerHTML = `
+      <div style="font-size:1.1rem;margin-bottom:10px;color:var(--text)">台股圖表請使用下方 K 線圖</div>
+      <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:16px;">
+        TradingView 嵌入式圖表需付費訂閱才能顯示台股資料。<br>
+        下方 Plotly K 線圖為完整台股圖表（含 MA / MACD / RSI / 布林帶）。
+      </div>
+      <a href="${tvUrl}" target="_blank" rel="noopener"
+         style="display:inline-block;padding:8px 20px;border-radius:8px;
+                background:rgba(61,142,248,.15);border:1px solid rgba(61,142,248,.4);
+                color:var(--blue);font-size:0.83rem;font-weight:700;text-decoration:none;">
+        在 TradingView 網站查看 ${_tvSymbol} ↗
+      </a>`;
   }
 }
 

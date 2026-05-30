@@ -2466,8 +2466,140 @@ US_SCREENER_UNIVERSE = {
     '槓桿ETF':    ['TQQQ','SOXL','UPRO','LABU','FNGU','SOXS','SPXS'],
 }
 
-def _eval_condition(hist, info, cond):
-    """Evaluate a single condition. Returns (passed:bool, detail:str)."""
+# ── 技術指標輔助函式 ──────────────────────────────────────────────────
+def calc_william_r(high, low, close, period=14):
+    hh = high.rolling(period).max()
+    ll = low.rolling(period).min()
+    return (hh - close) / (hh - ll).replace(0, np.nan) * -100
+
+def calc_cci(high, low, close, period=20):
+    tp = (high + low + close) / 3
+    ma = tp.rolling(period).mean()
+    md = tp.rolling(period).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    return (tp - ma) / (0.015 * md.replace(0, np.nan))
+
+def calc_adx(high, low, close, period=14):
+    tr = pd.concat([high - low,
+                    (high - close.shift()).abs(),
+                    (low  - close.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(span=period, adjust=False).mean()
+    dm_plus  = (high - high.shift()).clip(lower=0)
+    dm_minus = (low.shift()  - low ).clip(lower=0)
+    dm_plus  = dm_plus.where(dm_plus > dm_minus, 0)
+    dm_minus = dm_minus.where(dm_minus > dm_plus, 0)
+    di_plus  = dm_plus.ewm(span=period, adjust=False).mean()  / atr.replace(0, np.nan) * 100
+    di_minus = dm_minus.ewm(span=period, adjust=False).mean() / atr.replace(0, np.nan) * 100
+    dx = ((di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, np.nan)) * 100
+    adx = dx.ewm(span=period, adjust=False).mean()
+    return adx, di_plus, di_minus
+
+def calc_bias(close, period=20):
+    ma = close.rolling(period).mean()
+    return (close - ma) / ma.replace(0, np.nan) * 100
+
+def calc_psy(close, period=12):
+    up = (close.diff() > 0).astype(int)
+    return up.rolling(period).sum() / period * 100
+
+def calc_atr(high, low, close, period=14):
+    tr = pd.concat([high - low,
+                    (high - close.shift()).abs(),
+                    (low  - close.shift()).abs()], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+
+
+# ── TWSE 三大法人快取 ──────────────────────────────────────────────────
+_tw_inst_cache: dict = {}
+_tw_inst_lock  = threading.Lock()
+
+def _load_tw_inst():
+    """抓 TWSE 今日三大法人資料，快取 1 小時"""
+    import urllib.request, datetime
+    try:
+        today = datetime.date.today().strftime('%Y%m%d')
+        url = f'https://www.twse.com.tw/rwd/zh/fund/T86?date={today}&selectType=ALLBUT0999&response=json'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        raw = json.loads(urllib.request.urlopen(req, timeout=12).read())
+        if raw.get('stat') != 'OK': return {}
+        result = {}
+        for row in raw.get('data', []):
+            code = str(row[0]).strip()
+            def _n(s): return safe_float(str(s).replace(',','').replace(' ',''))
+            result[code] = {
+                'foreign_net':  _n(row[4]),   # 外資買賣超
+                'trust_net':    _n(row[10]),   # 投信買賣超
+                'dealer_net':   _n(row[11]),   # 自營商買賣超
+                'total_net':    _n(row[18]),   # 三大法人合計
+                'foreign_buy':  _n(row[2]),
+                'foreign_sell': _n(row[3]),
+                'trust_buy':    _n(row[8]),
+                'trust_sell':   _n(row[9]),
+            }
+        with _tw_inst_lock:
+            _tw_inst_cache['data'] = result
+            _tw_inst_cache['ts']   = time.time()
+        return result
+    except Exception as e:
+        print(f'[Inst] load error: {e}')
+        return {}
+
+def _get_tw_inst(code: str):
+    with _tw_inst_lock:
+        ts = _tw_inst_cache.get('ts', 0)
+        data = _tw_inst_cache.get('data', {})
+    if time.time() - ts > 3600 or not data:
+        data = _load_tw_inst()
+    return data.get(code)
+
+
+# ── TWSE 融資融券快取 ──────────────────────────────────────────────────
+_tw_margin_cache: dict = {}
+_tw_margin_lock  = threading.Lock()
+
+def _load_tw_margin():
+    """抓 TWSE 今日融資融券資料，快取 1 小時"""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            'https://openapi.twse.com.tw/v1/marginTrading/MI_MARGN',
+            headers={'User-Agent': 'Mozilla/5.0'})
+        data = json.loads(urllib.request.urlopen(req, timeout=12).read())
+        result = {}
+        for row in data:
+            code = str(row.get('股票代號', '')).strip()
+            if not code: continue
+            result[code] = {
+                'margin_today':  safe_float(row.get('融資今日餘額', 0)),
+                'margin_prev':   safe_float(row.get('融資前日餘額', 0)),
+                'short_today':   safe_float(row.get('融券今日餘額', 0)),
+                'short_prev':    safe_float(row.get('融券前日餘額', 0)),
+                'margin_buy':    safe_float(row.get('融資買進', 0)),
+                'margin_sell':   safe_float(row.get('融資賣出', 0)),
+                'short_buy':     safe_float(row.get('融券買進', 0)),
+                'short_sell':    safe_float(row.get('融券賣出', 0)),
+            }
+        with _tw_margin_lock:
+            _tw_margin_cache['data'] = result
+            _tw_margin_cache['ts']   = time.time()
+        return result
+    except Exception as e:
+        print(f'[Margin] load error: {e}')
+        return {}
+
+def _get_tw_margin(code: str):
+    """回傳單一股票融資融券資料（dict），找不到則 None"""
+    with _tw_margin_lock:
+        ts = _tw_margin_cache.get('ts', 0)
+        data = _tw_margin_cache.get('data', {})
+    if time.time() - ts > 3600 or not data:
+        data = _load_tw_margin()
+    return data.get(code)
+
+
+def _eval_condition(hist, info, cond, extra=None):
+    """Evaluate a single condition. Returns (passed:bool, detail:str).
+    extra = {'weekly': DataFrame, 'monthly': DataFrame, 'margin': dict}
+    """
     ctype  = cond.get('type', '')
     params = cond.get('params', {})
     close  = hist['Close']
@@ -2887,18 +3019,433 @@ def _eval_condition(hist, info, cond):
                 return False, '市值資料不足'
             return mc <= thr, f'市值 {mc/1e9:.1f}B ≤ {params.get("threshold",2)}B'
 
+        # ── K線型態 ──────────────────────────────────────────────────────
+        elif ctype == 'candle_big_red':
+            thr = float(params.get('threshold', 3))
+            o, c = safe_float(hist['Open'].iloc[-1]), price
+            pct = (c / o - 1) * 100 if o > 0 else 0
+            return pct >= thr, f'紅K棒漲幅 {pct:.1f}% ≥ {thr}%'
+
+        elif ctype == 'candle_long_lower_wick':
+            thr = float(params.get('threshold', 50))
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1])
+            l = safe_float(hist['Low'].iloc[-1])
+            body_lo = min(o, price); rng = h - l
+            lower = body_lo - l
+            ratio = lower / rng * 100 if rng > 0 else 0
+            return ratio >= thr, f'下影線佔比 {ratio:.0f}% ≥ {thr}%'
+
+        elif ctype == 'candle_hammer':
+            if n < 1: return False, '資料不足'
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1])
+            l = safe_float(hist['Low'].iloc[-1])
+            body = abs(price - o); rng = h - l
+            body_lo = min(o, price); body_hi = max(o, price)
+            lower = body_lo - l; upper = h - body_hi
+            ok = (rng > 0 and body / rng < 0.35
+                  and lower >= 2 * body and upper <= body * 0.5)
+            return ok, f'鎚頭型態 下影:{lower:.2f} 實體:{body:.2f}'
+
+        elif ctype == 'candle_inv_hammer':
+            if n < 1: return False, '資料不足'
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1])
+            l = safe_float(hist['Low'].iloc[-1])
+            body = abs(price - o); rng = h - l
+            body_lo = min(o, price); body_hi = max(o, price)
+            upper = h - body_hi; lower = body_lo - l
+            ok = (rng > 0 and body / rng < 0.35
+                  and upper >= 2 * body and lower <= body * 0.5)
+            return ok, f'倒狀槌子 上影:{upper:.2f} 實體:{body:.2f}'
+
+        elif ctype == 'candle_bullish_engulfing':
+            if n < 2: return False, '資料不足'
+            po = safe_float(hist['Open'].iloc[-2]); pc = safe_float(hist['Close'].iloc[-2])
+            co = safe_float(hist['Open'].iloc[-1]); cc = price
+            ok = (pc < po and cc > co          # 前陰後陽
+                  and co <= pc and cc >= po)   # 今陽包前陰
+            return ok, f'多頭吞噬 昨陰收{pc:.2f} 今陽開{co:.2f}收{cc:.2f}'
+
+        elif ctype == 'candle_harami':
+            if n < 2: return False, '資料不足'
+            po = safe_float(hist['Open'].iloc[-2]); pc = safe_float(hist['Close'].iloc[-2])
+            co = safe_float(hist['Open'].iloc[-1]); cc = price
+            big_lo = min(po, pc); big_hi = max(po, pc)
+            ok = (pc < po                        # 前長陰
+                  and cc > co                    # 今陽
+                  and co >= big_lo and cc <= big_hi)  # 在前陰範圍內
+            return ok, f'多頭母子 昨陰({po:.2f}→{pc:.2f}) 今小陽({co:.2f}→{cc:.2f})'
+
+        elif ctype == 'candle_morning_star':
+            if n < 3: return False, '資料不足'
+            o1=safe_float(hist['Open'].iloc[-3]); c1=safe_float(hist['Close'].iloc[-3])
+            o2=safe_float(hist['Open'].iloc[-2]); c2=safe_float(hist['Close'].iloc[-2])
+            o3=safe_float(hist['Open'].iloc[-1]); c3=price
+            body1=abs(c1-o1); body2=abs(c2-o2); body3=abs(c3-o3)
+            ok = (c1 < o1 and body1 > 0            # 第1根陰
+                  and body2 < body1 * 0.5          # 第2根小實體（星）
+                  and c3 > o3                      # 第3根陽
+                  and c3 > (o1 + c1) / 2)          # 第3根收盤超過第1根中點
+            return ok, f'晨星型態 ({c1:.2f},{c2:.2f},{c3:.2f})'
+
+        elif ctype == 'candle_three_soldiers':
+            if n < 3: return False, '資料不足'
+            rows = [(safe_float(hist['Open'].iloc[-(i+1)]),
+                     safe_float(hist['Close'].iloc[-(i+1)])) for i in range(3)][::-1]
+            ok = all(c > o for o, c in rows)   # 三根皆陽
+            ok = ok and rows[1][1] > rows[0][1] and rows[2][1] > rows[1][1]  # 連續創高
+            ok = ok and (rows[1][0] >= rows[0][0] and rows[1][0] <= rows[0][1])  # 開盤在前根實體內
+            return ok, f'紅三兵 收盤({rows[0][1]:.2f},{rows[1][1]:.2f},{rows[2][1]:.2f})'
+
+        elif ctype == 'candle_belt_hold':
+            if n < 1: return False, '資料不足'
+            o = safe_float(hist['Open'].iloc[-1])
+            l = safe_float(hist['Low'].iloc[-1])
+            ok = (price > o and abs(o - l) / (price - l) < 0.05 if (price - l) > 0 else False)
+            return ok, f'多頭執帶 開{o:.2f}=最低 收{price:.2f}'
+
+        elif ctype == 'candle_meeting_line':
+            if n < 2: return False, '資料不足'
+            pc = safe_float(hist['Close'].iloc[-2])
+            po = safe_float(hist['Open'].iloc[-2])
+            ok = (pc < po
+                  and price > safe_float(hist['Open'].iloc[-1])
+                  and abs(price - pc) / pc < 0.01)
+            return ok, f'多頭遭遇 昨收{pc:.2f} 今收{price:.2f}'
+
+        elif ctype == 'candle_doji':
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1]); l = safe_float(hist['Low'].iloc[-1])
+            body = abs(price - o); rng = h - l
+            ok = rng > 0 and body / rng < 0.1
+            return ok, f'十字星 實體{body:.2f} 全幅{rng:.2f}'
+
+        elif ctype == 'candle_shooting_star':
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1]); l = safe_float(hist['Low'].iloc[-1])
+            body = abs(price - o); body_hi = max(price, o); body_lo = min(price, o)
+            upper = h - body_hi; lower = body_lo - l; rng = h - l
+            ok = (rng > 0 and body / rng < 0.3
+                  and upper >= 2 * body and lower <= body * 0.3
+                  and price < o)   # 陰線
+            return ok, f'射擊之星 上影{upper:.2f} 實體{body:.2f}'
+
+        elif ctype == 'candle_hanging_man':
+            o = safe_float(hist['Open'].iloc[-1])
+            h = safe_float(hist['High'].iloc[-1]); l = safe_float(hist['Low'].iloc[-1])
+            body = abs(price - o); body_lo = min(price, o); body_hi = max(price, o)
+            lower = body_lo - l; upper = h - body_hi; rng = h - l
+            # 上吊線：在高位出現的鎚頭形狀（需配合前高）
+            ok = (rng > 0 and body / rng < 0.35
+                  and lower >= 2 * body and upper <= body * 0.5)
+            return ok, f'上吊線 下影{lower:.2f} 實體{body:.2f}'
+
+        elif ctype == 'candle_bearish_engulfing':
+            if n < 2: return False, '資料不足'
+            po = safe_float(hist['Open'].iloc[-2]); pc = safe_float(hist['Close'].iloc[-2])
+            co = safe_float(hist['Open'].iloc[-1]); cc = price
+            ok = (pc > po and cc < co and co >= po and cc <= pc)
+            return ok, f'空頭吞噬 昨陽收{pc:.2f} 今陰開{co:.2f}收{cc:.2f}'
+
+        elif ctype == 'candle_evening_star':
+            if n < 3: return False, '資料不足'
+            o1=safe_float(hist['Open'].iloc[-3]); c1=safe_float(hist['Close'].iloc[-3])
+            o2=safe_float(hist['Open'].iloc[-2]); c2=safe_float(hist['Close'].iloc[-2])
+            o3=safe_float(hist['Open'].iloc[-1]); c3=price
+            body1=abs(c1-o1); body2=abs(c2-o2)
+            ok = (c1 > o1 and body2 < body1 * 0.5
+                  and c3 < o3 and c3 < (o1 + c1) / 2)
+            return ok, f'夜星型態 ({c1:.2f},{c2:.2f},{c3:.2f})'
+
+        elif ctype == 'candle_three_crows':
+            if n < 3: return False, '資料不足'
+            rows = [(safe_float(hist['Open'].iloc[-(i+1)]),
+                     safe_float(hist['Close'].iloc[-(i+1)])) for i in range(3)][::-1]
+            ok = all(c < o for o, c in rows)
+            ok = ok and rows[1][1] < rows[0][1] and rows[2][1] < rows[1][1]
+            return ok, f'黑三兵 收盤({rows[0][1]:.2f},{rows[1][1]:.2f},{rows[2][1]:.2f})'
+
+        # ── 技術指標 ─────────────────────────────────────────────────────
+        elif ctype == 'william_r_oversold':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', -80))
+            wr = calc_william_r(high, low, close, period)
+            wv = safe_float(wr.iloc[-1])
+            return wv <= thr, f'WR({period}) = {wv:.1f} ≤ {thr}'
+
+        elif ctype == 'william_r_cross_above':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', -80))
+            within = int(params.get('within_days', 3))
+            wr = calc_william_r(high, low, close, period)
+            for i in range(-within, 0):
+                try:
+                    if safe_float(wr.iloc[i-1]) < thr <= safe_float(wr.iloc[i]):
+                        return True, f'WR({period}) 穿越{thr} 現值{safe_float(wr.iloc[-1]):.1f}'
+                except: pass
+            return False, f'WR({period}) = {safe_float(wr.iloc[-1]):.1f} 未穿越{thr}'
+
+        elif ctype == 'cci_oversold':
+            period = int(params.get('period', 20))
+            thr    = float(params.get('threshold', -100))
+            cc_s   = calc_cci(high, low, close, period)
+            cv     = safe_float(cc_s.iloc[-1])
+            return cv <= thr, f'CCI({period}) = {cv:.0f} ≤ {thr}'
+
+        elif ctype == 'cci_cross_above':
+            period = int(params.get('period', 20))
+            thr    = float(params.get('threshold', -100))
+            within = int(params.get('within_days', 3))
+            cc_s   = calc_cci(high, low, close, period)
+            for i in range(-within, 0):
+                try:
+                    if safe_float(cc_s.iloc[i-1]) < thr <= safe_float(cc_s.iloc[i]):
+                        return True, f'CCI({period}) 穿越{thr} 現值{safe_float(cc_s.iloc[-1]):.0f}'
+                except: pass
+            return False, f'CCI({period}) = {safe_float(cc_s.iloc[-1]):.0f} 未穿越{thr}'
+
+        elif ctype == 'adx_strong_trend':
+            period = int(params.get('period', 14))
+            thr    = float(params.get('threshold', 25))
+            adx_s, dip, dim = calc_adx(high, low, close, period)
+            av = safe_float(adx_s.iloc[-1])
+            bull = safe_float(dip.iloc[-1]) > safe_float(dim.iloc[-1])
+            return av >= thr and bull, f'ADX({period}) = {av:.1f} ≥ {thr} ({"多" if bull else "空"}頭)'
+
+        elif ctype == 'bias_low':
+            period = int(params.get('period', 20))
+            thr    = float(params.get('threshold', -5))
+            bv     = safe_float(calc_bias(close, period).iloc[-1])
+            return bv <= thr, f'乖離率({period}) = {bv:.1f}% ≤ {thr}%'
+
+        elif ctype == 'bias_high':
+            period = int(params.get('period', 20))
+            thr    = float(params.get('threshold', 10))
+            bv     = safe_float(calc_bias(close, period).iloc[-1])
+            return bv >= thr, f'乖離率({period}) = {bv:.1f}% ≥ {thr}%'
+
+        elif ctype == 'psy_low':
+            period = int(params.get('period', 12))
+            thr    = float(params.get('threshold', 25))
+            pv     = safe_float(calc_psy(close, period).iloc[-1])
+            return pv <= thr, f'PSY({period}) = {pv:.1f}% ≤ {thr}%'
+
+        elif ctype == 'psy_high':
+            period = int(params.get('period', 12))
+            thr    = float(params.get('threshold', 75))
+            pv     = safe_float(calc_psy(close, period).iloc[-1])
+            return pv >= thr, f'PSY({period}) = {pv:.1f}% ≥ {thr}%'
+
+        elif ctype == 'atr_expand':
+            period = int(params.get('period', 14))
+            ratio  = float(params.get('ratio', 1.5))
+            atr_s  = calc_atr(high, low, close, period)
+            if n < period + 5: return False, '資料不足'
+            curr = safe_float(atr_s.iloc[-1])
+            prev = safe_float(atr_s.iloc[-period])
+            ok = curr >= prev * ratio if prev > 0 else False
+            return ok, f'ATR擴張 {prev:.2f}→{curr:.2f} ({curr/prev:.1f}x)' if prev > 0 else 'ATR資料不足'
+
+        # ── 量價條件 ──────────────────────────────────────────────────────
+        elif ctype == 'vol_price_divergence_up':
+            # 價漲量縮（背離警示）
+            days = int(params.get('days', 3))
+            if n < days + 1: return False, '資料不足'
+            price_up = close.iloc[-1] > close.iloc[-days-1]
+            vol_down = vol.iloc[-days:].mean() < vol.iloc[-days*2:-days].mean() * 0.8 if n >= days*2 else False
+            return price_up and vol_down, f'價漲量縮(近{days}日均量下降)'
+
+        elif ctype == 'vol_price_divergence_down':
+            # 價跌量縮（打底訊號）
+            days = int(params.get('days', 3))
+            if n < days + 1: return False, '資料不足'
+            price_dn = close.iloc[-1] < close.iloc[-days-1]
+            vol_down = vol.iloc[-days:].mean() < vol.iloc[-days*2:-days].mean() * 0.8 if n >= days*2 else False
+            return price_dn and vol_down, f'價跌量縮（打底訊號，近{days}日）'
+
+        elif ctype == 'big_vol_red':
+            # 大量紅K：量比>N倍 + 今日上漲>M%
+            ratio_thr = float(params.get('ratio', 1.5))
+            pct_thr   = float(params.get('pct', 2))
+            avg_v = safe_float(vol.rolling(min(20,n), min_periods=1).mean().iloc[-1])
+            curr_v = safe_float(vol.iloc[-1])
+            vr = curr_v / avg_v if avg_v > 0 else 0
+            o  = safe_float(hist['Open'].iloc[-1])
+            pp = (price / o - 1) * 100 if o > 0 else 0
+            return vr >= ratio_thr and pp >= pct_thr, f'大量紅K 量比{vr:.1f}x 漲{pp:.1f}%'
+
+        elif ctype == 'price_consolidation_break':
+            # N日盤整後放量突破
+            days = int(params.get('days', 10))
+            ratio = float(params.get('ratio', 1.5))
+            if n < days + 1: return False, '資料不足'
+            period_high = safe_float(high.iloc[-(days+1):-1].max())
+            period_low  = safe_float(low.iloc[-(days+1):-1].min())
+            range_pct   = (period_high - period_low) / period_low * 100 if period_low > 0 else 0
+            avg_v = safe_float(vol.iloc[-(days+1):-1].mean())
+            curr_v = safe_float(vol.iloc[-1])
+            breakout = price > period_high and (curr_v >= avg_v * ratio if avg_v > 0 else False)
+            return breakout, f'{days}日盤整({range_pct:.1f}%)後放量突破 {period_high:.2f}'
+
+        elif ctype == 'ma_convergence':
+            # 均線糾結：MA5/MA20/MA60 相互距離 < N%
+            thr = float(params.get('threshold', 3))
+            if n < 60: return False, '資料不足'
+            m5  = safe_float(close.rolling(5).mean().iloc[-1])
+            m20 = safe_float(close.rolling(20).mean().iloc[-1])
+            m60 = safe_float(close.rolling(60).mean().iloc[-1])
+            spread = (max(m5,m20,m60) - min(m5,m20,m60)) / min(m5,m20,m60) * 100 if min(m5,m20,m60) > 0 else 99
+            return spread <= thr, f'均線糾結 MA5={m5:.2f} MA20={m20:.2f} MA60={m60:.2f} 差距{spread:.1f}%'
+
+        elif ctype == 'monthly_price_above_ma':
+            # 月線站上N月均線
+            mh = (extra or {}).get('monthly')
+            if mh is None or len(mh) < 6: return False, '月線資料不足'
+            period = int(params.get('period', 6))
+            mp = safe_float(mh['Close'].iloc[-1])
+            ma = safe_float(mh['Close'].rolling(min(period, len(mh))).mean().iloc[-1])
+            return mp > ma, f'月K收盤{mp:.2f} > {period}月MA {ma:.2f}'
+
+        # ── 三大法人（台股限定）────────────────────────────────────────────
+        elif ctype in ('inst_foreign_buy', 'inst_foreign_sell', 'inst_trust_buy',
+                       'inst_trust_sell', 'inst_dealer_buy', 'inst_3_buy',
+                       'inst_total_above', 'inst_foreign_dominant'):
+            it = (extra or {}).get('inst')
+            if it is None:
+                return False, '非台股或無法人資料'
+            fn = it.get('foreign_net', 0)
+            tn = it.get('trust_net', 0)
+            dn = it.get('dealer_net', 0)
+            tot = it.get('total_net', 0)
+
+            if ctype == 'inst_foreign_buy':
+                return fn > 0, f'外資買超 {fn:,.0f}股'
+            elif ctype == 'inst_foreign_sell':
+                return fn < 0, f'外資賣超 {abs(fn):,.0f}股'
+            elif ctype == 'inst_trust_buy':
+                return tn > 0, f'投信買超 {tn:,.0f}股'
+            elif ctype == 'inst_trust_sell':
+                return tn < 0, f'投信賣超 {abs(tn):,.0f}股'
+            elif ctype == 'inst_dealer_buy':
+                return dn > 0, f'自營商買超 {dn:,.0f}股'
+            elif ctype == 'inst_3_buy':
+                return tot > 0, f'三大法人合計買超 {tot:,.0f}股'
+            elif ctype == 'inst_total_above':
+                thr = float(params.get('threshold', 1000)) * 1000
+                return tot >= thr, f'三大法人合計{tot/1000:.0f}千股 ≥ {params.get("threshold",1000)}千股'
+            elif ctype == 'inst_foreign_dominant':
+                # 外資主導（外資買超佔三大法人 > 80%）
+                ok = tot > 0 and fn > 0 and fn / tot >= 0.8
+                return ok, f'外資主導 外資{fn:,.0f} 合計{tot:,.0f}'
+
+        # ── 多週期指標 ────────────────────────────────────────────────────
+        elif ctype in ('weekly_kd_golden_cross', 'weekly_macd_golden_cross',
+                       'weekly_rsi_cross_above', 'monthly_kd_oversold',
+                       'monthly_macd_golden_cross'):
+            wh = (extra or {}).get('weekly')
+            mh = (extra or {}).get('monthly')
+            if ctype == 'weekly_kd_golden_cross':
+                if wh is None or len(wh) < 15: return False, '週線資料不足'
+                kn = int(params.get('kd_n', 9))
+                k, d_ = calc_kd(wh['High'], wh['Low'], wh['Close'], kn, 3, 3)
+                within = int(params.get('within_days', 3))
+                for i in range(-within, 0):
+                    try:
+                        if k.iloc[i-1] < d_.iloc[i-1] and k.iloc[i] > d_.iloc[i]:
+                            return True, f'週KD({kn}) 金叉 K={safe_float(k.iloc[-1]):.1f}'
+                    except: pass
+                return False, f'週KD({kn}) 無金叉 K={safe_float(k.iloc[-1]):.1f}'
+
+            elif ctype == 'weekly_macd_golden_cross':
+                if wh is None or len(wh) < 30: return False, '週線資料不足'
+                within = int(params.get('within_days', 3))
+                wm, ws, _ = calc_macd(wh['Close'])
+                for i in range(-within, 0):
+                    try:
+                        if wm.iloc[i-1] < ws.iloc[i-1] and wm.iloc[i] > ws.iloc[i]:
+                            return True, f'週MACD金叉 DIF={safe_float(wm.iloc[-1]):.2f}'
+                    except: pass
+                return False, f'週MACD無金叉 DIF={safe_float(wm.iloc[-1]):.2f}'
+
+            elif ctype == 'weekly_rsi_cross_above':
+                if wh is None or len(wh) < 20: return False, '週線資料不足'
+                thr = float(params.get('threshold', 50))
+                within = int(params.get('within_days', 2))
+                wr = calc_rsi(wh['Close'])
+                for i in range(-within, 0):
+                    try:
+                        if safe_float(wr.iloc[i-1]) < thr <= safe_float(wr.iloc[i]):
+                            return True, f'週RSI穿越{thr} RSI={safe_float(wr.iloc[-1]):.1f}'
+                    except: pass
+                return False, f'週RSI={safe_float(wr.iloc[-1]):.1f} 未穿越{thr}'
+
+            elif ctype == 'monthly_kd_oversold':
+                if mh is None or len(mh) < 10: return False, '月線資料不足'
+                thr = float(params.get('threshold', 20))
+                k, _ = calc_kd(mh['High'], mh['Low'], mh['Close'], 9, 3, 3)
+                kv = safe_float(k.iloc[-1])
+                return kv < thr, f'月KD K={kv:.1f} {"低檔鈍化" if kv < thr else f"> {thr}"}'
+
+            elif ctype == 'monthly_macd_golden_cross':
+                if mh is None or len(mh) < 12: return False, '月線資料不足'
+                mm, ms, _ = calc_macd(mh['Close'])
+                ok = safe_float(mm.iloc[-1]) > safe_float(ms.iloc[-1]) and safe_float(mm.iloc[-2]) <= safe_float(ms.iloc[-2])
+                return ok, f'月MACD金叉 DIF={safe_float(mm.iloc[-1]):.2f}'
+
+        # ── 融資融券（台股限定）──────────────────────────────────────────
+        elif ctype in ('margin_increase', 'margin_decrease', 'short_decrease',
+                       'short_increase', 'high_short_ratio', 'margin_continuous_up'):
+            mg = (extra or {}).get('margin')
+            if mg is None:
+                return False, '非台股或無融資券資料'
+            mt = mg.get('margin_today', 0); mp = mg.get('margin_prev', 0)
+            st = mg.get('short_today',  0); sp = mg.get('short_prev',  0)
+
+            if ctype == 'margin_increase':
+                chg = mt - mp
+                return chg > 0, f'融資 {mp:.0f}→{mt:.0f} 增{chg:+.0f}張'
+
+            elif ctype == 'margin_decrease':
+                chg = mt - mp
+                return chg < 0, f'融資 {mp:.0f}→{mt:.0f} 減{abs(chg):.0f}張'
+
+            elif ctype == 'short_decrease':
+                chg = st - sp
+                return chg < 0, f'融券 {sp:.0f}→{st:.0f} 減{abs(chg):.0f}張（回補）'
+
+            elif ctype == 'short_increase':
+                chg = st - sp
+                return chg > 0, f'融券 {sp:.0f}→{st:.0f} 增{chg:+.0f}張'
+
+            elif ctype == 'high_short_ratio':
+                thr = float(params.get('threshold', 30))
+                ratio = st / mt * 100 if mt > 0 else 0
+                return ratio >= thr, f'券資比 {ratio:.1f}% ≥ {thr}%'
+
+            elif ctype == 'margin_continuous_up':
+                return mt > mp > 0, f'融資連升 {mp:.0f}→{mt:.0f}張'
+
     except Exception as e:
         return False, f'計算錯誤: {str(e)[:40]}'
 
     return False, f'未知條件類型: {ctype}'
 
 
+_WEEKLY_TYPES  = {'weekly_kd_golden_cross','weekly_macd_golden_cross',
+                  'weekly_rsi_cross_above','monthly_macd_golden_cross'}
+_MONTHLY_TYPES = {'monthly_kd_oversold','monthly_macd_golden_cross','monthly_price_above_ma'}
+_MARGIN_TYPES  = {'margin_increase','margin_decrease','short_decrease',
+                  'short_increase','high_short_ratio','margin_continuous_up'}
+_INST_TYPES    = {'inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell',
+                  'inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'}
+
 def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
     """Scan a single ticker and return result dict or None."""
     try:
         stock = yf.Ticker(ticker)
         info  = stock.info
-        # 60分K最多只能抓 60 天，日線用 period 參數
         if interval == '1h':
             hist = stock.history(period='60d', interval='1h')
         else:
@@ -2913,10 +3460,32 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
         en_name   = (info.get('shortName') or info.get('longName') or ticker)[:30]
         name      = tw_cn_name(ticker, en_name) if is_tw else en_name
 
+        # ── 按需抓取額外資料 ──
+        ctypes = {c.get('type','') for c in conditions}
+        extra  = {}
+        if ctypes & _WEEKLY_TYPES:
+            try:
+                wh = stock.history(period='2y', interval='1wk')
+                if not wh.empty: extra['weekly'] = wh
+            except Exception: pass
+        if ctypes & _MONTHLY_TYPES:
+            try:
+                mh = stock.history(period='5y', interval='1mo')
+                if not mh.empty: extra['monthly'] = mh
+            except Exception: pass
+        if ctypes & _MARGIN_TYPES and is_tw:
+            code = ticker.replace('.TW','').replace('.TWO','')
+            mg = _get_tw_margin(code)
+            if mg: extra['margin'] = mg
+        if ctypes & _INST_TYPES and is_tw:
+            code = ticker.replace('.TW','').replace('.TWO','')
+            it = _get_tw_inst(code)
+            if it: extra['inst'] = it
+
         cond_results = []
         all_passed   = True
         for cond in conditions:
-            passed, detail = _eval_condition(hist, info, cond)
+            passed, detail = _eval_condition(hist, info, cond, extra)
             passed = bool(passed)
             cond_results.append({'label': cond.get('label', cond['type']),
                                  'passed': passed, 'detail': detail})
@@ -2994,7 +3563,7 @@ def screener_run():
 
     try:
         results = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
+        with ThreadPoolExecutor(max_workers=12) as ex:
             futs = {ex.submit(_scan_ticker, t, conditions, is_tw, period, interval): t for t in tickers}
             for f in as_completed(futs):
                 try:
@@ -3095,7 +3664,7 @@ def _check_exit_alerts(stock, ticker, price, entry):
             return []
         info = stock.info
         for cond in exit_conds:
-            passed, detail = _eval_condition(hist, info, cond)
+            passed, detail = _eval_condition(hist, info, cond, None)
             if passed:
                 label = cond.get('label', cond.get('type', ''))
                 triggered.append(f'【出場警示】{label}：{detail}')
