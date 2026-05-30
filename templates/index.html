@@ -523,11 +523,11 @@ function fmtShares(v) {
 }
 function recLabel(m) {
   if (!m) return { t: 'N/A', c: '' };
-  if (m <= 1.5) return { t: '強力買入', c: 'green' };
-  if (m <= 2.5) return { t: '買入',     c: 'green' };
+  if (m <= 1.5) return { t: '強力買入', c: 'red' };
+  if (m <= 2.5) return { t: '買入',     c: 'red' };
   if (m <= 3.5) return { t: '持有',     c: 'yellow' };
-  if (m <= 4.5) return { t: '賣出',     c: 'red' };
-  return              { t: '強力賣出',  c: 'red' };
+  if (m <= 4.5) return { t: '賣出',     c: 'green' };
+  return              { t: '強力賣出',  c: 'green' };
 }
 function timeAgo(iso) {
   if (!iso) return '';

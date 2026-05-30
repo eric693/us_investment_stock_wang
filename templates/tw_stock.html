@@ -85,19 +85,19 @@
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
 /* Signal card */
 .signal-card { border-radius:10px; padding:18px 20px; border:1px solid var(--card-bd); background:#060c18; margin-top:4px; }
-.signal-card.sig-buy    { border-color:rgba(0,214,143,.3); background:rgba(0,214,143,.04); }
+.signal-card.sig-buy    { border-color:rgba(232,70,70,.3);  background:rgba(232,70,70,.04); }
 .signal-card.sig-watch  { border-color:rgba(240,180,41,.3); background:rgba(240,180,41,.04); }
 .signal-card.sig-wait   { border-color:rgba(100,130,160,.2); }
-.signal-card.sig-avoid  { border-color:rgba(232,70,70,.3); background:rgba(232,70,70,.04); }
+.signal-card.sig-avoid  { border-color:rgba(0,214,143,.3);  background:rgba(0,214,143,.04); }
 .sig-header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
 .sig-icon { font-size:1.6rem; }
 .sig-title { font-size:1.05rem; font-weight:800; }
-.sig-title.sig-buy   { color:#00d68f; }
+.sig-title.sig-buy   { color:#e84646; }
 .sig-title.sig-watch { color:#f0b429; }
 .sig-title.sig-wait  { color:var(--text-dim); }
-.sig-title.sig-avoid { color:#e84646; }
+.sig-title.sig-avoid { color:#00d68f; }
 .sig-conf-badge { padding:2px 10px; border-radius:10px; font-size:0.7rem; font-weight:800; }
-.sig-conf-hi  { background:rgba(0,214,143,.15); color:#00d68f; }
+.sig-conf-hi  { background:rgba(232,70,70,.15); color:#e84646; }
 .sig-conf-mid { background:rgba(240,180,41,.15); color:#f0b429; }
 .sig-conf-lo  { background:rgba(100,130,160,.1);  color:#8aaabf; }
 .sig-conf-na  { background:rgba(100,130,160,.1);  color:#8aaabf; }
@@ -713,11 +713,11 @@ function fmtShares(v) {
 function fmtPrice(v) { return v != null ? v.toFixed(2) + ' 元' : 'N/A'; }
 function recLabel(m) {
   if (!m) return { t: 'N/A', c: '' };
-  if (m <= 1.5) return { t: '強力買入', c: 'green' };
-  if (m <= 2.5) return { t: '買入',     c: 'green' };
+  if (m <= 1.5) return { t: '強力買入', c: 'red' };
+  if (m <= 2.5) return { t: '買入',     c: 'red' };
   if (m <= 3.5) return { t: '持有',     c: 'yellow' };
-  if (m <= 4.5) return { t: '賣出',     c: 'red' };
-  return              { t: '強力賣出',  c: 'red' };
+  if (m <= 4.5) return { t: '賣出',     c: 'green' };
+  return              { t: '強力賣出',  c: 'green' };
 }
 function timeAgo(iso) {
   if (!iso) return '';

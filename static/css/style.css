@@ -1036,8 +1036,8 @@ a:hover { text-decoration: underline; }
   display: inline-block; padding: 3px 10px; border-radius: 5px;
   font-size: 0.72rem; font-weight: 800; white-space: nowrap; letter-spacing: .3px;
 }
-.sig-buy  { background: rgba(0,214,143,0.12); border: 1px solid rgba(0,214,143,0.35); color: var(--green); }
-.sig-sell { background: rgba(232,70,70,0.12);  border: 1px solid rgba(232,70,70,0.35);  color: var(--red);   }
+.sig-buy  { background: rgba(232,70,70,0.12);  border: 1px solid rgba(232,70,70,0.35);  color: var(--red); }
+.sig-sell { background: rgba(0,214,143,0.12);  border: 1px solid rgba(0,214,143,0.35);  color: var(--green); }
 .sig-watch { background: rgba(240,180,41,0.12); border: 1px solid rgba(240,180,41,0.3);  color: var(--yellow);}
 .sig-hold  { background: rgba(61,142,248,0.08); border: 1px solid rgba(61,142,248,0.25); color: var(--blue);  }
 .sig-wait  { background: rgba(255,255,255,0.04);border: 1px solid var(--card-bd);        color: var(--text-dim);}
