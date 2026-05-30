@@ -877,7 +877,8 @@ document.addEventListener('DOMContentLoaded', () => {
   renderWatchlist();
   updateAlertBadge();
   loadTwWelcomeCards();
-  const urlTicker = new URLSearchParams(location.search).get('ticker');
+  const _p = new URLSearchParams(location.search);
+  const urlTicker = _p.get('ticker') || _p.get('t');
   if (urlTicker) loadStock(displayTW(urlTicker.toUpperCase()));
 });
 

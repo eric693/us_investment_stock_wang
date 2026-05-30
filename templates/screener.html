@@ -144,13 +144,13 @@ select.inp{cursor:pointer;}
   <!-- ═══ LEFT: Strategy Builder ═══════════════════════════════ -->
   <div>
     <div class="card">
-      <div class="card-title">⚙️ 策略條件設定</div>
+      <div class="card-title"> 策略條件設定</div>
 
       <!-- Market -->
       <div class="section-label">市場</div>
       <div class="mkt-switch">
-        <button class="mkt-btn active tw" id="mktTW" onclick="setMarket('tw')">🇹🇼 台股</button>
-        <button class="mkt-btn us"        id="mktUS" onclick="setMarket('us')">🇺🇸 美股</button>
+        <button class="mkt-btn active tw" id="mktTW" onclick="setMarket('tw')"> 台股</button>
+        <button class="mkt-btn us"        id="mktUS" onclick="setMarket('us')"> 美股</button>
       </div>
 
       <!-- Universe -->
@@ -189,7 +189,7 @@ select.inp{cursor:pointer;}
       <!-- Run -->
       <div style="display:flex;gap:8px;margin-top:14px;">
         <button class="btn btn-primary" id="runBtn" onclick="runScreener()" style="flex:1;padding:10px;">
-          🔍 開始掃描
+           開始掃描
         </button>
         <button class="btn btn-gold btn-sm" onclick="openSaveModal()">儲存策略</button>
       </div>
@@ -197,7 +197,7 @@ select.inp{cursor:pointer;}
 
     <!-- Saved Strategies -->
     <div class="card">
-      <div class="card-title">📂 已儲存策略</div>
+      <div class="card-title"> 已儲存策略</div>
       <div class="strat-list" id="stratList">
         <div style="color:var(--text-dim);font-size:0.82rem;">尚無儲存策略</div>
       </div>
@@ -208,7 +208,7 @@ select.inp{cursor:pointer;}
   <div>
     <div class="card">
       <div class="card-title" style="justify-content:space-between;">
-        <span>📊 篩選結果</span>
+        <span> 篩選結果</span>
         <span id="resultMeta" style="font-size:0.78rem;color:var(--text-dim);font-weight:400;"></span>
       </div>
 
@@ -219,7 +219,7 @@ select.inp{cursor:pointer;}
 
       <div id="resultArea">
         <div class="empty-hint">
-          📋 設定篩選條件後點擊「開始掃描」<br>
+           設定篩選條件後點擊「開始掃描」<br>
           <span style="font-size:0.78rem;">系統將逐一檢查所選標的，符合所有條件的股票將列在此處</span>
         </div>
       </div>
@@ -230,7 +230,7 @@ select.inp{cursor:pointer;}
 <!-- Modal: Save Strategy -->
 <div class="modal-overlay" id="saveModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('saveModal')">✕</button>
+    <button class="modal-close" onclick="closeModal('saveModal')"></button>
     <div class="modal-title">儲存策略</div>
     <label class="form-label">策略名稱</label>
     <input class="inp" id="stratNameInput" placeholder="例如：均線突破+KD60金叉" onkeydown="if(event.key==='Enter')saveStrategy()">
@@ -241,7 +241,7 @@ select.inp{cursor:pointer;}
 <!-- Modal: Add to Monitor (Exit Alert) -->
 <div class="modal-overlay" id="addMonitorModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('addMonitorModal')">✕</button>
+    <button class="modal-close" onclick="closeModal('addMonitorModal')"></button>
     <div class="modal-title" id="addMonitorTitle">加入監控並設定退出警報</div>
     <input type="hidden" id="addMonitorTicker">
     <label class="form-label">退出條件（觸發時 LINE 通知）</label>
@@ -418,7 +418,7 @@ function renderConditions() {
         ).join('')}
       </select>
       <span class="cond-badge ${def.badge||'tech'}">${def.badge||'技術'}</span>
-      <button class="btn btn-danger btn-sm" onclick="removeCondition(${idx})">✕</button>`;
+      <button class="btn btn-danger btn-sm" onclick="removeCondition(${idx})"></button>`;
     div.appendChild(head);
 
     // Params
@@ -479,7 +479,7 @@ function renderExitAlerts() {
       if (p1 && p1.key !== p0?.key) paramHtml += `<input class="inp inp-sm" type="number" value="${a.params[p1.key]||p1.default}" title="${p1.label}" style="width:45px" onchange="_exitAlerts[${idx}].params['${p1.key}']=parseFloat(this.value)">`;
     }
 
-    row.innerHTML = selHtml + paramHtml + `<button class="btn btn-danger btn-sm" onclick="_exitAlerts.splice(${idx},1);renderExitAlerts()">✕</button>`;
+    row.innerHTML = selHtml + paramHtml + `<button class="btn btn-danger btn-sm" onclick="_exitAlerts.splice(${idx},1);renderExitAlerts()"></button>`;
     list.appendChild(row);
   });
 }
@@ -548,14 +548,14 @@ async function runScreener() {
     clearInterval(fakeProgress);
     showToast('掃描失敗: ' + e.message, 'red');
   } finally {
-    btn.disabled = false; btn.textContent = '🔍 開始掃描';
+    btn.disabled = false; btn.textContent = ' 開始掃描';
   }
 }
 
 function renderResults(results) {
   const area = document.getElementById('resultArea');
   if (!results.length) {
-    area.innerHTML = '<div class="empty-hint">🔍 掃描完成，無符合條件的標的<br><span style="font-size:0.78rem;">嘗試放寬條件或增加掃描標的</span></div>';
+    area.innerHTML = '<div class="empty-hint"> 掃描完成，無符合條件的標的<br><span style="font-size:0.78rem;">嘗試放寬條件或增加掃描標的</span></div>';
     return;
   }
 
@@ -570,7 +570,7 @@ function renderResults(results) {
 
   results.forEach(r => {
     const updn  = r.changePct >= 0;
-    const link  = r.isTw ? `/tw?t=${r.display}` : `/?ticker=${r.ticker}`;
+    const link  = r.isTw ? `/tw?ticker=${r.display}` : `/?ticker=${r.ticker}`;
     const cTags = r.conditions.map(c =>
       `<span class="cond-tag pass" title="${c.detail}">${c.label.slice(0,10)}…</span>`
     ).join('');
@@ -619,7 +619,7 @@ function openAddMonitor(ticker, name, isTw) {
   } else {
     list.innerHTML = _pendingExitConds.map(c =>
       `<div class="cond-tag exit" style="padding:4px 10px;margin:3px 0;display:block;font-size:0.78rem;">
-        ⚠️ ${c.label}
+         ${c.label}
       </div>`
     ).join('');
   }

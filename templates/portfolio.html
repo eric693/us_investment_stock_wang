@@ -148,6 +148,7 @@
   <a class="nav-link" href="/">美股分析</a>
   <a class="nav-link" href="/tw">台股分析</a>
   <a class="nav-link active" href="/portfolio">投資組合</a>
+  <a class="nav-link" href="/screener">策略選股</a>
 </nav>
 
 <div class="pf-body">
@@ -196,7 +197,7 @@
 
     <!-- Holdings Table -->
     <div class="card">
-      <div class="card-title"><span class="icon">📋</span>持倉明細</div>
+      <div class="card-title"><span class="icon"></span>持倉明細</div>
       <div class="port-table-wrap">
         <table class="port-table">
           <thead>
@@ -223,11 +224,11 @@
     <!-- Charts -->
     <div class="chart-row">
       <div class="card">
-        <div class="card-title"><span class="icon">🥧</span>持倉配置（市值）</div>
+        <div class="card-title"><span class="icon"></span>持倉配置（市值）</div>
         <div id="pieChart"></div>
       </div>
       <div class="card">
-        <div class="card-title"><span class="icon">📊</span>各標的損益率 %</div>
+        <div class="card-title"><span class="icon"></span>各標的損益率 %</div>
         <div id="barChart"></div>
       </div>
     </div>
@@ -236,7 +237,7 @@
   <!-- ══ TAB: 多股比較 ══════════════════════════════════════ -->
   <div id="tab-compare" class="pf-section">
     <div class="card">
-      <div class="card-title"><span class="icon">⚖️</span>多股比較（最多 5 檔）</div>
+      <div class="card-title"><span class="icon"></span>多股比較（最多 5 檔）</div>
       <div class="cmp-toolbar">
         <div class="cmp-inputs" id="cmpInputs">
           <input class="inp inp-sm" style="width:110px" placeholder="AAPL">
@@ -261,7 +262,7 @@
 <!-- ══ Modal: 新增群組 ══ -->
 <div class="modal-overlay" id="newGroupModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('newGroupModal')">✕</button>
+    <button class="modal-close" onclick="closeModal('newGroupModal')"></button>
     <div class="modal-title">新增自選群組</div>
     <div class="form-row">
       <label class="form-label">群組名稱</label>
@@ -283,7 +284,7 @@
 <!-- ══ Modal: 新增標的到群組 ══ -->
 <div class="modal-overlay" id="addTickerModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('addTickerModal')">✕</button>
+    <button class="modal-close" onclick="closeModal('addTickerModal')"></button>
     <div class="modal-title" id="addTickerModalTitle">加入標的</div>
     <div class="form-row">
       <label class="form-label">股票代碼</label>
@@ -297,7 +298,7 @@
 <!-- ══ Modal: 新增持倉 ══ -->
 <div class="modal-overlay" id="addHoldingModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('addHoldingModal')">✕</button>
+    <button class="modal-close" onclick="closeModal('addHoldingModal')"></button>
     <div class="modal-title" id="addHoldingTitle">新增持倉</div>
     <input type="hidden" id="editHoldingIdx" value="">
     <div class="form-row">
@@ -430,8 +431,8 @@ function renderGroups() {
       const row = document.createElement('div');
       row.className = 'gticker-row';
       const cached = _groupTickerPrices[ticker];
-      const pctHtml = cached
-        ? `<span class="gticker-pct ${cached.pct>=0?'green':'red'}">${cached.pct>=0?'+':''}${cached.pct?.toFixed(2)}%</span>`
+      const pctHtml = (cached && cached.pct != null)
+        ? `<span class="gticker-pct ${cached.pct>=0?'green':'red'}">${cached.pct>=0?'+':''}${cached.pct.toFixed(2)}%</span>`
         : `<span class="gticker-pct" style="color:var(--text-dim)">--</span>`;
       row.innerHTML = `
         <span class="gticker-sym">${esc(ticker)}</span>
@@ -439,7 +440,7 @@ function renderGroups() {
         ${pctHtml}
         <div class="gticker-actions">
           <button class="btn btn-ghost btn-sm" onclick="goAnalyze('${esc(ticker)}')">查看</button>
-          <button class="btn btn-danger btn-sm" onclick="removeFromGroup('${esc(name)}','${esc(ticker)}')">✕</button>
+          <button class="btn btn-danger btn-sm" onclick="removeFromGroup('${esc(name)}','${esc(ticker)}')"></button>
         </div>`;
       tickerContainer.appendChild(row);
     });
@@ -451,14 +452,21 @@ function renderGroups() {
   if (unique.length) fetchGroupPrices(unique);
 }
 
+function _isTwCode(t) {
+  // 台股代號：4~6 位數字，可能有一個尾字母，例如 0050 / 00631L / 2330
+  return /^\d{4,6}[A-Z]?$/.test(t.replace(/\.(TW|TWO)$/, ''));
+}
+
 async function fetchGroupPrices(tickers) {
   for (const t of tickers) {
     try {
-      const isTw = t.endsWith('.TW') || t.endsWith('.TWO');
-      const url = isTw ? `/api/tw/realtime/${t}` : `/api/stock/${t}`;
+      const isTw = t.endsWith('.TW') || t.endsWith('.TWO') || _isTwCode(t);
+      const normalized = (isTw && !t.includes('.')) ? t + '.TW' : t;
+      const url = isTw ? `/api/tw/realtime/${normalized}` : `/api/stock/${t}`;
       const r = await fetch(url);
       const j = await r.json();
-      _groupTickerPrices[t] = { price: j.price, pct: j.changePct, name: j.name };
+      const pct = j.changePct != null ? j.changePct : null;
+      _groupTickerPrices[t] = { price: j.price, pct, name: j.name };
     } catch {}
   }
   renderGroups();
@@ -540,9 +548,9 @@ function deleteGroup(name) {
 }
 
 function goAnalyze(ticker) {
-  const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO');
+  const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO') || _isTwCode(ticker);
   const code = ticker.replace('.TW','').replace('.TWO','');
-  window.open(isTw ? `/tw?t=${code}` : `/?t=${ticker}`, '_blank');
+  window.open(isTw ? `/tw?ticker=${code}` : `/?ticker=${ticker}`, '_blank');
 }
 
 // ═══════════════════════════════════════════
@@ -858,8 +866,8 @@ function renderCompareTable(stocks) {
     { label: '── 技術面', section: true },
     { label: 'RSI', key: 'rsi', fmt: v => v ? v.toFixed(1) : '--', asc: null },
     { label: 'MACD', key: 'macdBull', fmt: v => v ? '<span class="bool-yes">金叉↑</span>' : '<span class="bool-no">死叉↓</span>', asc: null, html: true },
-    { label: '站穩 MA20', key: 'aboveMa20', fmt: v => v ? '<span class="bool-yes">✓</span>' : '<span class="bool-no">✗</span>', asc: null, html: true },
-    { label: '站穩 MA60', key: 'aboveMa60', fmt: v => v ? '<span class="bool-yes">✓</span>' : '<span class="bool-no">✗</span>', asc: null, html: true },
+    { label: '站穩 MA20', key: 'aboveMa20', fmt: v => v ? '<span class="bool-yes">Y</span>' : '<span class="bool-no">N</span>', asc: null, html: true },
+    { label: '站穩 MA60', key: 'aboveMa60', fmt: v => v ? '<span class="bool-yes">Y</span>' : '<span class="bool-no">N</span>', asc: null, html: true },
     { label: '量比', key: 'volRatio', fmt: v => v ? v.toFixed(2)+'x' : '--', asc: true },
     { label: '── 綜合', section: true },
     { label: '技術信號', key: 'signal', fmt: (v, s) => `<span class="cmp-sig ${s.signalCls}">${v||'--'}</span>`, asc: null, html: true },

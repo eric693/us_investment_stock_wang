@@ -1661,7 +1661,7 @@ function updateWatchBtn(ticker) {
   const btn = $('watchBtn');
   if (!btn) return;
   const inWl = getWatchlist().includes(ticker);
-  btn.textContent = inWl ? '★ 已自選' : '+ 自選';
+  btn.textContent = inWl ? ' 已自選' : '+ 自選';
   btn.className = 'watch-btn' + (inWl ? ' watched' : '');
 }
 

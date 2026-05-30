@@ -126,6 +126,14 @@ def safe_float(v, default=0.0):
     except:
         return default
 
+def last_valid(series, default=0.0):
+    """Return last non-NaN value from a pandas Series (handles today's NaN for TW stocks)."""
+    try:
+        s = series.dropna()
+        return safe_float(s.iloc[-1]) if len(s) else default
+    except:
+        return default
+
 def safe_int(v, default=0):
     try:
         return int(safe_float(v))
@@ -403,7 +411,7 @@ def gen_catalysts(price, ma5, ma20, ma60, macd, dea, rsi, vol_ratio, week52h, in
     # ── Fundamental catalysts — only include when data is genuinely positive ──
     sector     = info.get('sector', '')
     industry   = info.get('industry', '')
-    div_yield  = safe_float(info.get('dividendYield', 0)) * 100   # decimal → %
+    div_yield  = safe_float(info.get('dividendYield', 0))  # already in % format
     inst_pct   = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
     rev_growth = round(safe_float(info.get('revenueGrowth', 0)) * 100, 1)
     fwd_pe     = safe_float(info.get('forwardPE', 0))
@@ -932,29 +940,29 @@ def get_stock(ticker):
         hist['BB_lower'] = bb_lower
 
         # ── Core values ──
-        price = safe_float(hist['Close'].iloc[-1])
-        prev  = safe_float(hist['Close'].iloc[-2])
+        price = last_valid(hist['Close'])
+        prev  = safe_float(hist['Close'].dropna().iloc[-2]) if len(hist['Close'].dropna()) > 1 else price
         change     = price - prev
         change_pct = change / prev * 100 if prev else 0
 
-        ma5    = safe_float(hist['MA5'].iloc[-1])
-        ma20   = safe_float(hist['MA20'].iloc[-1])
-        ma60   = safe_float(hist['MA60'].iloc[-1])
-        macd_v = safe_float(hist['MACD'].iloc[-1])
-        dea_v  = safe_float(hist['Signal'].iloc[-1])
-        macd_h = safe_float(hist['MACDHist'].iloc[-1])
-        rsi_v  = safe_float(hist['RSI'].iloc[-1])
+        ma5    = last_valid(hist['MA5'])
+        ma20   = last_valid(hist['MA20'])
+        ma60   = last_valid(hist['MA60'])
+        macd_v = last_valid(hist['MACD'])
+        dea_v  = last_valid(hist['Signal'])
+        macd_h = last_valid(hist['MACDHist'])
+        rsi_v  = last_valid(hist['RSI'])
 
         avg_vol   = safe_float(hist['Volume'].rolling(20).mean().iloc[-1])
-        curr_vol  = safe_float(hist['Volume'].iloc[-1])
+        curr_vol  = last_valid(hist['Volume'])
         vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
 
         week52h = safe_float(info.get('fiftyTwoWeekHigh', hist['High'].max()))
         week52l = safe_float(info.get('fiftyTwoWeekLow',  hist['Low'].min()))
 
-        bb_u = safe_float(hist['BB_upper'].iloc[-1])
-        bb_m = safe_float(hist['BB_mid'].iloc[-1])
-        bb_l = safe_float(hist['BB_lower'].iloc[-1])
+        bb_u = last_valid(hist['BB_upper'])
+        bb_m = last_valid(hist['BB_mid'])
+        bb_l = last_valid(hist['BB_lower'])
         bb_width = round((bb_u - bb_l) / bb_m * 100, 2) if bb_m else 0
         bb_pos   = round((price - bb_l) / (bb_u - bb_l) * 100, 1) if (bb_u - bb_l) else 50
 
@@ -1030,9 +1038,9 @@ def get_stock(ticker):
             'price':        round(price, 3),
             'change':       round(change, 3),
             'changePct':    round(change_pct, 2),
-            'open':         round(safe_float(hist['Open'].iloc[-1]), 2),
-            'high':         round(safe_float(hist['High'].iloc[-1]), 2),
-            'low':          round(safe_float(hist['Low'].iloc[-1]), 2),
+            'open':         round(last_valid(hist['Open']), 2),
+            'high':         round(last_valid(hist['High']), 2),
+            'low':          round(last_valid(hist['Low']), 2),
             'prevClose':    round(prev, 2),
             'volume':       safe_int(curr_vol),
             'avgVolume':    safe_int(avg_vol),
@@ -1043,7 +1051,7 @@ def get_stock(ticker):
             'eps':          round(safe_float(info.get('trailingEps', 0)), 2),
             'fwdEps':       fwd_eps,
             'beta':         round(safe_float(info.get('beta', 0)), 2),
-            'divYield':     round(safe_float(info.get('dividendYield', 0)) * 100, 2),
+            'divYield':     round(safe_float(info.get('dividendYield', 0)), 2),
             'sharesOut':    safe_int(info.get('sharesOutstanding', 0)),
             'week52High':   round(week52h, 2),
             'week52Low':    round(week52l, 2),
@@ -1391,8 +1399,8 @@ def compare_stocks():
                 return {'ticker': ticker, 'error': '找不到資料'}
 
             close = hist['Close']
-            price = safe_float(close.iloc[-1])
-            prev  = safe_float(close.iloc[-2]) if len(close) > 1 else price
+            price = last_valid(close)
+            prev  = safe_float(close.dropna().iloc[-2]) if len(close.dropna()) > 1 else price
             change_pct = (price / prev - 1) * 100 if prev else 0
 
             n = len(close)
@@ -1408,7 +1416,7 @@ def compare_stocks():
             from52h = round((price / week52h - 1) * 100, 1) if week52h > 0 else 0
 
             avg_vol   = safe_float(hist['Volume'].rolling(min(20, n)).mean().iloc[-1])
-            curr_vol  = safe_float(hist['Volume'].iloc[-1])
+            curr_vol  = last_valid(hist['Volume'])
             vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
 
             bull = sum([price > ma20, price > ma60,
@@ -1418,11 +1426,7 @@ def compare_stocks():
             elif bull >= 2: sig_label, sig_cls = '中性',     'sv-hold'
             else:           sig_label, sig_cls = '偏弱',     'sv-caution'
 
-            div_yield = safe_float(info.get('dividendYield', 0))
-            if not is_tw and div_yield < 1:
-                div_yield = round(div_yield * 100, 2)
-            else:
-                div_yield = round(div_yield, 2)
+            div_yield = round(safe_float(info.get('dividendYield', 0)), 2)
 
             analyst_target = round(safe_float(info.get('targetMeanPrice', 0)), 2)
             upside = round((analyst_target / price - 1) * 100, 1) if analyst_target > 0 and price > 0 else 0
@@ -1551,29 +1555,29 @@ def get_tw_stock(ticker):
         hist['BB_mid']   = bb_m
         hist['BB_lower'] = bb_l
 
-        price = safe_float(hist['Close'].iloc[-1])
-        prev  = safe_float(hist['Close'].iloc[-2])
+        price = last_valid(hist['Close'])
+        prev  = safe_float(hist['Close'].dropna().iloc[-2]) if len(hist['Close'].dropna()) > 1 else price
         change     = price - prev
         change_pct = change / prev * 100 if prev else 0
 
-        ma5    = safe_float(hist['MA5'].iloc[-1])
-        ma20   = safe_float(hist['MA20'].iloc[-1])
-        ma60   = safe_float(hist['MA60'].iloc[-1])
-        macd_v = safe_float(hist['MACD'].iloc[-1])
-        dea_v  = safe_float(hist['Signal'].iloc[-1])
-        macd_h = safe_float(hist['MACDHist'].iloc[-1])
-        rsi_v  = safe_float(hist['RSI'].iloc[-1])
+        ma5    = last_valid(hist['MA5'])
+        ma20   = last_valid(hist['MA20'])
+        ma60   = last_valid(hist['MA60'])
+        macd_v = last_valid(hist['MACD'])
+        dea_v  = last_valid(hist['Signal'])
+        macd_h = last_valid(hist['MACDHist'])
+        rsi_v  = last_valid(hist['RSI'])
 
         avg_vol  = safe_float(hist['Volume'].rolling(20).mean().iloc[-1])
-        curr_vol = safe_float(hist['Volume'].iloc[-1])
+        curr_vol = last_valid(hist['Volume'])
         vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
 
         week52h = safe_float(info.get('fiftyTwoWeekHigh', hist['High'].max()))
         week52l = safe_float(info.get('fiftyTwoWeekLow',  hist['Low'].min()))
 
-        bbu = safe_float(hist['BB_upper'].iloc[-1])
-        bbm = safe_float(hist['BB_mid'].iloc[-1])
-        bbl = safe_float(hist['BB_lower'].iloc[-1])
+        bbu = last_valid(hist['BB_upper'])
+        bbm = last_valid(hist['BB_mid'])
+        bbl = last_valid(hist['BB_lower'])
         bb_width = round((bbu - bbl) / bbm * 100, 2) if bbm else 0
         bb_pos   = round((price - bbl) / (bbu - bbl) * 100, 1) if (bbu - bbl) else 50
 
@@ -1679,9 +1683,9 @@ def get_tw_stock(ticker):
             'price':         round(price, 2),
             'change':        round(change, 2),
             'changePct':     round(change_pct, 2),
-            'open':          round(safe_float(hist['Open'].iloc[-1]), 2),
-            'high':          round(safe_float(hist['High'].iloc[-1]), 2),
-            'low':           round(safe_float(hist['Low'].iloc[-1]), 2),
+            'open':          round(last_valid(hist['Open']), 2),
+            'high':          round(last_valid(hist['High']), 2),
+            'low':           round(last_valid(hist['Low']), 2),
             'prevClose':     round(prev, 2),
             'volume':        safe_int(curr_vol),
             'avgVolume':     safe_int(avg_vol),
@@ -2198,7 +2202,7 @@ def _quick_signal(stock, ticker, price, name, profile='steady'):
         hist_v  = safe_float(hist_s.iloc[-1])
         hist_pv = safe_float(hist_s.iloc[-2]) if n > 1 else 0
         avg_vol  = safe_float(hist['Volume'].rolling(min(20, n)).mean().iloc[-1])
-        curr_vol = safe_float(hist['Volume'].iloc[-1])
+        curr_vol = last_valid(hist['Volume'])
         vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
         stop = round(ma20 * 0.97, 2)
 
@@ -2355,7 +2359,7 @@ def _eval_condition(hist, info, cond):
     low    = hist['Low']
     vol    = hist['Volume']
     n      = len(close)
-    price  = safe_float(close.iloc[-1])
+    price  = last_valid(close)
 
     def _ma(period):
         return close.rolling(min(int(period), n), min_periods=1).mean()
@@ -2379,11 +2383,11 @@ def _eval_condition(hist, info, cond):
             if n < within + 2:
                 return False, '資料不足'
             # 最新收盤站上均線，且 within 天前有在均線下
-            curr_above = close.iloc[-1] > ma_series.iloc[-1]
+            curr_above = last_valid(close) > last_valid(ma_series)
             was_below  = (close.iloc[-(within+1):-1].values <
                           ma_series.iloc[-(within+1):-1].values).any()
             return (curr_above and was_below,
-                    f'近{within}天突破 MA{period} {safe_float(ma_series.iloc[-1]):.2f}')
+                    f'近{within}天突破 MA{period} {safe_float(last_valid(ma_series)):.2f}')
 
         elif ctype == 'price_cross_below_ma':
             period    = int(params.get('period', 20))
@@ -2391,11 +2395,11 @@ def _eval_condition(hist, info, cond):
             ma_series = _ma(period)
             if n < within + 2:
                 return False, '資料不足'
-            curr_below = close.iloc[-1] < ma_series.iloc[-1]
+            curr_below = last_valid(close) < last_valid(ma_series)
             was_above  = (close.iloc[-(within+1):-1].values >
                           ma_series.iloc[-(within+1):-1].values).any()
             return (curr_below and was_above,
-                    f'近{within}天跌破 MA{period} {safe_float(ma_series.iloc[-1]):.2f}')
+                    f'近{within}天跌破 MA{period} {safe_float(last_valid(ma_series)):.2f}')
 
         elif ctype == 'price_below_ma_for_months':
             period = int(params.get('period', 60))
@@ -2407,7 +2411,7 @@ def _eval_condition(hist, info, cond):
             window_close = close.iloc[-days:-1]
             window_ma    = ma_series.iloc[-days:-1]
             below_ratio  = (window_close.values < window_ma.values).mean()
-            passed = below_ratio >= 0.70 and close.iloc[-1] >= ma_series.iloc[-1] * 0.98
+            passed = below_ratio >= 0.70 and last_valid(close) >= last_valid(ma_series) * 0.98
             return passed, f'過去{months}月 {below_ratio*100:.0f}% 時間低於 MA{period}'
 
         elif ctype == 'ma_trending_up':
@@ -2416,7 +2420,7 @@ def _eval_condition(hist, info, cond):
             ma_series  = _ma(period)
             if n < trend_days + 2:
                 return False, '資料不足'
-            return (safe_float(ma_series.iloc[-1]) > safe_float(ma_series.iloc[-trend_days]),
+            return (safe_float(last_valid(ma_series)) > safe_float(ma_series.iloc[-trend_days]),
                     f'MA{period} {trend_days}天持續上揚')
 
         # ── KD 指標 ───────────────────────────────────────
@@ -2540,7 +2544,7 @@ def _eval_condition(hist, info, cond):
 
         elif ctype == 'price_change_above':
             thr = float(params.get('threshold', 3))
-            prev = safe_float(close.iloc[-2]) if n > 1 else price
+            prev = safe_float(close.dropna().iloc[-2]) if len(close.dropna()) > 1 else price
             chg_pct = (price / prev - 1) * 100 if prev else 0
             return chg_pct >= thr, f'今日漲幅 {chg_pct:.2f}% ≥ {thr}%'
 
@@ -2569,10 +2573,10 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y'):
         hist  = stock.history(period=period)
         if hist.empty or len(hist) < 20:
             return None
-        price = safe_float(hist['Close'].iloc[-1])
+        price = last_valid(hist['Close'])
         if price <= 0:
             return None
-        prev      = safe_float(hist['Close'].iloc[-2]) if len(hist) > 1 else price
+        prev      = safe_float(hist['Close'].dropna().iloc[-2]) if len(hist['Close'].dropna()) > 1 else price
         chg_pct   = (price / prev - 1) * 100 if prev else 0
         name      = (info.get('shortName') or info.get('longName') or ticker)[:30]
 
@@ -2597,11 +2601,10 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y'):
         rsi    = safe_float(calc_rsi(close).iloc[-1])
         macd_s, sig_s, _ = calc_macd(close)
         avg_vol   = safe_float(hist['Volume'].rolling(min(20,n), min_periods=1).mean().iloc[-1])
-        curr_vol  = safe_float(hist['Volume'].iloc[-1])
+        curr_vol  = last_valid(hist['Volume'])
         vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
         inst_pct  = round(safe_float(info.get('heldPercentInstitutions', 0)) * 100, 1)
-        div_yield = safe_float(info.get('dividendYield', 0))
-        if not is_tw and div_yield < 1: div_yield = round(div_yield * 100, 2)
+        div_yield = round(safe_float(info.get('dividendYield', 0)), 2)
         display = ticker.replace('.TW','').replace('.TWO','') if is_tw else ticker
 
         return {
