@@ -571,10 +571,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function loadWelcomeCards() {
-  const tickers = ['NVDA','AAPL','TSLA','MSFT','AMZN','META','GOOGL','CRCL'];
-  try {
-    const resp = await fetch('/api/compare?tickers=' + tickers.join(','));
-    const data = await resp.json();
+  const batches = [
+    ['NVDA','AAPL','TSLA','MSFT','AMZN'],
+    ['META','GOOGL','CRCL'],
+  ];
+  const fill = (data) => {
     data.forEach(s => {
       if (s.error) return;
       const t = s.ticker;
@@ -598,12 +599,19 @@ async function loadWelcomeCards() {
         if (s.signal) parts.push('信號：' + s.signal);
         descEl.textContent = parts.join('　') || '--';
       }
-      if (tagEl) tagEl.textContent = s.isTw ? (s.sector || '--') : (s.sector || '--');
+      if (tagEl) tagEl.textContent = s.sector || '--';
       const card = document.querySelector(`.sample-card[data-ticker="${t}"]`);
       if (card) card.classList.remove('wc-skeleton');
     });
-  } catch(e) {
-    console.warn('Welcome cards load failed:', e);
+  };
+  for (const batch of batches) {
+    try {
+      const resp = await fetch('/api/compare?tickers=' + batch.join(','));
+      const data = await resp.json();
+      fill(data);
+    } catch(e) {
+      console.warn('Welcome cards batch failed:', e);
+    }
   }
 }
 

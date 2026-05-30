@@ -1380,7 +1380,7 @@ def portfolio():
 @app.route('/api/compare')
 def compare_stocks():
     tickers_raw = request.args.get('tickers', '')
-    tickers = [t.strip().upper() for t in tickers_raw.split(',') if t.strip()][:5]
+    tickers = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()][:10]
     if not tickers:
         return jsonify([])
 
