@@ -785,8 +785,9 @@ async function refreshPortfolioPrices() {
 
   await Promise.all(tickers.map(async ticker => {
     try {
-      const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO');
-      const url = isTw ? `/api/tw/realtime/${ticker}` : `/api/stock/${ticker}`;
+      const isTw = ticker.endsWith('.TW') || ticker.endsWith('.TWO') || _isTwCode(ticker);
+      const normalized = (isTw && !ticker.includes('.')) ? ticker + '.TW' : ticker;
+      const url = isTw ? `/api/tw/realtime/${normalized}` : `/api/stock/${ticker}`;
       const r = await fetch(url);
       const j = await r.json();
       _portPrices[ticker] = { price: j.price, pct: j.changePct, name: j.name };

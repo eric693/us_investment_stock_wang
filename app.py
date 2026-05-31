@@ -1471,7 +1471,7 @@ def compare_stocks():
 
             result = {
                 'ticker':       ticker,
-                'name':         (info.get('shortName') or info.get('longName') or ticker)[:25],
+                'name':         tw_cn_name(ticker, (info.get('shortName') or info.get('longName') or ticker)[:25]) if is_tw else (info.get('shortName') or info.get('longName') or ticker)[:25],
                 'price':        round(price, 2),
                 'changePct':    round(change_pct, 2),
                 'pe':           round(safe_float(info.get('trailingPE',  0)), 1),
