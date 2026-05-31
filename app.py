@@ -4057,27 +4057,27 @@ def _fetch_predict_data(code: str) -> dict:
             '普通（5MV>20MV，但20MV走平或下彎）' if mv5 > mv20 else '偏弱（5MV<20MV）')
 
         # ── KD ───────────────────────────────────────────────
-        kd = calc_kd(high, low, close)
-        k_val = round(float(kd['K'].iloc[-1]), 1)
-        d_val = round(float(kd['D'].iloc[-1]), 1)
+        k_s, d_s = calc_kd(high, low, close)
+        k_val = round(float(k_s.iloc[-1]), 1)
+        d_val = round(float(d_s.iloc[-1]), 1)
         result['k'] = k_val
         result['d'] = d_val
         if k_val < 20:   kd_status = '低檔築底'
         elif k_val > 80: kd_status = '高檔鈍化'
-        elif k_val > d_val and float(kd['K'].iloc[-2]) <= float(kd['D'].iloc[-2]):
+        elif k_val > d_val and float(k_s.iloc[-2]) <= float(d_s.iloc[-2]):
             kd_status = '黃金交叉（剛發生）'
-        elif k_val < d_val and float(kd['K'].iloc[-2]) >= float(kd['D'].iloc[-2]):
+        elif k_val < d_val and float(k_s.iloc[-2]) >= float(d_s.iloc[-2]):
             kd_status = '死亡交叉（剛發生）'
         else:
-            kd_status = f'{'K>D 上行' if k_val > d_val else 'K<D 下行'}'
+            kd_status = 'K>D 上行' if k_val > d_val else 'K<D 下行'
         result['kd_status'] = kd_status
 
         # ── MACD ─────────────────────────────────────────────
-        macd_d = calc_macd(close)
-        macd_v = round(float(macd_d['macd'].iloc[-1]), 3)
-        dea_v  = round(float(macd_d['signal'].iloc[-1]), 3)
-        osc    = round(float(macd_d['histogram'].iloc[-1]), 3)
-        osc_prev = round(float(macd_d['histogram'].iloc[-2]), 3)
+        macd_s, sig_s, hist_s = calc_macd(close)
+        macd_v = round(float(macd_s.iloc[-1]), 3)
+        dea_v  = round(float(sig_s.iloc[-1]), 3)
+        osc    = round(float(hist_s.iloc[-1]), 3)
+        osc_prev = round(float(hist_s.iloc[-2]), 3)
         result['macd']    = macd_v
         result['dea']     = dea_v
         result['osc']     = osc
@@ -4165,13 +4165,12 @@ def _fetch_predict_data(code: str) -> dict:
 
         # 布林通道
         try:
-            bb = calc_bollinger(close)
-            result['bb_upper'] = round(float(bb['upper'].iloc[-1]), 2)
-            result['bb_lower'] = round(float(bb['lower'].iloc[-1]), 2)
-            result['bb_mid']   = round(float(bb['mid'].iloc[-1]),   2)
-            result['bb_pct']   = round(
-                (price - float(bb['lower'].iloc[-1])) /
-                max(float(bb['upper'].iloc[-1]) - float(bb['lower'].iloc[-1]), 0.01) * 100, 1)
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbu = float(bb_u.iloc[-1]); bbl = float(bb_l.iloc[-1]); bbm = float(bb_m.iloc[-1])
+            result['bb_upper'] = round(bbu, 2)
+            result['bb_lower'] = round(bbl, 2)
+            result['bb_mid']   = round(bbm, 2)
+            result['bb_pct']   = round((price - bbl) / max(bbu - bbl, 0.01) * 100, 1)
         except Exception:
             result['bb_upper'] = result['bb_lower'] = result['bb_mid'] = 0
             result['bb_pct'] = 50
@@ -4192,9 +4191,9 @@ def _fetch_predict_data(code: str) -> dict:
         try:
             hist_w = stock.history(period='1y', interval='1wk')
             if len(hist_w) >= 9:
-                wkd = calc_kd(hist_w['High'], hist_w['Low'], hist_w['Close'])
-                result['week_k'] = round(float(wkd['K'].iloc[-1]), 1)
-                result['week_d'] = round(float(wkd['D'].iloc[-1]), 1)
+                wk_s, wd_s = calc_kd(hist_w['High'], hist_w['Low'], hist_w['Close'])
+                result['week_k'] = round(float(wk_s.iloc[-1]), 1)
+                result['week_d'] = round(float(wd_s.iloc[-1]), 1)
             else:
                 result['week_k'] = result['week_d'] = 50
         except Exception:
@@ -4597,6 +4596,18 @@ def _run_agent_scan(cfg: dict) -> list:
     return results[:20]
 
 
+def _news_digest(query: str, n: int = 3) -> str:
+    """取近 n 則新聞標題，組成精簡文字供 AI 判斷消息面。"""
+    try:
+        news = _fetch_gnews(query, max_results=n)
+        if not news:
+            return ''
+        lines = [f"- {a['title']}（{a.get('publisher','')}）" for a in news[:n]]
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
 def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
     """Analyze all holdings and return recommendation list."""
     holdings = cfg.get('holdings', [])
@@ -4610,12 +4621,15 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
             continue
         data = _fetch_predict_data(code)
         ctx  = _agent_recommendation_text(data, h)
+        news = _news_digest(data.get('name', code))
+        if news:
+            ctx += f"\n\n### 【近期新聞】\n{news}"
         try:
             resp = claude_client.messages.create(
                 model='claude-opus-4-8',
                 max_tokens=400,
                 system=_AGENT_SYSTEM_PROMPT,
-                messages=[{'role': 'user', 'content': f'請針對以下持倉股票給出明日操作建議：\n\n{ctx}'}],
+                messages=[{'role': 'user', 'content': f'請針對以下持倉股票給出明日操作建議（請一併考量消息面）：\n\n{ctx}'}],
             )
             rec_text = resp.content[0].text
         except Exception as e:
@@ -4689,7 +4703,7 @@ def _is_market_hours() -> bool:
     if now.weekday() >= 5:
         return False
     t = now.hour * 60 + now.minute
-    return 900 <= t <= 810   # 09:00 - 13:30 → 540-810 minutes
+    return 540 <= t <= 810   # 09:00 - 13:30 → 540-810 minutes
 
 
 def _is_premarket() -> bool:
@@ -5013,6 +5027,443 @@ def agent_run_now():
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({'ok': True, 'message': '分析已在背景執行，完成後推播 LINE 通知'})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  統一 AI 股票系統 — Tool Use 編排層
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 精選條件目錄（從 110+ 條件中挑出最實用的，供 Claude 自動挑選組合）
+CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為可選參數，省略則用預設值）：
+
+【趨勢與均線】
+- price_above_ma {period:20} 股價站上 N 日均線
+- price_cross_above_ma {period:20} 股價剛突破均線（黃金交叉價）
+- ma_trending_up {period:20, trend_days:5} 均線向上彎
+- ma_bull_alignment 均線多頭排列（5>10>20>60）
+- ma_golden_cross {short_period:5, long_period:20} 短均線黃金交叉長均線
+- monthly_price_above_ma 站上月線（月K）
+
+【動能指標】
+- kd_golden_cross KD 黃金交叉
+- kd_k_below {threshold:20} KD 的 K 值低檔（超賣）
+- macd_golden_cross MACD 黃金交叉
+- macd_bullish MACD 多頭（DIF>MACD）
+- rsi_below {threshold:30} RSI 超賣
+- rsi_cross_above {threshold:50} RSI 向上突破
+- william_r_oversold 威廉指標超賣
+- cci_oversold CCI 超賣
+- bias_low {threshold:-5} 乖離率偏低（跌深）
+- mtm_cross_above 動量 MTM 由負翻正
+- weekly_kd_golden_cross 週 KD 黃金交叉（中期）
+- monthly_kd_oversold 月 KD 低檔（長期低基期）
+
+【量價結構】
+- volume_ratio_above {ratio:1.5} 爆量（量 > N 倍均量）
+- volume_shrinking 量縮（賣壓宣洩）
+- high_vol_breakout 帶量突破前高
+- vol_up_candle 量增收紅
+- obv_rising OBV 能量潮上升
+- price_consolidation_break 突破盤整區
+- bb_squeeze 布林通道收口（變盤前）
+- bb_breakout_up 突破布林上軌
+- price_near_bb_lower 接近布林下軌（低接）
+- bb_oversold 布林超賣
+
+【籌碼面】
+- inst_foreign_buy 外資買超
+- inst_trust_buy 投信買超
+- inst_3_buy 三大法人同步買超
+- inst_total_above {threshold:1000} 法人合計買超超過 N 張
+- inst_foreign_dominant 外資主導買超
+- margin_decrease 融資減少（散戶退場）
+- short_decrease 融券/借券減少（空方回補）
+- inst_pct_above {threshold:20} 法人持股比例高
+
+【K 線型態】
+- candle_hammer 鎚子線（底部反轉）
+- candle_bullish_engulfing 多頭吞噬
+- candle_morning_star 晨星（底部）
+- candle_long_lower_wick 長下影線（低檔買盤）
+- consecutive_up {days:3} 連續上漲 N 天
+
+【位階與價值】
+- price_near_52w_low 接近 52 週低點
+- price_from_high_below {threshold:20} 距高點回檔超過 N%
+- price_range {min:10, max:100} 股價在指定區間
+- pe_below {threshold:15} 本益比偏低
+- div_yield_above {threshold:4} 殖利率高於 N%
+
+挑選原則：起漲股常用組合 = ma_trending_up + kd_golden_cross + volume_ratio_above + inst_3_buy；
+低接股 = rsi_below + price_near_bb_lower + candle_hammer；
+強勢突破 = high_vol_breakout + ma_bull_alignment + macd_golden_cross。
+一次挑 2-4 個條件即可，太多會篩不出標的。"""
+
+
+# 產業分類清單（給 AI 參考可用的 sector 名稱）
+def _sector_list_text() -> str:
+    return '、'.join(TW_SCREENER_UNIVERSE.keys())
+
+
+_AI_SYSTEM_PROMPT = f"""你是一位專業的台股 AI 投資總管，能主動運用工具幫使用者選股、分析、追蹤持倉。
+
+你的核心能力：使用者用白話描述需求（例如「幫我找低價剛起漲的半導體股」），
+你要自行判斷該用哪些篩選條件，呼叫 screen_stocks 工具執行，再用 analyze_stock 深入分析最佳標的，
+必要時用 get_stock_news 查消息面，最後給出明確、有依據的建議。
+
+{CONDITION_CATALOG}
+
+可用產業分類（sector 參數）：{_sector_list_text()}
+
+工作流程建議：
+1. 理解使用者意圖 → 決定 scope（sector 指定產業 / market 全市場）與條件組合
+2. 呼叫 screen_stocks 篩選 → 取得候選清單與 15 因子評分等級（A/B/C/D/F）
+3. 對前 2-3 名呼叫 analyze_stock 取得完整數據 + 必要時 get_stock_news 查新聞
+4. 綜合給建議：明確標的、進場理由、關鍵支撐壓力價、預估明日區間、風險提示
+
+回應原則：
+- 使用繁體中文，語氣專業果斷，避免模糊
+- 推薦個股時務必說明「為什麼是這檔」與「關鍵價位」
+- 若使用者問持倉，先呼叫 get_holdings 取得實際部位再分析
+- 所有建議僅供參考，最後可附簡短風險提醒"""
+
+
+# ── Tool schemas（給 Claude 的工具定義）──────────────────────────────────
+_AI_TOOLS = [
+    {
+        'name': 'screen_stocks',
+        'description': '依指定的技術/籌碼條件篩選台股。可選擇掃描特定產業或全市場成交量前段班。回傳通過條件的股票及其 15 因子評分等級。',
+        'input_schema': {
+            'type': 'object',
+            'properties': {
+                'conditions': {
+                    'type': 'array',
+                    'description': '篩選條件清單，每項為 {type, params}。type 必填，params 可選。',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'type':   {'type': 'string', 'description': '條件代碼，見系統提示的條件目錄'},
+                            'params': {'type': 'object', 'description': '參數（可省略用預設）'},
+                        },
+                        'required': ['type'],
+                    },
+                },
+                'scope':     {'type': 'string', 'enum': ['sector', 'market'], 'description': 'sector=指定產業, market=全市場'},
+                'sector':    {'type': 'string', 'description': 'scope=sector 時的產業名稱'},
+                'price_min': {'type': 'number', 'description': '最低股價篩選，預設 0'},
+                'price_max': {'type': 'number', 'description': '最高股價篩選，預設 9999'},
+            },
+            'required': ['conditions', 'scope'],
+        },
+    },
+    {
+        'name': 'analyze_stock',
+        'description': '取得單一台股的完整技術面、籌碼面數據與 15 因子評分明細，用於深入分析個股。',
+        'input_schema': {
+            'type': 'object',
+            'properties': {
+                'code': {'type': 'string', 'description': '台股代碼，如 2330'},
+            },
+            'required': ['code'],
+        },
+    },
+    {
+        'name': 'get_stock_news',
+        'description': '查詢個股或關鍵字的近期新聞標題，用於評估消息面影響。',
+        'input_schema': {
+            'type': 'object',
+            'properties': {
+                'query': {'type': 'string', 'description': '股票名稱或關鍵字，如 台積電、AI 伺服器'},
+            },
+            'required': ['query'],
+        },
+    },
+    {
+        'name': 'get_holdings',
+        'description': '取得使用者目前的持倉部位、買入價與即時損益。當使用者詢問持倉相關問題時使用。',
+        'input_schema': {'type': 'object', 'properties': {}},
+    },
+]
+
+
+def _tool_screen_stocks(conditions, scope='sector', sector='', price_min=0, price_max=9999):
+    """執行篩選工具，回傳通過條件並含 15 因子評分的股票清單。"""
+    price_min = safe_float(price_min, 0)
+    price_max = safe_float(price_max, 9999) or 9999
+
+    # 決定掃描範圍
+    if scope == 'market':
+        codes = _get_tw_universe('top100')
+    else:
+        if sector and sector in TW_SCREENER_UNIVERSE:
+            codes = TW_SCREENER_UNIVERSE[sector]
+        else:
+            # 找不到指定產業，退回全市場
+            codes = _get_tw_universe('top100')
+
+    if not codes:
+        return {'error': '無法取得掃描清單', 'matches': []}
+
+    tickers = [tw_normalize(c) for c in codes]
+    tickers = list(dict.fromkeys(tickers))[:120]
+
+    # 正規化條件格式
+    norm_conds = []
+    for c in (conditions or []):
+        if isinstance(c, dict) and c.get('type'):
+            norm_conds.append({'type': c['type'], 'params': c.get('params', {}) or {}})
+    if not norm_conds:
+        return {'error': '未提供有效條件', 'matches': []}
+
+    # 第一階段：條件篩選
+    matched = []
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(_scan_ticker, t, norm_conds, True): t for t in tickers}
+        for f in as_completed(futs):
+            try:
+                r = f.result()
+                if r and price_min <= r.get('price', 0) <= price_max:
+                    matched.append(r)
+            except Exception:
+                pass
+
+    if not matched:
+        return {'matched': 0, 'matches': [],
+                'note': '無股票同時符合所有條件，可嘗試減少條件數量或放寬參數'}
+
+    # 取漲幅前段，第二階段補 15 因子評分
+    matched.sort(key=lambda x: x.get('changePct', 0), reverse=True)
+    top = matched[:12]
+
+    results = []
+    def _enrich(r):
+        code = r['ticker'].replace('.TW', '').replace('.TWO', '')
+        data = _fetch_predict_data(code)
+        mf   = data.get('mf_score') or {}
+        return {
+            'code':      code,
+            'name':      r.get('name', code),
+            'price':     r.get('price'),
+            'changePct': r.get('changePct'),
+            'grade':     mf.get('grade', '?'),
+            'score':     mf.get('total', 0),
+            'max_score': mf.get('max', 24),
+            'bias20':    data.get('bias20'),
+            'rebound':   data.get('rebound_pct'),
+            'kd':        f"K{data.get('k','?')} D{data.get('d','?')}",
+            'rsi':       data.get('rsi'),
+            'ma20_trend': data.get('ma20_trend', ''),
+            'inst_total': (data.get('inst') or {}).get('total_net'),
+            'passed':    [f['name'] for f in mf.get('breakdown', []) if f['pass']],
+        }
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for r in ex.map(_enrich, top):
+            results.append(r)
+
+    grade_order = {'A': 4, 'B': 3, 'C': 2, 'D': 1, 'F': 0, '?': -1}
+    results.sort(key=lambda x: -grade_order.get(x['grade'], -1))
+    return {'matched': len(matched), 'matches': results}
+
+
+def _tool_analyze_stock(code):
+    """單檔深入分析，回傳精簡的關鍵數據與 15 因子明細。"""
+    code = str(code).strip().upper().replace('.TW', '').replace('.TWO', '')
+    data = _fetch_predict_data(code)
+    if data.get('error'):
+        return {'error': data['error']}
+    mf = data.get('mf_score') or {}
+    return {
+        'code':   code,
+        'name':   data.get('name', code),
+        'price':  data.get('price'),
+        'grade':  mf.get('grade', '?'),
+        'score':  f"{mf.get('total',0)}/{mf.get('max',24)}",
+        'ma20_trend':   data.get('ma20_trend'),
+        'ma20_deduct':  data.get('ma20_deduct_price'),
+        'bias20':       data.get('bias20'),
+        'rebound_pct':  data.get('rebound_pct'),
+        'kd':           f"K{data.get('k')} D{data.get('d')} {data.get('kd_status','')}",
+        'week_kd':      f"週K{data.get('week_k')} 週D{data.get('week_d')}",
+        'rsi':          data.get('rsi'),
+        'macd_osc':     f"{data.get('osc')} {data.get('osc_trend','')}",
+        'bb_pct':       data.get('bb_pct'),
+        'w52_pct':      data.get('w52_pct'),
+        'ma_bull':      data.get('ma_bull'),
+        'vol_structure': data.get('vol_structure'),
+        'vol_ratio':    data.get('vol_ratio'),
+        'day_trade_ratio': data.get('day_trade_ratio'),
+        'support_5d':   data.get('low_5d'),
+        'resist_5d':    data.get('high_5d'),
+        'support_20d':  data.get('low_20d'),
+        'resist_20d':   data.get('high_20d'),
+        'ma':           f"MA5={data.get('ma5')} MA20={data.get('ma20')} MA60={data.get('ma60')}",
+        'inst':         data.get('inst'),
+        'margin':       data.get('margin'),
+        'factors_pass': [f['name'] for f in mf.get('breakdown', []) if f['pass']],
+        'factors_fail': [f['name'] for f in mf.get('breakdown', []) if not f['pass']],
+    }
+
+
+def _tool_get_news(query):
+    """查新聞工具。"""
+    news = _fetch_gnews(str(query), max_results=8)
+    return {'query': query,
+            'news': [{'title': a['title'], 'publisher': a.get('publisher', ''),
+                      'time': a.get('pubTime', '')} for a in news]}
+
+
+def _tool_get_holdings():
+    """取得持倉與即時損益。"""
+    cfg = _load_agent_cfg()
+    holdings = cfg.get('holdings', [])
+    out = []
+    for h in holdings:
+        code = h.get('code', '')
+        try:
+            data = _fetch_predict_data(code)
+            cur  = data.get('price', 0)
+            name = data.get('name', code)
+        except Exception:
+            cur, name = 0, code
+        buy_p = h.get('buy_price', 0)
+        pnl   = round((cur - buy_p) / buy_p * 100, 2) if buy_p and cur else 0
+        out.append({'code': code, 'name': name, 'buy_price': buy_p,
+                    'shares': h.get('shares', 0), 'current_price': cur, 'pnl_pct': pnl})
+    return {'holdings': out, 'count': len(out)}
+
+
+def _dispatch_tool(name, tool_input):
+    """執行工具並回傳結果 dict。"""
+    try:
+        if name == 'screen_stocks':
+            return _tool_screen_stocks(
+                conditions=tool_input.get('conditions', []),
+                scope=tool_input.get('scope', 'sector'),
+                sector=tool_input.get('sector', ''),
+                price_min=tool_input.get('price_min', 0),
+                price_max=tool_input.get('price_max', 9999))
+        if name == 'analyze_stock':
+            return _tool_analyze_stock(tool_input.get('code', ''))
+        if name == 'get_stock_news':
+            return _tool_get_news(tool_input.get('query', ''))
+        if name == 'get_holdings':
+            return _tool_get_holdings()
+        return {'error': f'未知工具 {name}'}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _tool_status_msg(name, tool_input):
+    """產生給前端顯示的工具執行狀態文字。"""
+    if name == 'screen_stocks':
+        scope = tool_input.get('scope', 'sector')
+        sector = tool_input.get('sector', '')
+        where = f'{sector}類股' if scope == 'sector' and sector else '全市場'
+        conds = '、'.join(c.get('type', '') for c in tool_input.get('conditions', [])[:4])
+        return f'正在篩選{where}（{conds}）…'
+    if name == 'analyze_stock':
+        return f'正在深入分析 {tool_input.get("code", "")}…'
+    if name == 'get_stock_news':
+        return f'正在查詢 {tool_input.get("query", "")} 的相關新聞…'
+    if name == 'get_holdings':
+        return '正在讀取你的持倉部位…'
+    return '處理中…'
+
+
+@app.route('/ai')
+def ai_home():
+    return render_template('ai_home.html')
+
+
+@app.route('/api/ai/chat', methods=['POST'])
+def ai_chat():
+    """統一 AI 對話 — Claude Tool Use 編排迴圈（SSE 串流）。"""
+    import anthropic
+    from flask import Response, stream_with_context
+
+    body    = request.get_json(force=True)
+    messages = body.get('messages', [])
+    scope_hint = body.get('scope_hint', '')   # 'sector' / 'market' / ''
+    cfg     = _load_agent_cfg()
+    api_key = body.get('api_key', '').strip() or cfg.get('claude_api_key', '')
+
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key，請至 AI Agent 頁面設定'}), 400
+    if not messages:
+        return jsonify({'error': '訊息不可為空'}), 400
+
+    system_prompt = _AI_SYSTEM_PROMPT
+    if scope_hint == 'sector':
+        system_prompt += '\n\n使用者偏好：優先以「指定產業」方式篩選（scope=sector）。'
+    elif scope_hint == 'market':
+        system_prompt += '\n\n使用者偏好：優先以「全市場」方式篩選（scope=market）。'
+
+    def generate():
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            convo  = list(messages)
+            all_cards = []
+
+            for _ in range(6):  # 最多 6 輪工具呼叫，防止無限迴圈
+                resp = client.messages.create(
+                    model='claude-opus-4-8',
+                    max_tokens=2000,
+                    system=[{'type': 'text', 'text': system_prompt,
+                             'cache_control': {'type': 'ephemeral'}}],
+                    tools=_AI_TOOLS,
+                    messages=convo,
+                )
+
+                # 串流輸出本輪的文字內容
+                text_blocks = [b for b in resp.content if b.type == 'text']
+                for tb in text_blocks:
+                    if tb.text:
+                        yield f"data: {json.dumps({'text': tb.text})}\n\n"
+
+                if resp.stop_reason != 'tool_use':
+                    break
+
+                # 處理工具呼叫
+                convo.append({'role': 'assistant', 'content': resp.content})
+                tool_results = []
+                for block in resp.content:
+                    if block.type != 'tool_use':
+                        continue
+                    status = _tool_status_msg(block.name, block.input)
+                    yield f"data: {json.dumps({'status': status})}\n\n"
+
+                    result = _dispatch_tool(block.name, block.input)
+
+                    # 收集股票卡片給前端渲染
+                    if block.name == 'screen_stocks' and result.get('matches'):
+                        all_cards.extend(result['matches'])
+                    if block.name == 'analyze_stock' and not result.get('error'):
+                        all_cards.append(result)
+
+                    tool_results.append({
+                        'type': 'tool_result',
+                        'tool_use_id': block.id,
+                        'content': json.dumps(result, ensure_ascii=False),
+                    })
+                convo.append({'role': 'user', 'content': tool_results})
+
+            if all_cards:
+                # 去重（依 code）
+                seen, uniq = set(), []
+                for c in all_cards:
+                    if c.get('code') and c['code'] not in seen:
+                        seen.add(c['code'])
+                        uniq.append(c)
+                yield f"data: {json.dumps({'cards': uniq[:15]})}\n\n"
+
+            yield "data: [DONE]\n\n"
+        except anthropic.AuthenticationError:
+            yield f"data: {json.dumps({'error': 'API Key 無效，請重新確認'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 if __name__ == '__main__':

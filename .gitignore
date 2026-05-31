@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 monitor_config.json
 strategies.json
+agent_config.json

@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 智能投資中心</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+/* ── Navbar ──────────────────────────────────────────────────────── */
+.ai-nav {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 20px; height: 54px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--card-bd);
+  position: sticky; top: 0; z-index: 50;
+}
+.ai-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.ai-nav .brand span { color: var(--gold); }
+.ai-nav a {
+  color: var(--text-mid); text-decoration: none;
+  font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s;
+}
+.ai-nav a:hover { color: var(--text); background: #0d1628; }
+.ai-nav a.active { color: #fff; background: var(--accent); }
+.ai-nav a.home {
+  background: linear-gradient(135deg, #1a6fd4, #7c4dff);
+  color: #fff;
+}
+
+/* ── Top market bar ──────────────────────────────────────────────── */
+.market-bar {
+  display: flex; gap: 10px; padding: 12px 20px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--card-bd);
+  background: #08101e;
+}
+.mkt-chip {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 14px; background: var(--card-bg);
+  border: 1px solid var(--card-bd); border-radius: 8px; min-width: 110px;
+}
+.mkt-label { font-size: 0.66rem; color: var(--text-dim); font-weight: 700; }
+.mkt-val { font-size: 0.92rem; font-weight: 800; }
+.mkt-pct { font-size: 0.7rem; font-weight: 700; }
+.up { color: #ff4e4e; } .down { color: #26d96b; }
+.agent-pill {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  font-size: 0.74rem; color: var(--text-mid);
+  padding: 6px 14px; background: var(--card-bg);
+  border: 1px solid var(--card-bd); border-radius: 20px;
+}
+.agent-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+.agent-pill .dot.on { background: #26d96b; box-shadow: 0 0 6px #26d96b80; }
+
+/* ── Layout ──────────────────────────────────────────────────────── */
+.ai-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr 300px;
+  gap: 14px; padding: 14px 20px;
+  height: calc(100vh - 54px - 57px);
+}
+.col { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.card {
+  background: var(--card-bg); border: 1px solid var(--card-bd);
+  border-radius: 10px; padding: 14px;
+}
+.card-title {
+  font-size: 0.74rem; font-weight: 800; color: var(--text-dim);
+  letter-spacing: .6px; text-transform: uppercase; margin-bottom: 10px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.card-title a { font-size: 0.66rem; color: var(--accent); text-decoration: none; font-weight: 700; }
+
+/* ── Holdings ────────────────────────────────────────────────────── */
+.hold-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid #0d1628;
+}
+.hold-item:last-child { border-bottom: none; }
+.hold-name { font-size: 0.8rem; font-weight: 700; color: var(--text); }
+.hold-code { font-size: 0.64rem; color: var(--text-dim); }
+.hold-pnl { font-size: 0.82rem; font-weight: 800; text-align: right; }
+.hold-price { font-size: 0.64rem; color: var(--text-dim); text-align: right; }
+.mini-empty { font-size: 0.74rem; color: var(--text-dim); text-align: center; padding: 16px 0; }
+
+/* ── Picks ───────────────────────────────────────────────────────── */
+.pick-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid #0d1628; cursor: pointer;
+}
+.pick-item:last-child { border-bottom: none; }
+.pick-item:hover .pick-name { color: var(--accent); }
+.pick-grade {
+  width: 26px; height: 26px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 0.9rem;
+}
+.g-A { background: #26d96b20; color: #26d96b; }
+.g-B { background: #1a6fd420; color: #4d9bf0; }
+.g-C { background: #e8c84a20; color: #e8c84a; }
+.g-D, .g-F, .g-\? { background: #55555520; color: #888; }
+.pick-name { font-size: 0.78rem; font-weight: 700; }
+.pick-meta { font-size: 0.62rem; color: var(--text-dim); }
+.pick-price { margin-left: auto; font-size: 0.78rem; font-weight: 700; text-align: right; }
+
+/* ── Notifications ───────────────────────────────────────────────── */
+.notif { padding: 8px 0; border-bottom: 1px solid #0d1628; }
+.notif:last-child { border-bottom: none; }
+.notif-h { display: flex; justify-content: space-between; }
+.notif-t { font-size: 0.72rem; font-weight: 800; color: var(--accent); }
+.notif-time { font-size: 0.6rem; color: var(--text-dim); }
+.notif-b { font-size: 0.68rem; color: var(--text-mid); margin-top: 3px; line-height: 1.5;
+           max-height: 48px; overflow: hidden; white-space: pre-wrap; }
+
+/* ── Chat (center) ───────────────────────────────────────────────── */
+.chat-col { display: flex; flex-direction: column; gap: 0;
+  background: var(--card-bg); border: 1px solid var(--card-bd);
+  border-radius: 10px; overflow: hidden; }
+.chat-head {
+  padding: 12px 16px; border-bottom: 1px solid var(--card-bd);
+  display: flex; align-items: center; gap: 10px;
+}
+.chat-head .ico {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(135deg, #1a6fd4, #7c4dff);
+  display: flex; align-items: center; justify-content: center; font-size: 0.95rem;
+}
+.chat-head .ttl { font-size: 0.9rem; font-weight: 800; }
+.chat-head .sub { font-size: 0.66rem; color: var(--text-dim); }
+.scope-switch { margin-left: auto; display: flex; gap: 4px;
+  background: #0a1120; border: 1px solid var(--card-bd); border-radius: 7px; padding: 3px; }
+.scope-btn { font-size: 0.66rem; font-weight: 700; color: var(--text-dim);
+  padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+.scope-btn.active { background: var(--accent); color: #fff; }
+
+.chat-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+.welcome { flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 14px; color: var(--text-dim); padding: 20px; }
+.welcome .big { font-size: 2.4rem; }
+.welcome h2 { color: var(--text); font-size: 1.15rem; margin: 0; }
+.welcome p { font-size: 0.8rem; max-width: 420px; line-height: 1.6; margin: 0; }
+.quick-prompts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
+.qp {
+  background: #0d1628; border: 1px solid var(--card-bd2); border-radius: 18px;
+  padding: 7px 16px; font-size: 0.74rem; color: var(--text-mid); cursor: pointer; transition: all .15s;
+}
+.qp:hover { border-color: var(--accent); color: var(--accent); }
+
+.msg { display: flex; gap: 10px; max-width: 92%; }
+.msg.user { flex-direction: row-reverse; align-self: flex-end; }
+.msg .av { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 800; }
+.msg.assistant .av { background: linear-gradient(135deg, #1a6fd4, #7c4dff); color: #fff; }
+.msg.user .av { background: #1a2540; color: var(--text-mid); border: 1px solid var(--card-bd); }
+.bubble { background: #0a1322; border: 1px solid var(--card-bd); border-radius: 11px;
+  padding: 11px 15px; font-size: 0.82rem; line-height: 1.7; color: var(--text); }
+.msg.user .bubble { background: #0d1e40; border-color: #1a3060; }
+.bubble h3 { font-size: 0.85rem; color: var(--accent); margin: 10px 0 5px; }
+.bubble h3:first-child { margin-top: 0; }
+.bubble strong { color: #e2e8f0; }
+.bubble ul { padding-left: 18px; margin: 4px 0; }
+
+/* Tool status line */
+.tool-status { display: flex; align-items: center; gap: 8px; align-self: flex-start;
+  font-size: 0.72rem; color: var(--text-mid); padding: 4px 12px;
+  background: #0a1322; border: 1px solid var(--card-bd); border-radius: 16px; }
+.tool-status .spin { width: 11px; height: 11px; border: 2px solid var(--card-bd2);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Result cards inside chat */
+.result-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 8px; margin-top: 4px; }
+.rcard { background: #0a1322; border: 1px solid var(--card-bd); border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .15s; }
+.rcard:hover { border-color: var(--accent); }
+.rcard-h { display: flex; justify-content: space-between; align-items: flex-start; }
+.rcard-name { font-size: 0.78rem; font-weight: 800; }
+.rcard-code { font-size: 0.6rem; color: var(--text-dim); }
+.rcard-grade { width: 22px; height: 22px; border-radius: 5px; font-size: 0.78rem; font-weight: 900;
+  display: flex; align-items: center; justify-content: center; }
+.rcard-price { font-size: 0.84rem; font-weight: 800; margin-top: 4px; }
+.rcard-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.rtag { font-size: 0.56rem; padding: 1px 5px; border-radius: 3px;
+  background: #26d96b15; color: #26d96b; border: 1px solid #26d96b30; }
+
+.typing { display: inline-flex; gap: 4px; }
+.typing span { width: 5px; height: 5px; border-radius: 50%; background: var(--text-dim); animation: blink 1.2s infinite; }
+.typing span:nth-child(2) { animation-delay: .2s; } .typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%,60%,100%{opacity:1} 30%{opacity:.2} }
+
+.chat-input { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--card-bd); }
+.chat-input textarea { flex: 1; background: #0a1120; border: 1px solid var(--card-bd);
+  border-radius: 9px; color: var(--text); padding: 10px 14px; font-size: 0.82rem;
+  font-family: inherit; resize: none; outline: none; max-height: 100px; }
+.chat-input textarea:focus { border-color: var(--accent); }
+.send { background: var(--accent); border: none; border-radius: 9px; width: 40px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+.send:hover { opacity: .85; } .send:disabled { opacity: .35; cursor: default; }
+.send svg { width: 17px; height: 17px; fill: #fff; }
+
+.nokey-banner { background: #3a2410; border: 1px solid #6b4a10; color: #e8c84a;
+  font-size: 0.74rem; padding: 8px 14px; margin: 10px 16px 0; border-radius: 7px; display: none; }
+.nokey-banner a { color: #fff; font-weight: 700; }
+
+@media (max-width: 1100px) {
+  .ai-layout { grid-template-columns: 1fr; height: auto; }
+  .col { max-height: none; }
+  .chat-col { height: 70vh; }
+}
+</style>
+</head>
+<body>
+
+<nav class="ai-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/">美股</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/portfolio">投資組合</a>
+  <a href="/predict">AI 預測</a>
+  <a href="/agent">AI Agent</a>
+</nav>
+
+<!-- Market bar -->
+<div class="market-bar" id="marketBar">
+  <div class="mkt-chip"><span class="mkt-label">載入中…</span></div>
+  <div class="agent-pill" id="agentPill">
+    <span class="dot" id="agentDot"></span><span id="agentText">檢查中…</span>
+  </div>
+</div>
+
+<div class="ai-layout">
+
+  <!-- ── Left column ──────────────────────────────────────────── -->
+  <div class="col">
+    <div class="card">
+      <div class="card-title">我的持倉 <a href="/agent">管理 →</a></div>
+      <div id="holdingsBox"><div class="mini-empty">載入中…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">今日 AI 精選</div>
+      <div id="picksBox"><div class="mini-empty">尚無資料，可在對話中請 AI 掃描</div></div>
+    </div>
+  </div>
+
+  <!-- ── Center: chat ─────────────────────────────────────────── -->
+  <div class="chat-col">
+    <div class="chat-head">
+      <div class="ico">🤖</div>
+      <div>
+        <div class="ttl">AI 投資總管</div>
+        <div class="sub">白話描述需求，AI 自動選條件、篩股、分析、給建議</div>
+      </div>
+      <div class="scope-switch">
+        <div class="scope-btn active" data-scope="" onclick="setScope(this,'')">自動</div>
+        <div class="scope-btn" data-scope="sector" onclick="setScope(this,'sector')">產業</div>
+        <div class="scope-btn" data-scope="market" onclick="setScope(this,'market')">全市場</div>
+      </div>
+    </div>
+
+    <div class="nokey-banner" id="nokeyBanner">
+      尚未設定 Claude API Key，請先到 <a href="/agent">AI Agent 頁面</a> 設定才能使用對話功能。
+    </div>
+
+    <div class="chat-body" id="chatBody">
+      <div class="welcome" id="welcome">
+        <div class="big">📊</div>
+        <h2>台股 AI 投資總管</h2>
+        <p>不用懂技術指標，直接說出你想要的。AI 會自己從上百個篩選條件中挑選組合、執行篩選、評分、查新聞，再給你明確建議。</p>
+        <div class="quick-prompts">
+          <div class="qp" onclick="quickAsk('幫我找低價剛起漲、籌碼穩定的股票')">找低價起漲股</div>
+          <div class="qp" onclick="quickAsk('我的持倉明天該買還是賣？')">持倉該買該賣？</div>
+          <div class="qp" onclick="quickAsk('半導體類股目前有沒有起漲訊號的標的？')">半導體有機會嗎</div>
+          <div class="qp" onclick="quickAsk('幫我找外資投信同步買超、技術面轉強的股票')">法人買超強勢股</div>
+          <div class="qp" onclick="quickAsk('現在大盤盤勢如何？適合進場嗎？')">大盤適合進場嗎</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input">
+      <textarea id="chatInput" rows="1" placeholder="例如：幫我找低價剛起漲的 AI 伺服器概念股…"
+                onkeydown="onKey(event)" oninput="autoGrow(this)"></textarea>
+      <button class="send" id="sendBtn" onclick="send()">
+        <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Right column ─────────────────────────────────────────── -->
+  <div class="col">
+    <div class="card">
+      <div class="card-title">AI 通知紀錄 <a href="/agent">全部 →</a></div>
+      <div id="notifBox"><div class="mini-empty">載入中…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let messages = [];
+let streaming = false;
+let scopeHint = '';
+
+window.onload = () => {
+  loadMarket();
+  loadAgentStatus();
+  loadHoldings();
+  loadNotifications();
+  loadPicks();
+};
+
+// ── Scope switch ──────────────────────────────────────────────────
+function setScope(el, scope) {
+  document.querySelectorAll('.scope-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  scopeHint = scope;
+}
+
+// ── Market bar ────────────────────────────────────────────────────
+async function loadMarket() {
+  try {
+    const r = await fetch('/api/tw/market');
+    const m = await r.json();
+    const bar = document.getElementById('marketBar');
+    const items = [
+      ['加權指數', m.twii], ['櫃買指數', m.twoii],
+      ['美元台幣', m.usdtwd], ['黃金', m.gold], ['VIX', m.vix],
+    ];
+    let html = '';
+    for (const [label, d] of items) {
+      if (!d) continue;
+      const cls = d.pct > 0 ? 'up' : (d.pct < 0 ? 'down' : '');
+      const sign = d.pct > 0 ? '+' : '';
+      html += `<div class="mkt-chip">
+        <span class="mkt-label">${label}</span>
+        <span class="mkt-val ${cls}">${d.v.toLocaleString()}</span>
+        <span class="mkt-pct ${cls}">${sign}${d.pct}%</span>
+      </div>`;
+    }
+    if (m.vixLabel) {
+      html += `<div class="mkt-chip"><span class="mkt-label">市場情緒</span>
+        <span class="mkt-val">${m.vixLabel}</span></div>`;
+    }
+    html += document.getElementById('agentPill').outerHTML;
+    bar.innerHTML = html;
+    loadAgentStatus();
+  } catch(e) {}
+}
+
+async function loadAgentStatus() {
+  try {
+    const c = await (await fetch('/api/agent/config')).json();
+    const dot = document.getElementById('agentDot');
+    const txt = document.getElementById('agentText');
+    if (dot && txt) {
+      dot.className = 'dot' + (c.enabled ? ' on' : '');
+      txt.textContent = c.enabled ? 'Agent 監控中' : 'Agent 未啟用';
+    }
+    if (!c.claude_api_key) {
+      document.getElementById('nokeyBanner').style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+// ── Holdings ──────────────────────────────────────────────────────
+async function loadHoldings() {
+  try {
+    const h = await (await fetch('/api/agent/holdings')).json();
+    const box = document.getElementById('holdingsBox');
+    if (!h.length) { box.innerHTML = '<div class="mini-empty">尚無持倉，到 AI Agent 新增</div>'; return; }
+    box.innerHTML = h.map(s => {
+      const pnl = s.pnl_pct || 0;
+      const cls = pnl > 0 ? 'up' : (pnl < 0 ? 'down' : '');
+      const sign = pnl > 0 ? '+' : '';
+      return `<div class="hold-item">
+        <div><div class="hold-name">${s.name || s.code}</div><div class="hold-code">${s.code}</div></div>
+        <div><div class="hold-pnl ${cls}">${sign}${pnl.toFixed(2)}%</div>
+        <div class="hold-price">${s.current_price || '-'}</div></div>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── Picks ─────────────────────────────────────────────────────────
+async function loadPicks() {
+  try {
+    const c = await (await fetch('/api/agent/config')).json();
+    const picks = c.candidates || [];
+    const box = document.getElementById('picksBox');
+    if (!picks.length) return;
+    box.innerHTML = picks.slice(0,6).map(p => {
+      const g = p.grade || '?';
+      return `<div class="pick-item" onclick="quickAsk('幫我深入分析 ${p.code} ${p.name}')">
+        <div class="pick-grade g-${g}">${g}</div>
+        <div><div class="pick-name">${p.name}</div>
+        <div class="pick-meta">${p.code} · ${p.score||0}分</div></div>
+        <div class="pick-price">${p.price}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── Notifications ─────────────────────────────────────────────────
+async function loadNotifications() {
+  try {
+    const logs = await (await fetch('/api/agent/notifications')).json();
+    const box = document.getElementById('notifBox');
+    if (!logs.length) { box.innerHTML = '<div class="mini-empty">尚無通知，啟用 Agent 後會出現</div>'; return; }
+    box.innerHTML = logs.slice(0,8).map(n => `<div class="notif">
+      <div class="notif-h"><span class="notif-t">${n.title}</span><span class="notif-time">${n.time}</span></div>
+      <div class="notif-b">${n.body}</div>
+    </div>`).join('');
+  } catch(e) {}
+}
+
+// ── Chat ──────────────────────────────────────────────────────────
+function autoGrow(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; }
+function onKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }
+function quickAsk(text) { document.getElementById('chatInput').value = text; send(); }
+
+function md(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/### (.+)/g,'<h3>$1</h3>').replace(/## (.+)/g,'<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/^- (.+)/gm,'<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, s => '<ul>'+s+'</ul>')
+    .replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
+}
+
+function addMsg(role) {
+  const w = document.getElementById('welcome'); if (w) w.remove();
+  const body = document.getElementById('chatBody');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  const av = document.createElement('div'); av.className = 'av'; av.textContent = role === 'assistant' ? 'AI' : '你';
+  const b = document.createElement('div'); b.className = 'bubble';
+  div.appendChild(av); div.appendChild(b);
+  body.appendChild(div); body.scrollTop = body.scrollHeight;
+  return b;
+}
+
+function addStatus(text) {
+  const body = document.getElementById('chatBody');
+  const d = document.createElement('div');
+  d.className = 'tool-status';
+  d.innerHTML = `<div class="spin"></div><span>${text}</span>`;
+  body.appendChild(d); body.scrollTop = body.scrollHeight;
+  return d;
+}
+
+function renderCards(cards) {
+  const body = document.getElementById('chatBody');
+  const wrap = document.createElement('div');
+  wrap.className = 'result-cards';
+  wrap.innerHTML = cards.map(c => {
+    const g = c.grade || '?';
+    const tags = (c.passed || []).slice(0,3).map(t => `<span class="rtag">${t}</span>`).join('');
+    return `<div class="rcard" onclick="quickAsk('幫我深入分析 ${c.code} ${c.name||''}')">
+      <div class="rcard-h">
+        <div><div class="rcard-name">${c.name||c.code}</div><div class="rcard-code">${c.code}</div></div>
+        <div class="rcard-grade g-${g}">${g}</div>
+      </div>
+      <div class="rcard-price">${c.price != null ? c.price + ' 元' : ''} ${c.score != null ? '· '+c.score+'/'+(c.max_score||24)+'分' : ''}</div>
+      <div class="rcard-tags">${tags}</div>
+    </div>`;
+  }).join('');
+  body.appendChild(wrap); body.scrollTop = body.scrollHeight;
+}
+
+async function send() {
+  if (streaming) return;
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ''; input.style.height = 'auto';
+
+  addMsg('user').textContent = text;
+  messages.push({ role: 'user', content: text });
+  if (messages.length > 16) messages = messages.slice(-16);
+
+  streaming = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  const bubble = addMsg('assistant');
+  bubble.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
+  let statusEl = null;
+  let full = '';
+
+  try {
+    const resp = await fetch('/api/ai/chat', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages, scope_hint: scopeHint }),
+    });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const p = line.slice(6).trim();
+        if (p === '[DONE]') continue;
+        let o; try { o = JSON.parse(p); } catch(_) { continue; }
+        if (o.error)  { bubble.innerHTML = '<span style="color:#ff4e4e">❌ ' + o.error + '</span>'; }
+        if (o.status) {
+          if (statusEl) statusEl.remove();
+          statusEl = addStatus(o.status);
+        }
+        if (o.text) {
+          if (statusEl) { statusEl.remove(); statusEl = null; }
+          full += o.text;
+          bubble.innerHTML = md(full);
+          document.getElementById('chatBody').scrollTop = 1e9;
+        }
+        if (o.cards && o.cards.length) {
+          if (statusEl) { statusEl.remove(); statusEl = null; }
+          renderCards(o.cards);
+        }
+      }
+    }
+    if (statusEl) statusEl.remove();
+    if (full) messages.push({ role: 'assistant', content: full });
+    // refresh side panels (picks may have updated)
+    loadPicks();
+  } catch(e) {
+    bubble.innerHTML = '<span style="color:#ff4e4e">錯誤：' + e.message + '</span>';
+  } finally {
+    streaming = false;
+    document.getElementById('sendBtn').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
