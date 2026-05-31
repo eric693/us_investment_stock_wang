@@ -196,8 +196,9 @@ async function loadStatus() {
     const s = await (await fetch('/api/agent/goal/status')).json();
     renderMetrics(s.metrics);
     renderSnapshot(s.portfolio);
-    renderPlan(s.last_plan, s.last_review);
-  } catch(e) {}
+    renderPlan(s.last_plan, s.last_review, s.review_status);
+    return s;
+  } catch(e) { return null; }
 }
 
 function renderMetrics(m) {
@@ -237,19 +238,45 @@ function renderSnapshot(p) {
       <td class="${cls(r.pnl_pct)}">${sign(r.pnl_pct)}${r.pnl_pct}%</td></tr>`).join('')}</tbody></table>`;
 }
 
-function renderPlan(plan, date) {
+function renderPlan(plan, date, reviewStatus) {
   const el = document.getElementById('plan');
+  if (reviewStatus === 'running') {
+    el.innerHTML = '<div class="gl-plan dim">AI 檢討進行中…（會逐檔分析持倉與買進候選，約 1-3 分鐘）。完成後會自動顯示，不必一直重整。</div>';
+    return;
+  }
   if (!plan) { el.innerHTML = '<div class="gl-plan dim">尚無計畫，按上方按鈕立即產生。</div>'; return; }
   el.innerHTML = `<div class="gl-hint">最近檢討：${date || '-'}</div><div class="gl-plan">${plan.replace(/</g,'&lt;')}</div>`;
 }
 
+let _reviewPoll = null;
 async function reviewNow() {
   reviewBtn.disabled = true; reviewMsg.textContent = '檢討中…';
   try {
     const r = await (await fetch('/api/agent/goal/review_now', {method:'POST'})).json();
-    reviewMsg.textContent = r.ok ? '已在背景執行，約 1-2 分鐘後重新整理查看' : ('失敗：' + (r.error||''));
-  } catch(e) { reviewMsg.textContent = '失敗：' + e.message; }
-  finally { reviewBtn.disabled = false; }
+    if (r.error) { reviewMsg.textContent = '失敗：' + r.error; reviewBtn.disabled = false; return; }
+    reviewMsg.textContent = 'AI 檢討進行中，完成會自動顯示…';
+    await loadStatus();
+    startReviewPolling();
+  } catch(e) { reviewMsg.textContent = '失敗：' + e.message; reviewBtn.disabled = false; }
+}
+
+function startReviewPolling() {
+  if (_reviewPoll) clearInterval(_reviewPoll);
+  let tries = 0;
+  _reviewPoll = setInterval(async () => {
+    tries++;
+    const s = await loadStatus();
+    if (s && s.review_status !== 'running') {
+      clearInterval(_reviewPoll); _reviewPoll = null;
+      reviewBtn.disabled = false;
+      reviewMsg.textContent = s.review_status === 'error' ? '檢討失敗，請重試' : '檢討完成';
+      setTimeout(() => reviewMsg.textContent = '', 4000);
+    } else if (tries > 90) {   // 最多輪詢約 15 分鐘
+      clearInterval(_reviewPoll); _reviewPoll = null;
+      reviewBtn.disabled = false;
+      reviewMsg.textContent = '仍在處理，可稍後重整查看';
+    }
+  }, 10000);
 }
 
 async function loadUs() {
@@ -269,7 +296,7 @@ async function loadUs() {
 }
 
 loadGoal();
-loadStatus();
+loadStatus().then(s => { if (s && s.review_status === 'running') { reviewBtn.disabled = true; startReviewPolling(); } });
 loadUs();
 </script>
 </body>

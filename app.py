@@ -4944,16 +4944,13 @@ def _news_digest(query: str, n: int = 3) -> str:
 
 
 def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
-    """Analyze all holdings and return recommendation list."""
-    holdings = cfg.get('holdings', [])
+    """Analyze all holdings and return recommendation list（並行，原本逐檔序列在持倉多時極慢）。"""
+    holdings = [h for h in cfg.get('holdings', []) if h.get('code', '').strip()]
     if not holdings:
         return []
 
-    output = []
-    for h in holdings:
+    def _analyze_one(h):
         code = h.get('code', '').strip().upper()
-        if not code:
-            continue
         data = _fetch_predict_data(code)
         ctx  = _agent_recommendation_text(data, h)
         news = _news_digest(data.get('name', code))
@@ -4973,8 +4970,7 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
         buy_p = h.get('buy_price', 0)
         price = data.get('price', 0)
         pnl   = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
-
-        output.append({
+        return {
             'code':       code,
             'name':       data.get('name', code),
             'price':      price,
@@ -4982,8 +4978,12 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
             'pnl_pct':    pnl,
             'score':      _score_breakout(data),
             'recommendation': rec_text,
-        })
-    return output
+        }
+
+    # 並行（含資料抓取＋新聞＋Claude），上限 5 條避免觸發 API 速率限制
+    with ThreadPoolExecutor(max_workers=min(5, len(holdings))) as ex:
+        results = list(ex.map(_analyze_one, holdings))
+    return [r for r in results if r]
 
 
 def _run_agent_scan_with_ai(cfg: dict, claude_client, us_context: str = '') -> str:
@@ -5254,9 +5254,10 @@ def _run_goal_review(cfg: dict, client) -> dict:
     today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
     cfg = _load_agent_cfg()
     cfg.setdefault('goal', {})
-    cfg['goal']['last_review'] = today
-    cfg['goal']['last_status'] = status
-    cfg['goal']['last_plan']   = plan
+    cfg['goal']['last_review']   = today
+    cfg['goal']['last_status']   = status
+    cfg['goal']['last_plan']     = plan
+    cfg['goal']['review_status'] = 'done'
     _save_agent_cfg(cfg)
 
     head = ''
@@ -5617,8 +5618,10 @@ def agent_goal_status_api():
     """回傳目標 + 持倉快照 + 達標試算（即時計算，含明日買賣計畫快取）。"""
     cfg = _load_agent_cfg()
     status = _goal_status(cfg)
-    status['last_plan'] = cfg.get('goal', {}).get('last_plan', '')
-    status['last_review'] = cfg.get('goal', {}).get('last_review', '')
+    g = cfg.get('goal', {})
+    status['last_plan']     = g.get('last_plan', '')
+    status['last_review']   = g.get('last_review', '')
+    status['review_status'] = g.get('review_status', '')
     return jsonify(status)
 
 
@@ -5638,6 +5641,14 @@ def agent_goal_review_now():
     if not cfg.get('goal', {}).get('enabled'):
         return jsonify({'error': '尚未啟用目標導向操盤，請先設定並啟用目標'}), 400
 
+    # 立刻標記為「進行中」，前端才知道正在跑（而非「尚無報告」）
+    cfg.setdefault('goal', {})
+    if cfg['goal'].get('review_status') == 'running':
+        return jsonify({'ok': True, 'message': '已有一份檢討正在進行中，請稍候'})
+    cfg['goal']['review_status']  = 'running'
+    cfg['goal']['review_started'] = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M:%S')
+    _save_agent_cfg(cfg)
+
     def _bg():
         try:
             import anthropic
@@ -5645,9 +5656,14 @@ def agent_goal_review_now():
             _run_goal_review(_load_agent_cfg(), client)
         except Exception as e:
             print(f'[Agent] goal review_now error: {e}')
+            c = _load_agent_cfg()
+            c.setdefault('goal', {})
+            c['goal']['review_status'] = 'error'
+            c['goal']['last_plan'] = f'檢討失敗：{e}'
+            _save_agent_cfg(c)
 
     threading.Thread(target=_bg, daemon=True).start()
-    return jsonify({'ok': True, 'message': '目標檢討已在背景執行（約 1-2 分鐘），完成後會更新並推播明日買賣計畫'})
+    return jsonify({'ok': True, 'message': '目標檢討已在背景執行，完成後會自動顯示並推播明日買賣計畫'})
 
 
 @app.route('/api/agent/optimize_now', methods=['POST'])
