@@ -361,6 +361,24 @@ select.scan-input { width: 120px; }
 .chat-send-btn:disabled { opacity: .35; cursor: default; }
 .chat-send-btn svg { width: 16px; height: 16px; fill: #fff; }
 
+/* ── Grade badge ─────────────────────────────────────────────────── */
+.grade-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 6px;
+  font-size: 1.1rem; font-weight: 900; flex-shrink: 0;
+}
+.grade-A { background: #26d96b20; color: #26d96b; border: 1px solid #26d96b40; }
+.grade-B { background: #3d8ef820; color: #3d8ef8; border: 1px solid #3d8ef840; }
+.grade-C { background: #f4c54220; color: #f4c542; border: 1px solid #f4c54240; }
+.grade-D { background: #ff6b6b20; color: #ff6b6b; border: 1px solid #ff6b6b40; }
+.grade-F { background: #55555520; color: #888;    border: 1px solid #55555540; }
+.factor-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.factor-pill {
+  font-size: 0.62rem; padding: 2px 6px; border-radius: 3px; font-weight: 700;
+}
+.pill-pass { background: #26d96b15; color: #26d96b; border: 1px solid #26d96b30; }
+.pill-fail { background: #ff4e4e10; color: #666;    border: 1px solid #ff4e4e20; text-decoration: line-through; }
+
 /* ── Empty state ─────────────────────────────────────────────────── */
 .empty-state {
   text-align: center; padding: 40px 20px;
@@ -789,40 +807,52 @@ async function runScan() {
 function renderCandidates(candidates) {
   const grid = document.getElementById('candidatesGrid');
   if (!candidates || !candidates.length) {
-    grid.innerHTML = '<div class="empty-state"><h3>未找到符合條件的標的</h3>嘗試降低起漲得分門檻或擴大股價範圍</div>';
+    grid.innerHTML = '<div class="empty-state"><h3>未找到符合條件的標的</h3>嘗試降低門檻或擴大股價範圍</div>';
     return;
   }
 
   grid.innerHTML = candidates.map(c => {
-    const dots = [1,2,3,4,5].map(i =>
-      `<div class="score-dot ${i <= c.score ? 'filled' : ''}"></div>`
-    ).join('');
+    const grade    = c.grade || 'F';
+    const gradePct = c.grade_pct || 0;
+    const score    = c.score || 0;
+    const maxScore = c.max_score || 24;
+    const passed   = c.passed || [];
+    const failed   = c.failed || [];
 
-    const biasCls  = c.bias20 !== null && c.bias20 < 6 ? 'tag-green' : 'tag-yellow';
-    const rebCls   = c.rebound !== null && c.rebound < 15 ? 'tag-green' : 'tag-yellow';
-    const trendCls = c.ma20_trend && c.ma20_trend.includes('上揚') ? 'tag-green' : 'tag-red';
-    const volCls   = c.vol_structure && c.vol_structure.includes('健康') ? 'tag-green' : 'tag-gray';
+    const pillsHtml = [
+      ...passed.map(n => `<span class="factor-pill pill-pass">${n}</span>`),
+      ...failed.map(n => `<span class="factor-pill pill-fail">${n}</span>`),
+    ].join('');
+
+    const biasCls = c.bias20 !== null && c.bias20 < 6 ? 'tag-green' : 'tag-yellow';
+    const rebCls  = c.rebound !== null && c.rebound < 15 ? 'tag-green' : 'tag-yellow';
+    const volRCls = c.vol_ratio >= 1.5 ? 'tag-green' : (c.vol_ratio >= 0.8 ? 'tag-blue' : 'tag-gray');
 
     return `
       <div class="candidate-card" onclick="analyzeScanStock('${c.code}', '${c.name}')">
         <div class="cand-header">
           <div>
             <div class="cand-name">${c.name}</div>
-            <div class="cand-code">${c.code}</div>
+            <div class="cand-code">${c.code}  ${c.ma_bull ? '<span style="color:#26d96b;font-size:.65rem">多頭排列</span>' : ''}</div>
           </div>
-          <div class="cand-price">${c.price} 元</div>
+          <div style="text-align:right">
+            <div class="cand-price">${c.price} 元</div>
+            <div style="font-size:.67rem;color:var(--text-dim);margin-top:2px">${score}/${maxScore}分</div>
+          </div>
+          <div class="grade-badge grade-${grade}" title="${gradePct}% 符合">${grade}</div>
         </div>
-        <div class="score-bar">${dots}</div>
-        <div class="cand-metrics">
-          <span class="cand-tag ${trendCls}">月線${c.ma20_trend ? c.ma20_trend.slice(0,2) : '?'}</span>
+        <div class="cand-metrics" style="margin-bottom:6px">
+          <span class="cand-tag tag-blue">${c.kd || ''}</span>
+          <span class="cand-tag tag-blue">${c.week_kd || ''}</span>
           <span class="cand-tag ${biasCls}">乖離${c.bias20 !== null ? c.bias20.toFixed(1) : '?'}%</span>
           <span class="cand-tag ${rebCls}">反彈${c.rebound !== null ? c.rebound.toFixed(1) : '?'}%</span>
-          <span class="cand-tag ${volCls}">${c.vol_structure ? c.vol_structure.slice(0,2) : '量?'}</span>
-          <span class="cand-tag tag-blue">${c.kd || ''}</span>
+          <span class="cand-tag ${volRCls}">量比${c.vol_ratio ? c.vol_ratio.toFixed(1) : '?'}x</span>
+          ${c.rsi !== undefined ? `<span class="cand-tag ${c.rsi < 30 ? 'tag-green' : c.rsi > 65 ? 'tag-red' : 'tag-gray'}">RSI${c.rsi}</span>` : ''}
           ${c.inst_total !== null && c.inst_total !== undefined
             ? `<span class="cand-tag ${c.inst_total > 0 ? 'tag-green' : 'tag-red'}">法人${c.inst_total > 0 ? '+' : ''}${c.inst_total}</span>`
             : ''}
         </div>
+        <div class="factor-pills">${pillsHtml}</div>
       </div>`;
   }).join('');
 }
