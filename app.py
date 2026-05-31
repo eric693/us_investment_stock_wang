@@ -5429,23 +5429,36 @@ def agent_holdings_api():
         # raw=1：只回原始持倉清單（不打 yfinance 報價），供投資組合頁快速共用同一份資料
         if request.args.get('raw'):
             return jsonify(holdings)
-        enriched = []
-        for h in holdings:
-            code  = h.get('code', '')
-            price_data = _cache_get(f'agent_h_{code}')
-            if not price_data:
-                try:
-                    stock = yf.Ticker(code + '.TW')
+        # 並行抓取各持倉報價（原本逐檔序列，持倉多時首次載入很慢）
+        def _fetch_holding_price(code):
+            cached = _cache_get(f'agent_h_{code}')
+            if cached:
+                return code, cached
+            try:
+                stock = yf.Ticker(code + '.TW')
+                info  = stock.info
+                cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+                if cur <= 0:
+                    stock = yf.Ticker(code + '.TWO')
                     info  = stock.info
                     cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
-                    if cur <= 0:
-                        stock = yf.Ticker(code + '.TWO')
-                        info  = stock.info
-                        cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
-                    price_data = {'price': cur, 'name': tw_cn_name(code, info.get('shortName', code))}
-                    _cache_set(f'agent_h_{code}', price_data, ttl=120)
-                except Exception:
-                    price_data = {'price': 0, 'name': code}
+                data = {'price': cur, 'name': tw_cn_name(code, info.get('shortName', code))}
+                _cache_set(f'agent_h_{code}', data, ttl=120)
+            except Exception:
+                data = {'price': 0, 'name': code}
+            return code, data
+
+        codes = [h.get('code', '') for h in holdings]
+        price_map = {}
+        if codes:
+            with ThreadPoolExecutor(max_workers=min(12, len(codes))) as ex:
+                for code, data in ex.map(_fetch_holding_price, codes):
+                    price_map[code] = data
+
+        enriched = []
+        for h in holdings:
+            code       = h.get('code', '')
+            price_data = price_map.get(code, {'price': 0, 'name': code})
             buy_p = h.get('buy_price', 0)
             cur   = price_data.get('price', 0)
             pnl   = round((cur - buy_p) / buy_p * 100, 2) if buy_p and cur else 0

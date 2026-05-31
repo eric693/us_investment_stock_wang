@@ -1030,12 +1030,24 @@ function onHoldingImgPick(e) {
   if (f) handleHoldingImage(f);
   e.target.value = '';
 }
+// 縮到長邊 1568px（Claude vision 內部上限），輸出 jpeg，降低 payload 與解析時間
 function _fileToDataUrl(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
+  return new Promise((res) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        try { res(c.toDataURL('image/jpeg', 0.85)); }
+        catch (e) { res(ev.target.result); }
+      };
+      img.onerror = () => res(ev.target.result);
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
   });
 }
 async function handleHoldingImage(file) {

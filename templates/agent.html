@@ -989,17 +989,11 @@ function onAgentChatImgPick(e) {
 }
 function handleAgentChatImage(file) {
   if (!file.type.startsWith('image/')) { alert('請選擇圖片檔'); return; }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result;
-    let mt = (String(dataUrl).match(/^data:(image\/[a-zA-Z+]+);base64,/) || [])[1] || 'image/png';
-    if (mt === 'image/jpg') mt = 'image/jpeg';
-    if (!['image/png','image/jpeg','image/gif','image/webp'].includes(mt)) mt = 'image/png';
-    _agentChatImage = { dataUrl, media_type: mt };
+  _downscaleToDataUrl(file, 1568, (dataUrl) => {
+    _agentChatImage = { dataUrl, media_type: 'image/jpeg' };
     document.getElementById('chatImgThumb').src = dataUrl;
     document.getElementById('chatImgPreview').style.display = 'block';
-  };
-  reader.readAsDataURL(file);
+  });
 }
 function clearAgentChatImage() {
   _agentChatImage = null;
@@ -1180,13 +1174,26 @@ function onHoldingImgPick(e) {
   e.target.value = '';
 }
 
+// 縮到長邊 maxEdge（Claude vision 內部上限約 1568px），輸出 jpeg，大幅降低 payload
+function _downscaleToDataUrl(file, maxEdge, cb) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      try { cb(c.toDataURL('image/jpeg', 0.85)); }
+      catch (e) { cb(ev.target.result); }
+    };
+    img.onerror = () => cb(ev.target.result);
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
 function _fileToDataUrl(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
+  return new Promise((res) => _downscaleToDataUrl(file, 1568, res));
 }
 
 async function handleHoldingImage(file) {
