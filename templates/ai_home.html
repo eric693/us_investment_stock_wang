@@ -106,6 +106,18 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .pick-meta { font-size: 0.62rem; color: var(--text-dim); }
 .pick-price { margin-left: auto; font-size: 0.78rem; font-weight: 700; text-align: right; }
 
+/* ── Daily strategy ──────────────────────────────────────────────── */
+.strat-row { display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; border-bottom: 1px solid #0d1628; }
+.strat-row:last-of-type { border-bottom: none; }
+.strat-row.best .strat-name { color: var(--gold); font-weight: 800; }
+.strat-name { font-size: 0.76rem; color: var(--text-mid); }
+.strat-ret { font-size: 0.78rem; font-weight: 800; }
+.strat-picks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.pick-mini { font-size: 0.66rem; padding: 2px 8px; border-radius: 4px; cursor: pointer;
+  background: #0d1628; border: 1px solid var(--card-bd); color: var(--text-mid); }
+.pick-mini:hover { border-color: var(--accent); color: var(--accent); }
+
 /* ── Notifications ───────────────────────────────────────────────── */
 .notif { padding: 8px 0; border-bottom: 1px solid #0d1628; }
 .notif:last-child { border-bottom: none; }
@@ -256,6 +268,12 @@ body { margin: 0; background: var(--bg); color: var(--text); }
       <div class="card-title">今日 AI 精選</div>
       <div id="picksBox"><div class="mini-empty">尚無資料，可在對話中請 AI 掃描</div></div>
     </div>
+    <div class="card">
+      <div class="card-title">每日最佳策略
+        <a href="#" onclick="optimizeNow();return false;" id="optLink">立即重算 →</a>
+      </div>
+      <div id="strategyBox"><div class="mini-empty">尚未產生，點「立即重算」由 AI 回測各策略組合</div></div>
+    </div>
   </div>
 
   <!-- ── Center: chat ─────────────────────────────────────────── -->
@@ -364,7 +382,42 @@ window.onload = () => {
   loadHoldings();
   loadNotifications();
   loadPicks();
+  loadStrategy();
 };
+
+// ── Daily strategy ────────────────────────────────────────────────
+async function loadStrategy() {
+  try {
+    const s = await (await fetch('/api/agent/daily_strategy')).json();
+    const box = document.getElementById('strategyBox');
+    if (!s || !s.ranked || !s.ranked.length) return;
+    const best = s.ranked[0];
+    const picks = (best.top_picks || []).map(p =>
+      `<span class="pick-mini" onclick="quickAsk('深入分析 ${p.code} ${p.name}')">${p.name}(${p.code})</span>`).join('');
+    box.innerHTML = `
+      <div style="font-size:.72rem;color:var(--text-dim);margin-bottom:6px">${s.date} 回測排名</div>
+      ${s.ranked.map((r,i) => `
+        <div class="strat-row ${i===0?'best':''}">
+          <span class="strat-name">${i===0?'★ ':''}${r.name}</span>
+          <span class="strat-ret ${r.avg_backtest_ret>0?'up':'down'}">${r.avg_backtest_ret>0?'+':''}${r.avg_backtest_ret}%</span>
+        </div>`).join('')}
+      <div class="strat-picks">${picks}</div>`;
+  } catch(e) {}
+}
+
+async function optimizeNow() {
+  const link = document.getElementById('optLink');
+  link.textContent = '重算中…';
+  try {
+    const r = await (await fetch('/api/agent/optimize_now', {method:'POST'})).json();
+    if (r.error) { alert(r.error); link.textContent = '立即重算 →'; return; }
+    alert(r.message || '已觸發');
+    // 約 2 分鐘後自動刷新
+    setTimeout(loadStrategy, 120000);
+  } finally {
+    setTimeout(() => { link.textContent = '立即重算 →'; }, 3000);
+  }
+}
 
 // ── Scope switch ──────────────────────────────────────────────────
 function setScope(el, scope) {

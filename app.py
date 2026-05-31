@@ -4949,6 +4949,13 @@ def _agent_loop():
                 cfg['candidates'] = candidates
                 _agent_notify(cfg, '收盤總結', '\n'.join(lines))
 
+            # Daily strategy optimizer (after 15:00, once per day)
+            elif now.hour >= 15 and cfg.get('last_optimize', '') != today:
+                try:
+                    _run_daily_optimizer(_load_agent_cfg(), client)
+                except Exception as e:
+                    print(f'[Agent] optimizer error: {e}')
+
         except Exception as e:
             print(f'[Agent] loop error: {e}')
 
@@ -5133,6 +5140,32 @@ def agent_chat_api():
 def agent_notifications_api():
     cfg = _load_agent_cfg()
     return jsonify(cfg.get('notifications', []))
+
+
+@app.route('/api/agent/daily_strategy')
+def agent_daily_strategy_api():
+    cfg = _load_agent_cfg()
+    return jsonify(cfg.get('daily_strategy', {}))
+
+
+@app.route('/api/agent/optimize_now', methods=['POST'])
+def agent_optimize_now():
+    """手動觸發每日策略優化（背景執行）。"""
+    cfg = _load_agent_cfg()
+    api_key = cfg.get('claude_api_key', '')
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    def _bg():
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            _run_daily_optimizer(_load_agent_cfg(), client)
+        except Exception as e:
+            print(f'[Agent] optimize_now error: {e}')
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({'ok': True, 'message': '策略優化已在背景執行（約 1-3 分鐘），完成後會更新並推播'})
 
 
 @app.route('/api/agent/run_now', methods=['POST'])
@@ -5718,6 +5751,106 @@ def _tool_backtest(code, signal='kd_gc', period='3y'):
         'best_strategy': r['best'],
         'top5': r['results'][:5],
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  每日策略優化器（自動組合條件 → 篩選 → 回測 → 排名 → AI 總結）
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 經人工檢核的策略配方庫（條件組合 + 對應可回測的進場訊號）
+STRATEGY_RECIPES = [
+    {'name': '法人連買起漲', 'entry_signal': 'ma_gc',
+     'conditions': [{'type': 'inst_3_buy_ndays', 'params': {'days': 3}},
+                    {'type': 'ma_deduction_up'}, {'type': 'vol_5_above_20'}]},
+    {'name': '低檔KD金叉反彈', 'entry_signal': 'kd_gc',
+     'conditions': [{'type': 'kd_low_golden_cross', 'params': {'threshold': 35}},
+                    {'type': 'price_near_bb_lower'}]},
+    {'name': '強勢突破帶量', 'entry_signal': 'breakout_ma20',
+     'conditions': [{'type': 'high_vol_breakout'}, {'type': 'ma_bull_alignment'},
+                    {'type': 'macd_golden_cross'}]},
+    {'name': '外資連買均線多頭', 'entry_signal': 'ma_gc',
+     'conditions': [{'type': 'inst_foreign_buy_ndays', 'params': {'days': 3}},
+                    {'type': 'ma_bull_alignment'}]},
+    {'name': '月線扣抵翻揚', 'entry_signal': 'kd_gc',
+     'conditions': [{'type': 'ma_deduction_up'}, {'type': 'kd_golden_cross'},
+                    {'type': 'vol_5_above_20'}]},
+]
+
+
+def _optimizer_ai_summary(client, ranked):
+    """讓 Claude 對當日策略排名寫一段簡短分析。"""
+    lines = ['以下是今日各策略配方的回測表現排名，請用 3-5 句話總結哪個策略現在最值得用、為什麼，並點出最佳標的：', '']
+    for r in ranked:
+        picks = '、'.join(f"{p['name']}({p['code']})" for p in r['top_picks']) or '無符合'
+        lines.append(f"策略「{r['name']}」：符合{r['match_count']}檔，回測平均報酬{r['avg_backtest_ret']}%，候選：{picks}")
+    try:
+        resp = client.messages.create(
+            model='claude-opus-4-8', max_tokens=500,
+            system=_AGENT_SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': '\n'.join(lines)}],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f'AI 總結失敗：{e}'
+
+
+def _run_daily_optimizer(cfg, client):
+    """每日跑策略配方庫：篩選 + 回測候選 + 排名 + AI 總結，存檔並推播。"""
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+    universe = _get_tw_universe('top100')[:60]   # 限制成本
+    tickers  = list(dict.fromkeys(tw_normalize(c) for c in universe))
+
+    ranked = []
+    for recipe in STRATEGY_RECIPES:
+        conds = recipe['conditions']
+        matched = []
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            futs = {ex.submit(_scan_ticker, t, conds, True): t for t in tickers}
+            for f in as_completed(futs):
+                try:
+                    r = f.result()
+                    if r:
+                        matched.append(r)
+                except Exception:
+                    pass
+        matched.sort(key=lambda x: x.get('changePct', 0), reverse=True)
+        top = matched[:3]
+
+        bt_rets = []
+        for m in top:
+            code = m['ticker'].replace('.TW', '').replace('.TWO', '')
+            bt = _run_backtest(code, recipe['entry_signal'], '3y')
+            if not bt.get('error') and bt.get('best'):
+                bt_rets.append(bt['best']['total_ret'])
+        avg_bt = round(sum(bt_rets) / len(bt_rets), 1) if bt_rets else 0
+
+        ranked.append({
+            'name':          recipe['name'],
+            'entry_signal':  ENTRY_SIGNALS.get(recipe['entry_signal'], recipe['entry_signal']),
+            'match_count':   len(matched),
+            'avg_backtest_ret': avg_bt,
+            'top_picks':     [{'code': m['ticker'].replace('.TW', '').replace('.TWO', ''),
+                               'name': m['name'], 'price': m['price']} for m in top],
+        })
+
+    ranked.sort(key=lambda x: x['avg_backtest_ret'], reverse=True)
+    summary = _optimizer_ai_summary(client, ranked)
+
+    cfg = _load_agent_cfg()
+    cfg['daily_strategy'] = {'date': today, 'ranked': ranked, 'summary': summary}
+    cfg['last_optimize']  = today
+    _save_agent_cfg(cfg)
+
+    best = ranked[0] if ranked else None
+    body_lines = [f'[{today}] 每日最佳策略優化', '']
+    if best:
+        picks = '、'.join(f"{p['name']}({p['code']})" for p in best['top_picks']) or '無'
+        body_lines.append(f"今日最佳策略：{best['name']}（回測平均 {best['avg_backtest_ret']}%）")
+        body_lines.append(f"候選：{picks}")
+        body_lines.append('')
+    body_lines.append(summary[:400])
+    _agent_notify(cfg, '每日策略優化', '\n'.join(body_lines))
+    return ranked
 
 
 def _dispatch_tool(name, tool_input):
