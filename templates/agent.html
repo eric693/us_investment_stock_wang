@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 自動化投資 Agent</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+/* ── Layout ──────────────────────────────────────────────────────── */
+.agent-wrap {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  grid-template-rows: auto 1fr;
+  height: calc(100vh - 56px);
+  gap: 0;
+}
+.agent-sidebar {
+  grid-row: 1 / 3;
+  background: var(--card-bg);
+  border-right: 1px solid var(--card-bd);
+  overflow-y: auto;
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.agent-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.agent-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--card-bd);
+  padding: 0 20px;
+  background: var(--card-bg);
+}
+.agent-tab {
+  padding: 11px 18px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+}
+.agent-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.agent-tab:hover:not(.active) { color: var(--text-mid); }
+.agent-panel { display: none; flex: 1; overflow-y: auto; padding: 20px; }
+.agent-panel.active { display: block; }
+
+/* ── Sidebar sections ─────────────────────────────────────────────── */
+.sb-section { display: flex; flex-direction: column; gap: 8px; }
+.sb-title {
+  font-size: 0.7rem; font-weight: 800;
+  color: var(--text-dim); letter-spacing: .7px; text-transform: uppercase;
+}
+.sb-input {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  width: 100%;
+  outline: none;
+}
+.sb-input:focus { border-color: var(--accent); }
+.sb-row { display: flex; gap: 6px; }
+.sb-row .sb-input { flex: 1; }
+.sb-label { font-size: 0.68rem; color: var(--text-dim); margin-top: 2px; }
+.sb-btn {
+  padding: 8px 0;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  width: 100%;
+  transition: opacity .15s;
+}
+.sb-btn:hover { opacity: .85; }
+.sb-btn.primary { background: var(--accent); color: #fff; }
+.sb-btn.secondary { background: #1a2540; color: var(--text-mid); border: 1px solid var(--card-bd); }
+.sb-btn.danger { background: #3a1020; color: #ff6b6b; border: 1px solid #ff6b6b30; }
+.sb-btn:disabled { opacity: .35; cursor: default; }
+
+/* ── Agent status ─────────────────────────────────────────────────── */
+.agent-status-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+}
+.status-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.on  { background: #26d96b; box-shadow: 0 0 6px #26d96b80; }
+.status-dot.off { background: #555; }
+.status-text { font-size: 0.75rem; color: var(--text-mid); }
+.status-time { font-size: 0.67rem; color: var(--text-dim); margin-left: auto; }
+
+/* ── Toggle switch ────────────────────────────────────────────────── */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; }
+.toggle-label { font-size: 0.78rem; color: var(--text); font-weight: 700; }
+.toggle {
+  position: relative; width: 44px; height: 24px;
+  cursor: pointer;
+}
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute; inset: 0;
+  background: #1a2540; border: 1px solid var(--card-bd); border-radius: 12px;
+  transition: background .2s;
+}
+.toggle input:checked ~ .toggle-track { background: var(--accent); border-color: var(--accent); }
+.toggle-thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  background: #fff; border-radius: 50%;
+  transition: transform .2s;
+}
+.toggle input:checked ~ .toggle-thumb { transform: translateX(20px); }
+
+/* ── Holdings table ───────────────────────────────────────────────── */
+.holdings-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.holdings-table th {
+  text-align: left; padding: 8px 12px;
+  font-size: 0.67rem; font-weight: 800;
+  color: var(--text-dim); letter-spacing: .5px;
+  border-bottom: 1px solid var(--card-bd);
+}
+.holdings-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #0d1628;
+  vertical-align: middle;
+}
+.holdings-table tr:hover td { background: #0a1420; }
+.pnl-green { color: #26d96b; font-weight: 700; }
+.pnl-red   { color: #ff4e4e; font-weight: 700; }
+.pnl-zero  { color: var(--text-dim); }
+
+.add-holding-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+}
+.form-input {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  outline: none;
+}
+.form-input:focus { border-color: var(--accent); }
+.form-add-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.form-add-btn:hover { opacity: .85; }
+
+/* ── Analyze button ───────────────────────────────────────────────── */
+.analyze-row-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.analyze-row-btn:hover { background: var(--accent); color: #fff; }
+.del-btn {
+  background: transparent;
+  border: 1px solid #3a1020;
+  color: #ff6b6b;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.del-btn:hover { background: #3a1020; }
+
+/* ── Recommendation panel ─────────────────────────────────────────── */
+.rec-box {
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--text);
+  margin-top: 10px;
+  white-space: pre-wrap;
+  display: none;
+}
+.rec-box.visible { display: block; }
+.rec-box h4 { font-size: 0.78rem; color: var(--accent); margin: 0 0 8px; }
+.rec-loading { color: var(--text-dim); font-style: italic; }
+
+/* ── Scanner panel ────────────────────────────────────────────────── */
+.scan-controls {
+  display: flex; gap: 10px; align-items: flex-end;
+  padding: 14px;
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.scan-field { display: flex; flex-direction: column; gap: 4px; }
+.scan-field label { font-size: 0.67rem; color: var(--text-dim); font-weight: 700; }
+.scan-input {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  width: 100px;
+  outline: none;
+}
+.scan-input:focus { border-color: var(--accent); }
+select.scan-input { width: 120px; }
+.scan-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  align-self: flex-end;
+}
+.scan-btn:hover { opacity: .85; }
+.scan-btn:disabled { opacity: .4; cursor: default; }
+
+.candidates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+.candidate-card {
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.candidate-card:hover { border-color: var(--accent); }
+.cand-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.cand-name { font-size: 0.88rem; font-weight: 800; color: var(--text); }
+.cand-code { font-size: 0.7rem; color: var(--text-dim); margin-top: 1px; }
+.cand-price { font-size: 1rem; font-weight: 800; color: var(--text); text-align: right; }
+.score-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+.score-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid var(--card-bd);
+}
+.score-dot.filled { background: var(--accent); border-color: var(--accent); }
+.cand-metrics { display: flex; gap: 8px; flex-wrap: wrap; }
+.cand-tag {
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.tag-green  { background: #26d96b15; color: #26d96b; border: 1px solid #26d96b30; }
+.tag-yellow { background: #f4c54215; color: #f4c542; border: 1px solid #f4c54230; }
+.tag-red    { background: #ff4e4e15; color: #ff4e4e; border: 1px solid #ff4e4e30; }
+.tag-blue   { background: #3d8ef815; color: #3d8ef8; border: 1px solid #3d8ef830; }
+.tag-gray   { background: #1a2540; color: var(--text-dim); border: 1px solid var(--card-bd); }
+
+/* ── Notification log ─────────────────────────────────────────────── */
+.notif-list { display: flex; flex-direction: column; gap: 10px; }
+.notif-item {
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.notif-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.notif-title { font-size: 0.78rem; font-weight: 800; color: var(--accent); }
+.notif-time  { font-size: 0.67rem; color: var(--text-dim); }
+.notif-body  { font-size: 0.75rem; color: var(--text-mid); line-height: 1.6; white-space: pre-wrap; }
+
+/* ── Chat ─────────────────────────────────────────────────────────── */
+.agent-chat-wrap {
+  display: flex; flex-direction: column; height: calc(100vh - 140px);
+}
+.agent-chat-msgs {
+  flex: 1; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  padding-bottom: 16px;
+}
+.chat-msg { display: flex; gap: 10px; max-width: 800px; }
+.chat-msg.user { flex-direction: row-reverse; align-self: flex-end; }
+.chat-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: 800; flex-shrink: 0;
+}
+.chat-msg.assistant .chat-avatar { background: linear-gradient(135deg, #3d8ef8, #7c4dff); color: #fff; }
+.chat-msg.user .chat-avatar { background: #1a2540; color: var(--text-mid); border: 1px solid var(--card-bd); }
+.chat-bubble {
+  background: var(--card-bg);
+  border: 1px solid var(--card-bd);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.chat-msg.user .chat-bubble { background: #0d1e40; border-color: #1a3060; }
+.chat-input-row { display: flex; gap: 8px; margin-top: 12px; }
+.chat-textarea {
+  flex: 1; background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 9px 12px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  max-height: 100px;
+}
+.chat-textarea:focus { border-color: var(--accent); }
+.chat-send-btn {
+  background: var(--accent); border: none; border-radius: 8px;
+  width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+}
+.chat-send-btn:hover { opacity: .85; }
+.chat-send-btn:disabled { opacity: .35; cursor: default; }
+.chat-send-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 40px 20px;
+  color: var(--text-dim); font-size: 0.82rem;
+}
+.empty-state h3 { color: var(--text-mid); font-size: 0.95rem; margin-bottom: 6px; }
+
+.typing-dots { display: inline-flex; gap: 3px; }
+.typing-dots span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-dim);
+  animation: blink 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: .2s; }
+.typing-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%,60%,100%{opacity:1} 30%{opacity:.2} }
+
+@media (max-width: 768px) {
+  .agent-wrap { grid-template-columns: 1fr; }
+  .agent-sidebar { display: none; }
+  .add-holding-form { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+<nav class="navbar">
+  <div class="nav-brand">AI 投資 Agent</div>
+  <div class="nav-links">
+    <a href="/"       class="nav-link">美股</a>
+    <a href="/tw"     class="nav-link">台股</a>
+    <a href="/screener" class="nav-link">篩選器</a>
+    <a href="/portfolio" class="nav-link">投資組合</a>
+    <a href="/predict" class="nav-link">AI 預測</a>
+    <a href="/agent"  class="nav-link active">Agent</a>
+  </div>
+</nav>
+
+<div class="agent-wrap">
+
+  <!-- ── Sidebar ────────────────────────────────────────────────── -->
+  <aside class="agent-sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Agent 狀態</div>
+      <div class="agent-status-bar" id="statusBar">
+        <div class="status-dot off" id="statusDot"></div>
+        <span class="status-text" id="statusText">Agent 未啟用</span>
+        <span class="status-time" id="statusTime"></span>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">啟用自動監控</span>
+        <label class="toggle">
+          <input type="checkbox" id="enabledToggle" onchange="toggleAgent()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-title">Claude API Key</div>
+      <input type="password" class="sb-input" id="claudeKeyInput" placeholder="sk-ant-..." autocomplete="off">
+      <div class="sb-label">Key 儲存於伺服器設定檔，不顯示於介面</div>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-title">LINE 推播設定</div>
+      <input type="text"     class="sb-input" id="lineTokenInput"  placeholder="Channel Access Token">
+      <input type="text"     class="sb-input" id="lineUserInput"   placeholder="User ID" style="margin-top:6px">
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-title">掃描設定</div>
+      <div class="sb-row">
+        <div>
+          <div class="sb-label">最低股價</div>
+          <input type="number" class="sb-input" id="priceMin" value="10" min="1">
+        </div>
+        <div>
+          <div class="sb-label">最高股價</div>
+          <input type="number" class="sb-input" id="priceMax" value="200" min="1">
+        </div>
+      </div>
+      <div class="sb-label">起漲指標門檻（滿分 5）</div>
+      <select class="sb-input" id="minScore">
+        <option value="2">2 分以上</option>
+        <option value="3" selected>3 分以上</option>
+        <option value="4">4 分以上</option>
+      </select>
+      <div class="sb-label">掃描範圍</div>
+      <select class="sb-input" id="scanUniverse">
+        <option value="top50">成交量 Top 50</option>
+        <option value="top100" selected>成交量 Top 100</option>
+        <option value="top200">成交量 Top 200</option>
+      </select>
+      <button class="sb-btn primary" onclick="saveConfig()">儲存設定</button>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-title">立即執行</div>
+      <button class="sb-btn secondary" onclick="runNow()" id="runNowBtn">立即全面分析並推播</button>
+    </div>
+  </aside>
+
+  <!-- ── Main ───────────────────────────────────────────────────── -->
+  <div class="agent-main">
+    <div class="agent-tabs">
+      <div class="agent-tab active" onclick="switchTab('holdings')">持倉管理</div>
+      <div class="agent-tab" onclick="switchTab('scanner')">起漲掃描器</div>
+      <div class="agent-tab" onclick="switchTab('chat')">AI 對話</div>
+      <div class="agent-tab" onclick="switchTab('logs')">通知紀錄</div>
+    </div>
+
+    <!-- Holdings tab -->
+    <div class="agent-panel active" id="tab-holdings">
+      <div class="add-holding-form">
+        <input type="text"   class="form-input" id="h-code"      placeholder="代碼（如 2330）" style="text-transform:uppercase">
+        <input type="number" class="form-input" id="h-buyprice"  placeholder="買入價格">
+        <input type="number" class="form-input" id="h-shares"    placeholder="持股數量（股）">
+        <input type="text"   class="form-input" id="h-date"      placeholder="買入日期">
+        <button class="form-add-btn" onclick="addHolding()">新增</button>
+      </div>
+
+      <div id="holdingsLoading" style="color:var(--text-dim);font-size:.8rem;padding:8px 0">載入中...</div>
+      <table class="holdings-table" id="holdingsTable" style="display:none">
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>買入價</th>
+            <th>持股</th>
+            <th>現價</th>
+            <th>損益</th>
+            <th>起漲得分</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="holdingsTbody"></tbody>
+      </table>
+
+      <!-- Per-stock recommendation box -->
+      <div class="rec-box" id="recBox">
+        <h4 id="recBoxTitle">AI 建議</h4>
+        <div id="recBoxContent"></div>
+      </div>
+    </div>
+
+    <!-- Scanner tab -->
+    <div class="agent-panel" id="tab-scanner">
+      <div class="scan-controls">
+        <div class="scan-field">
+          <label>最低股價</label>
+          <input type="number" class="scan-input" id="sc-priceMin" value="10">
+        </div>
+        <div class="scan-field">
+          <label>最高股價</label>
+          <input type="number" class="scan-input" id="sc-priceMax" value="200">
+        </div>
+        <div class="scan-field">
+          <label>最低得分</label>
+          <select class="scan-input" id="sc-minScore">
+            <option value="2">2 分</option>
+            <option value="3" selected>3 分</option>
+            <option value="4">4 分</option>
+          </select>
+        </div>
+        <div class="scan-field">
+          <label>掃描範圍</label>
+          <select class="scan-input" id="sc-universe">
+            <option value="top50">Top 50</option>
+            <option value="top100" selected>Top 100</option>
+            <option value="top200">Top 200</option>
+          </select>
+        </div>
+        <button class="scan-btn" id="scanBtn" onclick="runScan()">開始掃描</button>
+      </div>
+
+      <div id="scanLoading" style="display:none;color:var(--text-dim);font-size:.82rem;padding:8px">
+        掃描中，請稍候（約 30-60 秒）...
+      </div>
+
+      <div class="candidates-grid" id="candidatesGrid">
+        <div class="empty-state">
+          <h3>尚未掃描</h3>
+          設定條件後點擊「開始掃描」，AI 將找出符合起漲訊號的標的
+        </div>
+      </div>
+
+      <!-- Scanner AI recommendation -->
+      <div class="rec-box" id="scanRecBox" style="margin-top:16px">
+        <h4>AI 推薦說明</h4>
+        <div id="scanRecContent"></div>
+      </div>
+    </div>
+
+    <!-- Chat tab -->
+    <div class="agent-panel" id="tab-chat">
+      <div class="agent-chat-wrap">
+        <div class="agent-chat-msgs" id="chatMsgs">
+          <div class="empty-state">
+            <h3>AI 投資 Agent</h3>
+            可詢問任何台股投資問題，或請 AI 分析特定股票、制定操作策略。<br>
+            例如：「幫我分析 2330 明天的操作策略」、「目前哪類族群比較有機會？」
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <textarea class="chat-textarea" id="chatInput" rows="2"
+                    placeholder="輸入問題..." onkeydown="chatKey(event)"></textarea>
+          <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()">
+            <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Logs tab -->
+    <div class="agent-panel" id="tab-logs">
+      <div id="notifList">
+        <div class="empty-state"><h3>尚無通知紀錄</h3>啟用 Agent 後，每次分析與推播都會記錄在這裡</div>
+      </div>
+    </div>
+
+  </div><!-- /agent-main -->
+</div><!-- /agent-wrap -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let chatMessages = [];
+let isChatStreaming = false;
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.onload = async () => {
+  await loadConfig();
+  await loadHoldings();
+  loadNotifications();
+  // Set today as default date
+  document.getElementById('h-date').value = new Date().toISOString().slice(0, 10);
+};
+
+// ── Tab switch ────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.agent-tab').forEach((t, i) => {
+    t.classList.toggle('active', ['holdings','scanner','chat','logs'][i] === name);
+  });
+  document.querySelectorAll('.agent-panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'tab-' + name);
+  });
+  if (name === 'logs') loadNotifications();
+}
+
+// ── Config ────────────────────────────────────────────────────────────────
+async function loadConfig() {
+  const r = await fetch('/api/agent/config');
+  const c = await r.json();
+  document.getElementById('enabledToggle').checked = c.enabled;
+  document.getElementById('lineTokenInput').value  = c.line_token || '';
+  document.getElementById('lineUserInput').value   = c.line_user_id || '';
+  document.getElementById('priceMin').value        = c.scan_price_min || 10;
+  document.getElementById('priceMax').value        = c.scan_price_max || 200;
+  document.getElementById('minScore').value        = c.scan_min_score || 3;
+  document.getElementById('scanUniverse').value    = c.scan_universe || 'top100';
+  if (c.claude_api_key) document.getElementById('claudeKeyInput').placeholder = c.claude_api_key;
+
+  updateStatusBar(c.enabled, c.last_scan);
+
+  // Load existing candidates
+  if (c.candidates && c.candidates.length) renderCandidates(c.candidates);
+}
+
+async function saveConfig() {
+  const key = document.getElementById('claudeKeyInput').value.trim();
+  const body = {
+    enabled:       document.getElementById('enabledToggle').checked,
+    line_token:    document.getElementById('lineTokenInput').value.trim(),
+    line_user_id:  document.getElementById('lineUserInput').value.trim(),
+    scan_price_min: +document.getElementById('priceMin').value,
+    scan_price_max: +document.getElementById('priceMax').value,
+    scan_min_score: +document.getElementById('minScore').value,
+    scan_universe:  document.getElementById('scanUniverse').value,
+  };
+  if (key && !key.startsWith('***')) body.claude_api_key = key;
+  await fetch('/api/agent/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  updateStatusBar(body.enabled, null);
+}
+
+async function toggleAgent() {
+  await saveConfig();
+}
+
+function updateStatusBar(enabled, lastScan) {
+  document.getElementById('statusDot').className = 'status-dot ' + (enabled ? 'on' : 'off');
+  document.getElementById('statusText').textContent = enabled ? 'Agent 運行中' : 'Agent 未啟用';
+  if (lastScan) document.getElementById('statusTime').textContent = '上次掃描 ' + lastScan;
+}
+
+// ── Holdings ──────────────────────────────────────────────────────────────
+async function loadHoldings() {
+  document.getElementById('holdingsLoading').style.display = 'block';
+  document.getElementById('holdingsTable').style.display   = 'none';
+  const r = await fetch('/api/agent/holdings');
+  const holdings = await r.json();
+  document.getElementById('holdingsLoading').style.display = 'none';
+
+  const tbody = document.getElementById('holdingsTbody');
+  tbody.innerHTML = '';
+
+  if (!holdings.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h3>尚無持倉</h3>在上方輸入您持有的股票代碼與買入資訊</td></tr>';
+    document.getElementById('holdingsTable').style.display = 'table';
+    return;
+  }
+
+  for (const h of holdings) {
+    const pnl     = h.pnl_pct || 0;
+    const pnlCls  = pnl > 0 ? 'pnl-green' : (pnl < 0 ? 'pnl-red' : 'pnl-zero');
+    const pnlSign = pnl > 0 ? '+' : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <div style="font-weight:800;color:var(--text)">${h.name || h.code}</div>
+        <div style="font-size:.67rem;color:var(--text-dim)">${h.code}</div>
+      </td>
+      <td>${h.buy_price || '-'}</td>
+      <td>${(h.shares || 0).toLocaleString()}</td>
+      <td style="font-weight:700">${h.current_price || '-'}</td>
+      <td class="${pnlCls}">${pnlSign}${pnl.toFixed(2)}%</td>
+      <td>
+        <div class="score-bar" id="score-${h.code}">
+          ${[1,2,3,4,5].map(i => `<div class="score-dot"></div>`).join('')}
+        </div>
+      </td>
+      <td style="display:flex;gap:6px">
+        <button class="analyze-row-btn" onclick="analyzeHolding('${h.code}')">AI 分析</button>
+        <button class="del-btn" onclick="deleteHolding('${h.code}')">删</button>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('holdingsTable').style.display = 'table';
+}
+
+async function addHolding() {
+  const code  = document.getElementById('h-code').value.trim().toUpperCase();
+  const price = parseFloat(document.getElementById('h-buyprice').value);
+  const shares= parseInt(document.getElementById('h-shares').value);
+  const date  = document.getElementById('h-date').value;
+  if (!code || !price) { alert('請填入代碼與買入價格'); return; }
+  await fetch('/api/agent/holdings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ code, buy_price: price, shares: shares || 0, date }),
+  });
+  document.getElementById('h-code').value = '';
+  document.getElementById('h-buyprice').value = '';
+  document.getElementById('h-shares').value = '';
+  await loadHoldings();
+}
+
+async function deleteHolding(code) {
+  if (!confirm(`確定刪除 ${code}？`)) return;
+  await fetch(`/api/agent/holdings?code=${code}`, { method: 'DELETE' });
+  await loadHoldings();
+}
+
+async function analyzeHolding(code) {
+  const box     = document.getElementById('recBox');
+  const title   = document.getElementById('recBoxTitle');
+  const content = document.getElementById('recBoxContent');
+  box.classList.add('visible');
+  title.textContent = `${code} — AI 操作建議`;
+  content.innerHTML = '<div class="rec-loading">分析中 <span class="typing-dots"><span></span><span></span><span></span></span></div>';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    const resp = await fetch(`/api/agent/analyze/${code}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    content.innerHTML = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value, {stream:true}).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const p = line.slice(6).trim();
+        if (p === '[DONE]') break;
+        try {
+          const o = JSON.parse(p);
+          if (o.error) { content.textContent = '错误：' + o.error; return; }
+          if (o.text)  { full += o.text; content.textContent = full; }
+        } catch(_) {}
+      }
+    }
+  } catch(e) {
+    content.textContent = '錯誤：' + e.message;
+  }
+}
+
+// ── Scanner ───────────────────────────────────────────────────────────────
+async function runScan() {
+  const btn = document.getElementById('scanBtn');
+  const loading = document.getElementById('scanLoading');
+  btn.disabled = true;
+  loading.style.display = 'block';
+  document.getElementById('candidatesGrid').innerHTML = '';
+  document.getElementById('scanRecBox').classList.remove('visible');
+
+  try {
+    const r = await fetch('/api/agent/scan', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        scan_price_min: +document.getElementById('sc-priceMin').value,
+        scan_price_max: +document.getElementById('sc-priceMax').value,
+        scan_min_score: +document.getElementById('sc-minScore').value,
+        scan_universe:  document.getElementById('sc-universe').value,
+      }),
+    });
+    const results = await r.json();
+    renderCandidates(results);
+  } catch(e) {
+    document.getElementById('candidatesGrid').innerHTML = `<div class="empty-state"><h3>掃描失敗</h3>${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    loading.style.display = 'none';
+  }
+}
+
+function renderCandidates(candidates) {
+  const grid = document.getElementById('candidatesGrid');
+  if (!candidates || !candidates.length) {
+    grid.innerHTML = '<div class="empty-state"><h3>未找到符合條件的標的</h3>嘗試降低起漲得分門檻或擴大股價範圍</div>';
+    return;
+  }
+
+  grid.innerHTML = candidates.map(c => {
+    const dots = [1,2,3,4,5].map(i =>
+      `<div class="score-dot ${i <= c.score ? 'filled' : ''}"></div>`
+    ).join('');
+
+    const biasCls  = c.bias20 !== null && c.bias20 < 6 ? 'tag-green' : 'tag-yellow';
+    const rebCls   = c.rebound !== null && c.rebound < 15 ? 'tag-green' : 'tag-yellow';
+    const trendCls = c.ma20_trend && c.ma20_trend.includes('上揚') ? 'tag-green' : 'tag-red';
+    const volCls   = c.vol_structure && c.vol_structure.includes('健康') ? 'tag-green' : 'tag-gray';
+
+    return `
+      <div class="candidate-card" onclick="analyzeScanStock('${c.code}', '${c.name}')">
+        <div class="cand-header">
+          <div>
+            <div class="cand-name">${c.name}</div>
+            <div class="cand-code">${c.code}</div>
+          </div>
+          <div class="cand-price">${c.price} 元</div>
+        </div>
+        <div class="score-bar">${dots}</div>
+        <div class="cand-metrics">
+          <span class="cand-tag ${trendCls}">月線${c.ma20_trend ? c.ma20_trend.slice(0,2) : '?'}</span>
+          <span class="cand-tag ${biasCls}">乖離${c.bias20 !== null ? c.bias20.toFixed(1) : '?'}%</span>
+          <span class="cand-tag ${rebCls}">反彈${c.rebound !== null ? c.rebound.toFixed(1) : '?'}%</span>
+          <span class="cand-tag ${volCls}">${c.vol_structure ? c.vol_structure.slice(0,2) : '量?'}</span>
+          <span class="cand-tag tag-blue">${c.kd || ''}</span>
+          ${c.inst_total !== null && c.inst_total !== undefined
+            ? `<span class="cand-tag ${c.inst_total > 0 ? 'tag-green' : 'tag-red'}">法人${c.inst_total > 0 ? '+' : ''}${c.inst_total}</span>`
+            : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function analyzeScanStock(code, name) {
+  const box     = document.getElementById('scanRecBox');
+  const content = document.getElementById('scanRecContent');
+  box.classList.add('visible');
+  content.innerHTML = `<b>${name}（${code}）</b>\n分析中 <span class="typing-dots"><span></span><span></span><span></span></span>`;
+  box.scrollIntoView({ behavior:'smooth', block:'nearest' });
+
+  try {
+    const resp = await fetch(`/api/agent/analyze/${code}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let full = `${name}（${code}）\n`;
+    content.textContent = full;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value, {stream:true}).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const p = line.slice(6).trim();
+        if (p === '[DONE]') break;
+        try {
+          const o = JSON.parse(p);
+          if (o.text) { full += o.text; content.textContent = full; }
+        } catch(_) {}
+      }
+    }
+  } catch(e) {
+    content.textContent = '錯誤：' + e.message;
+  }
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+function chatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); }
+}
+
+async function chatSend() {
+  if (isChatStreaming) return;
+  const input = document.getElementById('chatInput');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  isChatStreaming = true;
+  document.getElementById('chatSendBtn').disabled = true;
+
+  // Hide empty state
+  const empty = document.querySelector('#tab-chat .empty-state');
+  if (empty) empty.remove();
+
+  chatMessages.push({ role: 'user', content: text });
+  appendChatMsg('user', text);
+
+  const bubble = appendChatMsg('assistant', '');
+  bubble.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
+
+  try {
+    const cfg = await (await fetch('/api/agent/config')).json();
+    const resp = await fetch('/api/agent/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: chatMessages }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    bubble.textContent = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value, {stream:true}).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const p = line.slice(6).trim();
+        if (p === '[DONE]') break;
+        try {
+          const o = JSON.parse(p);
+          if (o.error) { bubble.textContent = '錯誤：' + o.error; return; }
+          if (o.text)  { full += o.text; bubble.textContent = full; scrollChat(); }
+        } catch(_) {}
+      }
+    }
+    chatMessages.push({ role: 'assistant', content: full });
+    if (chatMessages.length > 20) chatMessages = chatMessages.slice(-20);
+  } catch(e) {
+    bubble.textContent = '錯誤：' + e.message;
+  } finally {
+    isChatStreaming = false;
+    document.getElementById('chatSendBtn').disabled = false;
+  }
+}
+
+function appendChatMsg(role, text) {
+  const wrap = document.getElementById('chatMsgs');
+  const div  = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  const av = document.createElement('div');
+  av.className = 'chat-avatar';
+  av.textContent = role === 'assistant' ? 'AI' : 'U';
+  const bub = document.createElement('div');
+  bub.className = 'chat-bubble';
+  bub.textContent = text;
+  div.appendChild(av);
+  div.appendChild(bub);
+  wrap.appendChild(div);
+  scrollChat();
+  return bub;
+}
+
+function scrollChat() {
+  const el = document.getElementById('chatMsgs');
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────
+async function loadNotifications() {
+  const r = await fetch('/api/agent/notifications');
+  const logs = await r.json();
+  const el = document.getElementById('notifList');
+  if (!logs.length) {
+    el.innerHTML = '<div class="empty-state"><h3>尚無通知紀錄</h3>啟用 Agent 後，每次分析與推播都會記錄在這裡</div>';
+    return;
+  }
+  el.innerHTML = logs.map(n => `
+    <div class="notif-item">
+      <div class="notif-header">
+        <span class="notif-title">${n.title}</span>
+        <span class="notif-time">${n.time}</span>
+      </div>
+      <div class="notif-body">${n.body}</div>
+    </div>
+  `).join('');
+}
+
+// ── Run now ───────────────────────────────────────────────────────────────
+async function runNow() {
+  const btn = document.getElementById('runNowBtn');
+  btn.disabled = true;
+  btn.textContent = '分析中...';
+  try {
+    const r = await fetch('/api/agent/run_now', { method: 'POST' });
+    const j = await r.json();
+    if (j.error) alert(j.error);
+    else alert(j.message || '已觸發，請等待 LINE 推播');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '立即全面分析並推播';
+  }
+}
+</script>
+</body>
+</html>

@@ -4178,5 +4178,627 @@ def predict_chat():
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  AI Agent 自動化投資監控模組
+# ═══════════════════════════════════════════════════════════════════════════
+
+AGENT_FILE = os.path.join(os.path.dirname(__file__), 'agent_config.json')
+_agent_lock = threading.Lock()
+
+_AGENT_SYSTEM_PROMPT = """你是一位專業台股投資 AI 助理，負責分析持倉與市場機會，給出明確的操作建議。
+
+你的職責：
+1. 根據技術指標、籌碼數據、法人動向，對持倉股票給出【買進/加碼/持有/減碼/賣出】建議
+2. 掃描低價但出現起漲訊號的股票，主動推薦值得關注的標的
+3. 每次建議必須說明理由、關鍵支撐壓力價、預估漲跌幅
+
+建議格式（每支股票）：
+操作建議：買進/加碼/持有/減碼/賣出
+原因：（50字以內，聚焦最關鍵的 2-3 個指標）
+關鍵支撐：XX 元
+關鍵壓力：XX 元
+預估明日區間：+X% ~ +X%（或 -X% ~ -X%）
+風險提示：（一句話）
+
+判斷原則：
+- 月線扣抵向上 + 乖離 < 6% + 量能健康 = 起漲條件
+- 法人連買 + KD 低檔黃金交叉 = 強烈買訊
+- 當沖比 > 50% + 爆量上影線 = 籌碼混亂，謹慎
+- 跌破 MA20 且月線下彎 = 停損或減碼
+
+回應使用繁體中文，語氣直接果斷，不要模糊建議。"""
+
+
+def _load_agent_cfg() -> dict:
+    with _agent_lock:
+        if not os.path.exists(AGENT_FILE):
+            return _default_agent_cfg()
+        try:
+            with open(AGENT_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return _default_agent_cfg()
+
+
+def _save_agent_cfg(cfg: dict):
+    with _agent_lock:
+        with open(AGENT_FILE, 'w') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def _default_agent_cfg() -> dict:
+    return {
+        'enabled': False,
+        'claude_api_key': '',
+        'line_token': '',
+        'line_user_id': '',
+        'scan_price_min': 10,
+        'scan_price_max': 200,
+        'scan_min_score': 3,
+        'scan_universe': 'top100',
+        'holdings': [],          # [{code, name, buy_price, shares, date}]
+        'candidates': [],        # last scan results
+        'notifications': [],     # last 50 notification logs
+        'last_scan': '',
+        'last_morning': '',
+        'last_close': '',
+    }
+
+
+def _score_breakout(data: dict) -> int:
+    """Count how many of the 5 breakout indicators pass. Returns 0-5."""
+    score = 0
+    if data.get('error'):
+        return 0
+    # 1. Volume structure: 5MV > 20MV
+    if data.get('mv5', 0) > data.get('mv20', 1):
+        score += 1
+    # 2. Bias: price above 20MA but bias < 6%
+    bias = data.get('bias20', 99)
+    if 0 < bias < 6:
+        score += 1
+    # 3. Rebound < 15%
+    if 0 < data.get('rebound_pct', 99) < 15:
+        score += 1
+    # 4. Day trade ratio < 40% (or unknown = neutral)
+    dtr = data.get('day_trade_ratio')
+    if dtr is None or dtr < 40:
+        score += 1
+    # 5. MA20 deduct: price > deduct price (uptrend)
+    if data.get('price', 0) > data.get('ma20_deduct_price', 99999):
+        score += 1
+    return score
+
+
+def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
+    """Build context text for Claude agent recommendation."""
+    lines = []
+    code  = data.get('code', '')
+    name  = data.get('name', code)
+    price = data.get('price', 0)
+    score = _score_breakout(data)
+
+    lines.append(f"股票：{name}（{code}）  現價：{price} 元  起漲指標得分：{score}/5")
+
+    if holding:
+        buy_p  = holding.get('buy_price', 0)
+        shares = holding.get('shares', 0)
+        pnl    = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
+        cost   = round(buy_p * shares, 0)
+        lines.append(f"持倉資訊：買入價 {buy_p} 元 / {shares} 股 / 未實現損益 {pnl:+.2f}%")
+
+    lines.append(f"月線方向：{data.get('ma20_trend', 'N/A')}（扣抵估價 {data.get('ma20_deduct_price', 'N/A')}）")
+    lines.append(f"乖離率：{data.get('bias20', 'N/A')}%  反彈幅度：{data.get('rebound_pct', 'N/A'):.1f}%")
+    lines.append(f"量能：{data.get('vol_structure', 'N/A')}（5MV={data.get('mv5',0):,} / 20MV={data.get('mv20',0):,}）")
+
+    dtr = data.get('day_trade_ratio')
+    lines.append(f"當沖比：{f'{dtr}%' if dtr is not None else '未取得'}")
+
+    lines.append(f"KD：K={data.get('k','N/A')} D={data.get('d','N/A')} → {data.get('kd_status','N/A')}")
+    lines.append(f"MACD OSC：{data.get('osc','N/A')} → {data.get('osc_trend','N/A')}")
+    lines.append(f"近5日最高：{data.get('high_5d','N/A')}  近5日最低：{data.get('low_5d','N/A')}")
+    lines.append(f"MA5={data.get('ma5','N/A')}  MA20={data.get('ma20','N/A')}  MA60={data.get('ma60','N/A')}")
+
+    inst = data.get('inst')
+    if inst:
+        total = inst.get('total_net', 0)
+        lines.append(f"三大法人：外資 {inst.get('foreign_net',0):+,.0f} / 投信 {inst.get('trust_net',0):+,.0f} / 自營 {inst.get('dealer_net',0):+,.0f} / 合計 {total:+,.0f} 張")
+
+    mg = data.get('margin')
+    if mg:
+        lines.append(f"融資餘額：{mg.get('margin_today',0):,.0f}（{mg.get('margin_chg',0):+,.0f}）  融券：{mg.get('short_today',0):,.0f}（{mg.get('short_chg',0):+,.0f}）")
+
+    return '\n'.join(lines)
+
+
+def _get_tw_universe(size: str = 'top100') -> list:
+    """Return a list of TW stock codes to scan."""
+    import urllib.request
+    try:
+        url = 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        data = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        stocks = []
+        for item in data:
+            code = item.get('Code', '')
+            if not code or not code.isdigit() or len(code) != 4:
+                continue
+            vol = safe_float(str(item.get('TradeVolume', '0')).replace(',', ''))
+            price = safe_float(str(item.get('ClosingPrice', '0')).replace(',', ''))
+            if vol > 0 and price > 0:
+                stocks.append((code, vol, price))
+        stocks.sort(key=lambda x: -x[1])
+        limit = 200 if size == 'top200' else (50 if size == 'top50' else 100)
+        return [s[0] for s in stocks[:limit]]
+    except Exception as e:
+        print(f'[Agent] universe error: {e}')
+        return []
+
+
+def _run_agent_scan(cfg: dict) -> list:
+    """Scan universe for breakout candidates. Returns list of dicts."""
+    price_min = cfg.get('scan_price_min', 10)
+    price_max = cfg.get('scan_price_max', 200)
+    min_score = cfg.get('scan_min_score', 3)
+    universe  = _get_tw_universe(cfg.get('scan_universe', 'top100'))
+
+    results = []
+
+    def _check_one(code):
+        try:
+            data = _fetch_predict_data(code)
+            if data.get('error'):
+                return None
+            price = data.get('price', 0)
+            if not (price_min <= price <= price_max):
+                return None
+            score = _score_breakout(data)
+            if score < min_score:
+                return None
+            return {
+                'code':    code,
+                'name':    data.get('name', code),
+                'price':   price,
+                'score':   score,
+                'bias20':  data.get('bias20'),
+                'rebound': data.get('rebound_pct'),
+                'kd':      f"K{data.get('k','?')} D{data.get('d','?')}",
+                'osc':     data.get('osc'),
+                'ma20_trend': data.get('ma20_trend', ''),
+                'vol_structure': data.get('vol_structure', ''),
+                'inst_total': data.get('inst', {}).get('total_net') if data.get('inst') else None,
+            }
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_check_one, code): code for code in universe}
+        for fut in as_completed(futures):
+            r = fut.result()
+            if r:
+                results.append(r)
+
+    results.sort(key=lambda x: (-x['score'], x.get('bias20', 99)))
+    return results[:20]
+
+
+def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
+    """Analyze all holdings and return recommendation list."""
+    holdings = cfg.get('holdings', [])
+    if not holdings:
+        return []
+
+    output = []
+    for h in holdings:
+        code = h.get('code', '').strip().upper()
+        if not code:
+            continue
+        data = _fetch_predict_data(code)
+        ctx  = _agent_recommendation_text(data, h)
+        try:
+            resp = claude_client.messages.create(
+                model='claude-opus-4-8',
+                max_tokens=400,
+                system=_AGENT_SYSTEM_PROMPT,
+                messages=[{'role': 'user', 'content': f'請針對以下持倉股票給出明日操作建議：\n\n{ctx}'}],
+            )
+            rec_text = resp.content[0].text
+        except Exception as e:
+            rec_text = f'分析失敗：{e}'
+
+        buy_p = h.get('buy_price', 0)
+        price = data.get('price', 0)
+        pnl   = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
+
+        output.append({
+            'code':       code,
+            'name':       data.get('name', code),
+            'price':      price,
+            'buy_price':  buy_p,
+            'pnl_pct':    pnl,
+            'score':      _score_breakout(data),
+            'recommendation': rec_text,
+        })
+    return output
+
+
+def _run_agent_scan_with_ai(cfg: dict, claude_client) -> str:
+    """Run breakout scan and ask Claude for top picks summary."""
+    candidates = _run_agent_scan(cfg)
+    if not candidates:
+        return '本次掃描未找到符合條件的標的。'
+
+    summary_lines = ['以下為本次掃描結果，請從中挑選最值得關注的 3-5 支，並說明理由：', '']
+    for c in candidates[:10]:
+        summary_lines.append(
+            f"{c['name']}（{c['code']}） 現價:{c['price']} 得分:{c['score']}/5 "
+            f"乖離:{c.get('bias20','?')}% 反彈:{c.get('rebound','?'):.1f}% "
+            f"{c.get('kd','')} 月線:{c.get('ma20_trend','')[:4]} "
+            f"量能:{c.get('vol_structure','')[:4]}"
+        )
+
+    try:
+        resp = claude_client.messages.create(
+            model='claude-opus-4-8',
+            max_tokens=600,
+            system=_AGENT_SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': '\n'.join(summary_lines)}],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f'AI 分析失敗：{e}'
+
+
+def _agent_notify(cfg: dict, title: str, body: str):
+    """Send LINE notification and log it."""
+    token   = cfg.get('line_token', '')
+    user_id = cfg.get('line_user_id', '')
+    msg     = f'{title}\n{body}'
+
+    if token and user_id:
+        _push_line_msg(token, user_id, msg)
+
+    log_entry = {
+        'time':  pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+        'title': title,
+        'body':  body[:500],
+    }
+    cfg.setdefault('notifications', []).insert(0, log_entry)
+    cfg['notifications'] = cfg['notifications'][:50]
+    _save_agent_cfg(cfg)
+    print(f'[Agent] notify: {title}')
+
+
+def _is_market_hours() -> bool:
+    now = pd.Timestamp.now(tz='Asia/Taipei')
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 900 <= t <= 810   # 09:00 - 13:30 → 540-810 minutes
+
+
+def _is_premarket() -> bool:
+    now = pd.Timestamp.now(tz='Asia/Taipei')
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 500 <= t < 540   # 08:20 - 09:00
+
+
+def _is_close_time() -> bool:
+    now = pd.Timestamp.now(tz='Asia/Taipei')
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 825 <= t <= 855   # 13:45 - 14:15
+
+
+def _agent_loop():
+    time.sleep(20)
+    print('[Agent] background loop started')
+    while True:
+        try:
+            cfg = _load_agent_cfg()
+            if not cfg.get('enabled') or not cfg.get('claude_api_key'):
+                time.sleep(120)
+                continue
+
+            import anthropic
+            client = anthropic.Anthropic(api_key=cfg['claude_api_key'])
+            now    = pd.Timestamp.now(tz='Asia/Taipei')
+            today  = now.strftime('%Y-%m-%d')
+
+            # Morning briefing (08:20-09:00)
+            if _is_premarket() and cfg.get('last_morning', '') != today:
+                cfg = _load_agent_cfg()
+                holdings_analysis = _run_agent_holdings_analysis(cfg, client)
+                scan_ai = _run_agent_scan_with_ai(cfg, client)
+
+                lines = [f'[{today}] 早盤前分析報告', '']
+                if holdings_analysis:
+                    lines.append('--- 持倉建議 ---')
+                    for h in holdings_analysis:
+                        lines.append(f"{h['name']}（{h['code']}） 現價:{h['price']} 損益:{h['pnl_pct']:+.1f}%")
+                        lines.append(h['recommendation'][:200])
+                        lines.append('')
+                lines.append('--- 今日潛力標的 ---')
+                lines.append(scan_ai[:400])
+
+                cfg['last_morning'] = today
+                _agent_notify(cfg, '晨報', '\n'.join(lines))
+
+            # Intraday scans (every 30 min during market hours)
+            elif _is_market_hours():
+                last_scan = cfg.get('last_scan', '')
+                last_scan_ts = pd.Timestamp(last_scan, tz='Asia/Taipei') if last_scan else pd.Timestamp('2000-01-01', tz='Asia/Taipei')
+                if (now - last_scan_ts).total_seconds() >= 1800:
+                    cfg = _load_agent_cfg()
+                    holdings_analysis = _run_agent_holdings_analysis(cfg, client)
+
+                    lines = [f'[{now.strftime("%H:%M")}] 盤中監控']
+                    urgent = [h for h in holdings_analysis if '賣出' in h['recommendation'] or '減碼' in h['recommendation']]
+                    if urgent:
+                        lines.append('!! 注意 !! 以下持倉出現賣出/減碼訊號：')
+                        for h in urgent:
+                            lines.append(f"{h['name']}（{h['code']}） 現價:{h['price']} 損益:{h['pnl_pct']:+.1f}%")
+                            lines.append(h['recommendation'][:150])
+                    else:
+                        lines.append('持倉目前無急迫賣出訊號')
+                        for h in holdings_analysis[:3]:
+                            lines.append(f"{h['name']}（{h['code']}）{h['price']} → 得分{h['score']}/5")
+
+                    cfg['last_scan'] = now.strftime('%Y-%m-%d %H:%M')
+                    cfg['candidates'] = _run_agent_scan(cfg)
+                    _agent_notify(cfg, '盤中監控', '\n'.join(lines))
+
+            # Close summary (13:45-14:15)
+            elif _is_close_time() and cfg.get('last_close', '') != today:
+                cfg = _load_agent_cfg()
+                holdings_analysis = _run_agent_holdings_analysis(cfg, client)
+                candidates = _run_agent_scan(cfg)
+
+                lines = [f'[{today}] 收盤分析總結', '']
+                if holdings_analysis:
+                    lines.append('--- 持倉收盤建議 ---')
+                    for h in holdings_analysis:
+                        lines.append(f"{h['name']} 現價:{h['price']} 損益:{h['pnl_pct']:+.1f}%")
+                        lines.append(h['recommendation'][:200])
+                        lines.append('')
+
+                if candidates:
+                    lines.append('--- 明日觀察名單 TOP5 ---')
+                    for c in candidates[:5]:
+                        lines.append(f"{c['name']}（{c['code']}） {c['price']}元 得分{c['score']}/5")
+
+                cfg['last_close'] = today
+                cfg['candidates'] = candidates
+                _agent_notify(cfg, '收盤總結', '\n'.join(lines))
+
+        except Exception as e:
+            print(f'[Agent] loop error: {e}')
+
+        time.sleep(60)
+
+
+threading.Thread(target=_agent_loop, daemon=True).start()
+
+
+# ── Agent API endpoints ────────────────────────────────────────────────────
+
+@app.route('/agent')
+def agent_page():
+    return render_template('agent.html')
+
+
+@app.route('/api/agent/config', methods=['GET', 'POST'])
+def agent_config_api():
+    if request.method == 'GET':
+        cfg = _load_agent_cfg()
+        safe = dict(cfg)
+        if safe.get('claude_api_key'):
+            safe['claude_api_key'] = '***' + safe['claude_api_key'][-4:]
+        return jsonify(safe)
+
+    body = request.get_json(force=True)
+    cfg  = _load_agent_cfg()
+
+    for field in ['enabled', 'line_token', 'line_user_id',
+                  'scan_price_min', 'scan_price_max', 'scan_min_score', 'scan_universe']:
+        if field in body:
+            cfg[field] = body[field]
+
+    if body.get('claude_api_key') and not body['claude_api_key'].startswith('***'):
+        cfg['claude_api_key'] = body['claude_api_key']
+
+    _save_agent_cfg(cfg)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agent/holdings', methods=['GET', 'POST', 'DELETE'])
+def agent_holdings_api():
+    cfg = _load_agent_cfg()
+
+    if request.method == 'GET':
+        holdings = cfg.get('holdings', [])
+        enriched = []
+        for h in holdings:
+            code  = h.get('code', '')
+            price_data = _cache_get(f'agent_h_{code}')
+            if not price_data:
+                try:
+                    stock = yf.Ticker(code + '.TW')
+                    info  = stock.info
+                    cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+                    if cur <= 0:
+                        stock = yf.Ticker(code + '.TWO')
+                        info  = stock.info
+                        cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+                    price_data = {'price': cur, 'name': tw_cn_name(code, info.get('shortName', code))}
+                    _cache_set(f'agent_h_{code}', price_data, ttl=120)
+                except Exception:
+                    price_data = {'price': 0, 'name': code}
+            buy_p = h.get('buy_price', 0)
+            cur   = price_data.get('price', 0)
+            pnl   = round((cur - buy_p) / buy_p * 100, 2) if buy_p and cur else 0
+            enriched.append({**h, 'current_price': cur, 'pnl_pct': pnl,
+                              'name': price_data.get('name', code)})
+        return jsonify(enriched)
+
+    if request.method == 'POST':
+        body = request.get_json(force=True)
+        code = body.get('code', '').strip().upper().replace('.TW', '').replace('.TWO', '')
+        if not code:
+            return jsonify({'error': '代碼不可為空'}), 400
+        existing = [h for h in cfg.get('holdings', []) if h.get('code') != code]
+        existing.append({
+            'code':      code,
+            'buy_price': safe_float(body.get('buy_price', 0)),
+            'shares':    safe_int(body.get('shares', 0)),
+            'date':      body.get('date', pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')),
+            'note':      body.get('note', ''),
+        })
+        cfg['holdings'] = existing
+        _save_agent_cfg(cfg)
+        return jsonify({'ok': True})
+
+    if request.method == 'DELETE':
+        code = request.args.get('code', '').strip().upper()
+        cfg['holdings'] = [h for h in cfg.get('holdings', []) if h.get('code') != code]
+        _save_agent_cfg(cfg)
+        return jsonify({'ok': True})
+
+
+@app.route('/api/agent/scan', methods=['POST'])
+def agent_scan_api():
+    cfg = _load_agent_cfg()
+    body = request.get_json(force=True) or {}
+    for field in ['scan_price_min', 'scan_price_max', 'scan_min_score', 'scan_universe']:
+        if field in body:
+            cfg[field] = body[field]
+    results = _run_agent_scan(cfg)
+    cfg['candidates'] = results
+    cfg['last_scan'] = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    _save_agent_cfg(cfg)
+    return jsonify(results)
+
+
+@app.route('/api/agent/analyze/<code>')
+def agent_analyze_api(code):
+    code = code.strip().upper().replace('.TW', '').replace('.TWO', '')
+    cfg  = _load_agent_cfg()
+    api_key = request.args.get('key', '') or cfg.get('claude_api_key', '')
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    import anthropic
+    cfg_h    = _load_agent_cfg()
+    holding  = next((h for h in cfg_h.get('holdings', []) if h.get('code') == code), None)
+    data     = _fetch_predict_data(code)
+    ctx      = _agent_recommendation_text(data, holding)
+
+    prompt   = f'請針對以下股票給出明日操作建議：\n\n{ctx}'
+    if holding:
+        prompt += '\n\n這是我目前持有的股票，請特別說明是否應該持有、加碼或減碼。'
+    else:
+        prompt += '\n\n這不是我的持倉，請評估是否值得買進。'
+
+    def generate():
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            with client.messages.stream(
+                model='claude-opus-4-8',
+                max_tokens=600,
+                system=_AGENT_SYSTEM_PROMPT,
+                messages=[{'role': 'user', 'content': prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+            yield 'data: [DONE]\n\n'
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    from flask import Response, stream_with_context
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.route('/api/agent/chat', methods=['POST'])
+def agent_chat_api():
+    import anthropic
+    from flask import Response, stream_with_context
+    body    = request.get_json(force=True)
+    api_key = body.get('api_key', '') or _load_agent_cfg().get('claude_api_key', '')
+    msgs    = body.get('messages', [])
+
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    def generate():
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            with client.messages.stream(
+                model='claude-opus-4-8',
+                max_tokens=1000,
+                system=_AGENT_SYSTEM_PROMPT,
+                messages=msgs,
+            ) as stream:
+                for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+            yield 'data: [DONE]\n\n'
+        except anthropic.AuthenticationError:
+            yield f"data: {json.dumps({'error': 'API Key 無效'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.route('/api/agent/notifications')
+def agent_notifications_api():
+    cfg = _load_agent_cfg()
+    return jsonify(cfg.get('notifications', []))
+
+
+@app.route('/api/agent/run_now', methods=['POST'])
+def agent_run_now():
+    """Manually trigger a full analysis cycle."""
+    cfg = _load_agent_cfg()
+    api_key = cfg.get('claude_api_key', '')
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    def _bg():
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            c = _load_agent_cfg()
+            analysis  = _run_agent_holdings_analysis(c, client)
+            candidates = _run_agent_scan(c)
+            scan_ai   = _run_agent_scan_with_ai(c, client)
+
+            today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+            lines = [f'[{today}] 手動觸發分析', '']
+
+            if analysis:
+                lines.append('--- 持倉建議 ---')
+                for h in analysis:
+                    lines.append(f"{h['name']} 現價:{h['price']} 損益:{h['pnl_pct']:+.1f}%")
+                    lines.append(h['recommendation'][:250])
+                    lines.append('')
+
+            lines.append('--- 掃描結果 ---')
+            lines.append(scan_ai[:500])
+
+            c['candidates'] = candidates
+            c['last_scan']  = today
+            _agent_notify(c, '手動分析完成', '\n'.join(lines))
+        except Exception as e:
+            print(f'[Agent] run_now error: {e}')
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({'ok': True, 'message': '分析已在背景執行，完成後推播 LINE 通知'})
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6001, debug=False)
