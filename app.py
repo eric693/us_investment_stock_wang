@@ -1481,6 +1481,63 @@ def portfolio_data_api():
     return jsonify({'ok': True})
 
 
+def _quote_for_ticker(code):
+    """單檔即時報價 {price, changePct, name}；台股自動補 .TW/.TWO、美股直接用代碼，含快取與負向快取。"""
+    code = (code or '').strip().upper()
+    if not code:
+        return {'price': None, 'changePct': None, 'name': ''}
+    ck = f'pq:{code}'
+    cached = _cache_get(ck)
+    if cached:
+        return cached
+    is_tw   = bool(_re.match(r'^\d{4,6}[A-Z]?$', code))
+    symbols = [code + '.TW', code + '.TWO'] if is_tw else [code]
+    res = {'price': None, 'changePct': None, 'name': code}
+    try:
+        for sym in symbols:
+            info  = yf.Ticker(sym).info
+            price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+            if price > 0:
+                prev = safe_float(info.get('previousClose', info.get('regularMarketPreviousClose', 0)))
+                name = tw_cn_name(code, info.get('shortName', code)) if is_tw else info.get('shortName', code)
+                res  = {'price': round(price, 2),
+                        'changePct': round((price - prev) / prev * 100, 2) if prev else None,
+                        'name': name}
+                break
+    except Exception:
+        pass
+    _cache_set(ck, res, ttl=30 if res['price'] else 600)
+    return res
+
+
+@app.route('/api/portfolio/priced')
+def portfolio_priced_api():
+    """一次回傳投資組合持倉＋即時報價（並行抓取），讓前端一次呼叫取代『清單＋逐檔報價』多次往返。"""
+    holdings = _load_agent_cfg().get('holdings', [])
+    codes    = [h.get('code', '') for h in holdings]
+    qmap     = {}
+    if codes:
+        with ThreadPoolExecutor(max_workers=min(12, len(codes))) as ex:
+            for code, q in zip(codes, ex.map(_quote_for_ticker, codes)):
+                qmap[code] = q
+    out = []
+    for h in holdings:
+        code = h.get('code', '')
+        q    = qmap.get(code, {'price': None, 'changePct': None, 'name': code})
+        out.append({
+            'ticker':    code,
+            'shares':    h.get('shares', 0),
+            'costPrice': h.get('buy_price', 0),
+            'buyDate':   h.get('date', ''),
+            'note':      h.get('note', ''),
+            'group':     h.get('group', ''),
+            'price':     q['price'],
+            'changePct': q['changePct'],
+            'name':      q['name'],
+        })
+    return jsonify(out)
+
+
 @app.route('/api/compare')
 def compare_stocks():
     tickers_raw = request.args.get('tickers', '')
