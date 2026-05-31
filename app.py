@@ -3394,6 +3394,48 @@ def _eval_condition(hist, info, cond, extra=None):
             bv     = safe_float(calc_bias(close, period).iloc[-1])
             return bv >= thr, f'乖離率({period}) = {bv:.1f}% ≥ {thr}%'
 
+        elif ctype == 'ma_deduction_up':
+            # 月線扣抵向上：明日將離開均線窗口的舊收盤 < 現價 → 均線明日翻揚
+            period = int(params.get('period', 20))
+            if n <= period:
+                return False, f'資料不足{period}日'
+            deduct = safe_float(close.iloc[n - 1 - period])
+            price_now = safe_float(close.iloc[-1])
+            ok = price_now > deduct
+            return ok, f'{period}日扣抵價 {deduct:.2f}，現價 {price_now:.2f} → 均線{"上揚" if ok else "下彎"}'
+
+        elif ctype == 'vol_5_above_20':
+            # 量能結構轉強：5日均量站上20日均量
+            v5  = safe_float(vol.rolling(min(5, n), min_periods=1).mean().iloc[-1])
+            v20 = safe_float(vol.rolling(min(20, n), min_periods=1).mean().iloc[-1])
+            return v5 > v20, f'5日均量 {v5/1000:.0f}張 {">" if v5 > v20 else "≤"} 20日均量 {v20/1000:.0f}張'
+
+        elif ctype == 'kd_low_golden_cross':
+            # KD 低檔(<門檻)黃金交叉，比一般金叉更精準的起漲訊號
+            kn  = int(params.get('kd_n', 9))
+            thr = float(params.get('threshold', 30))
+            within = int(params.get('within_days', 3))
+            k, d_ = calc_kd(high, low, close, kn, 3, 3)
+            for i in range(-within, 0):
+                try:
+                    if k.iloc[i-1] < d_.iloc[i-1] and k.iloc[i] > d_.iloc[i] and k.iloc[i] < thr:
+                        return True, f'KD 低檔金叉 K={safe_float(k.iloc[-1]):.1f}（<{thr}）'
+                except Exception:
+                    pass
+            return False, f'近{within}日無低檔金叉 K={safe_float(k.iloc[-1]):.1f}'
+
+        elif ctype == 'pullback_hold_ma':
+            # 回測均線不破：現價在均線上方但乖離很小（回後守穩，續攻機率高）
+            period = int(params.get('period', 20))
+            within = float(params.get('within_pct', 3))
+            ma = safe_float(close.rolling(min(period, n), min_periods=1).mean().iloc[-1])
+            price_now = safe_float(close.iloc[-1])
+            if ma <= 0:
+                return False, '均線無效'
+            gap = (price_now - ma) / ma * 100
+            ok = 0 <= gap <= within
+            return ok, f'現價距{period}日線 {gap:+.1f}%（0~{within}% 視為回測守穩）'
+
         elif ctype == 'psy_low':
             period = int(params.get('period', 12))
             thr    = float(params.get('threshold', 25))
@@ -5147,9 +5189,12 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 - ma_bull_alignment 均線多頭排列（5>10>20>60）
 - ma_golden_cross {short_period:5, long_period:20} 短均線黃金交叉長均線
 - monthly_price_above_ma 站上月線（月K）
+- ma_deduction_up {period:20} 月線扣抵向上（均線明日將翻揚，趨勢轉強的先行訊號）
+- pullback_hold_ma {period:20, within_pct:3} 回測均線守穩（現價貼近均線上方，回後續攻）
 
 【動能指標】
 - kd_golden_cross KD 黃金交叉
+- kd_low_golden_cross {threshold:30} KD 低檔黃金交叉（K<門檻才算，起漲訊號更精準）
 - kd_k_below {threshold:20} KD 的 K 值低檔（超賣）
 - macd_golden_cross MACD 黃金交叉
 - macd_bullish MACD 多頭（DIF>MACD）
@@ -5164,6 +5209,7 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 
 【量價結構】
 - volume_ratio_above {ratio:1.5} 爆量（量 > N 倍均量）
+- vol_5_above_20 量能結構轉強（5日均量站上20日均量）
 - volume_shrinking 量縮（賣壓宣洩）
 - high_vol_breakout 帶量突破前高
 - vol_up_candle 量增收紅

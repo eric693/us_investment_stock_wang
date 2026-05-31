@@ -310,10 +310,13 @@ const COND_DEFS = {
   price_cross_below_ma:     { label:'收盤跌破N日均線（警示）', badge:'exit', params:[{key:'period',label:'均線日數',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   price_below_ma_for_months:{ label:'股價長期低於均線後突破',  badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'months',label:'低於月數',default:3,type:'number'}] },
   ma_trending_up:           { label:'N日均線呈上揚趨勢',       badge:'tech', params:[{key:'period',label:'均線日數',default:60,type:'number'},{key:'trend_days',label:'比較天數',default:5,type:'number'}] },
+  ma_deduction_up:          { label:'月線扣抵向上（趨勢轉強）', badge:'tech', params:[{key:'period',label:'均線日數',default:20,type:'number'}] },
+  pullback_hold_ma:         { label:'回測均線守穩',             badge:'tech', params:[{key:'period',label:'均線日數',default:20,type:'number'},{key:'within_pct',label:'容許乖離%',default:3,type:'number'}] },
   // KD
   kd_k_above:               { label:'KD K值 > 閾值',          badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:50,type:'number'}] },
   kd_k_below:               { label:'KD K值 < 閾值（超賣）',  badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'K值閾值',default:20,type:'number'}] },
   kd_golden_cross:          { label:'KD 金叉',                badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  kd_low_golden_cross:      { label:'KD 低檔金叉（起漲）',     badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'threshold',label:'K值上限',default:30,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   // MACD
   macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[] },
@@ -324,6 +327,7 @@ const COND_DEFS = {
   rsi_below:                { label:'RSI < 閾值（超賣）',      badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:30,type:'number'}] },
   // 成交量
   volume_ratio_above:       { label:'量比 > X 倍（放量）',     badge:'tech', params:[{key:'avg_days',label:'均量天數',default:20,type:'number'},{key:'ratio',label:'量比倍數',default:1.5,type:'number'}] },
+  vol_5_above_20:           { label:'5日均量站上20日均量',     badge:'tech', params:[] },
   volume_shrinking:         { label:'量縮（打底訊號）',         badge:'tech', params:[{key:'avg_days',label:'均量天數',default:20,type:'number'},{key:'recent_days',label:'近期天數',default:5,type:'number'}] },
   // 布林
   price_near_bb_lower:      { label:'股價接近布林下軌',         badge:'tech', params:[{key:'pct',label:'距離%以內',default:5,type:'number'}] },
@@ -541,12 +545,12 @@ function clearAllTickers() {
 // ═══════════════════════════════════════════════════════
 // ── 條件選擇面板 ──────────────────────────────────────
 const COND_CATS = {
-  '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_golden_cross','ma_death_cross','ma_convergence'],
-  'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_death_cross'],
+  '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_deduction_up','pullback_hold_ma','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_golden_cross','ma_death_cross','ma_convergence'],
+  'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_low_golden_cross','kd_death_cross'],
   'MACD':   ['macd_bullish','macd_golden_cross','macd_death_cross'],
   'RSI':    ['rsi_above','rsi_below','rsi_cross_above','rsi_cross_below'],
   '布林':   ['price_near_bb_lower','price_near_bb_upper','bb_squeeze','bb_breakout_up','bb_oversold'],
-  '量能':   ['volume_ratio_above','volume_shrinking','volume_nd_high','obv_rising','vol_up_candle','vol_down_candle','big_vol_red','vol_price_divergence_up','vol_price_divergence_down','price_consolidation_break'],
+  '量能':   ['volume_ratio_above','vol_5_above_20','volume_shrinking','volume_nd_high','obv_rising','vol_up_candle','vol_down_candle','big_vol_red','vol_price_divergence_up','vol_price_divergence_down','price_consolidation_break'],
   '價格':   ['price_change_above','price_nd_high','price_from_high_below','price_range','consecutive_up','consecutive_down','price_change_nd','price_change_nd_down','price_gap_up','high_vol_breakout','price_near_52w_low','close_near_high','limit_up','limit_down','outperform_index'],
   '指標':   ['william_r_oversold','william_r_cross_above','cci_oversold','cci_cross_above','adx_strong_trend','bias_low','bias_high','psy_low','psy_high','atr_expand','mtm_cross_above','mtm_positive'],
   '週期':   ['weekly_kd_golden_cross','weekly_macd_golden_cross','weekly_rsi_cross_above','weekly_price_above_ma','weekly_price_below_ma','weekly_ma_trending_up','weekly_ma_trending_down','monthly_kd_oversold','monthly_macd_golden_cross','monthly_price_above_ma'],
