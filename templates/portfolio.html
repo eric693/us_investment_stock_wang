@@ -744,7 +744,7 @@ function renderPortfolio() {
 
   holdings.forEach((h, i) => {
     const p = _portPrices[h.ticker];
-    const currentPrice = p ? p.price : null;
+    const currentPrice = (p && p.price) ? p.price : null;
     const cost = h.shares * h.costPrice;
     const val  = currentPrice != null ? h.shares * currentPrice : null;
     const pnl  = val != null ? val - cost : null;
@@ -753,10 +753,12 @@ function renderPortfolio() {
     if (cost > 0) totalCost += cost;
     if (val != null) totalVal += val;
 
+    // p 為 undefined＝仍在抓取（載入中）；已抓但無價＝顯示「—（查無報價）」
     const priceHtml = currentPrice != null
       ? `<span>${fmt(currentPrice)}</span>` + (p.pct != null
           ? `<span style="font-size:0.7rem;color:${p.pct>=0?'var(--green)':'var(--red)'};margin-left:4px;">${p.pct>=0?'+':''}${p.pct?.toFixed(2)}%</span>` : '')
-      : `<span class="price-loading">載入中…</span>`;
+      : (p ? `<span style="color:var(--text-dim)" title="查無即時報價，可能停牌或下市">—</span>`
+           : `<span class="price-loading">載入中…</span>`);
 
     const pnlHtml = pnl != null
       ? `<span class="${pnl>=0?'green':'red'}">${pnl>=0?'+':''}${fmtK(pnl)}</span>`
@@ -885,8 +887,11 @@ async function refreshPortfolioPrices() {
       const url = isTw ? `/api/tw/realtime/${normalized}` : `/api/stock/${ticker}`;
       const r = await fetch(url);
       const j = await r.json();
-      _portPrices[ticker] = { price: j.price, pct: j.changePct, name: j.name };
-    } catch {}
+      // 即使抓不到價（下市/查無），也標記為已嘗試，避免畫面永遠卡「載入中」
+      _portPrices[ticker] = { price: j.price || null, pct: (j.changePct ?? null), name: j.name || '' };
+    } catch {
+      _portPrices[ticker] = { price: null, pct: null, name: '' };
+    }
   }));
 
   renderPortfolio();

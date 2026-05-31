@@ -2123,10 +2123,13 @@ def get_tw_realtime(ticker):
             'high':      round(safe_float(info.get('dayHigh', info.get('regularMarketDayHigh', 0))), 2),
             'low':       round(safe_float(info.get('dayLow',  info.get('regularMarketDayLow',  0))), 2),
         }
-        _cache_set(f'tw_rt:{ticker}', result, ttl=30)
+        # 查無報價（停牌/下市）以較長 TTL 負向快取，避免每 30 秒又慢慢重抓一次
+        _cache_set(f'tw_rt:{ticker}', result, ttl=30 if price else 600)
         return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        neg = {'ticker': ticker, 'price': 0, 'change': 0, 'changePct': None, 'error': str(e)}
+        _cache_set(f'tw_rt:{ticker}', neg, ttl=300)   # 失敗也快取，避免重複逾時拖慢
+        return jsonify(neg)
 
 
 @app.route('/api/tw/signal/<ticker>')
@@ -5444,9 +5447,10 @@ def agent_holdings_api():
                     info  = stock.info
                     cur   = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
                 data = {'price': cur, 'name': tw_cn_name(code, info.get('shortName', code))}
-                _cache_set(f'agent_h_{code}', data, ttl=120)
+                _cache_set(f'agent_h_{code}', data, ttl=120 if cur else 600)
             except Exception:
                 data = {'price': 0, 'name': code}
+                _cache_set(f'agent_h_{code}', data, ttl=300)
             return code, data
 
         codes = [h.get('code', '') for h in holdings]
