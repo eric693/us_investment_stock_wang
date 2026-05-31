@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>策略回測</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.bt-nav {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd);
+  position: sticky; top: 0; z-index: 50;
+}
+.bt-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.bt-nav .brand span { color: var(--gold); }
+.bt-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem;
+  font-weight: 700; padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.bt-nav a:hover { color: var(--text); background: #0d1628; }
+.bt-nav a.active { color: #fff; background: var(--accent); }
+.bt-nav a.home { background: linear-gradient(135deg, #1a6fd4, #7c4dff); color: #fff; }
+
+.bt-wrap { max-width: 1080px; margin: 0 auto; padding: 22px 20px; }
+.bt-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.bt-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 20px; line-height: 1.6; }
+
+.bt-form {
+  display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+  background: var(--card-bg); border: 1px solid var(--card-bd);
+  border-radius: 10px; padding: 16px; margin-bottom: 20px;
+}
+.bt-field { display: flex; flex-direction: column; gap: 5px; }
+.bt-field label { font-size: 0.68rem; color: var(--text-dim); font-weight: 700; }
+.bt-input, .bt-select {
+  background: #0a1120; border: 1px solid var(--card-bd); border-radius: 7px;
+  color: var(--text); padding: 9px 12px; font-size: 0.84rem; outline: none;
+}
+.bt-input { width: 140px; text-transform: uppercase; }
+.bt-input:focus, .bt-select:focus { border-color: var(--accent); }
+.bt-select { min-width: 180px; }
+.bt-run {
+  background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 10px 24px; font-size: 0.85rem; font-weight: 800; cursor: pointer;
+}
+.bt-run:hover { opacity: .9; } .bt-run:disabled { opacity: .4; cursor: default; }
+.bt-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.bt-chip { background: #0d1628; border: 1px solid var(--card-bd); border-radius: 5px;
+  padding: 4px 10px; font-size: 0.72rem; color: var(--text-mid); cursor: pointer; }
+.bt-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.bt-loading { text-align: center; padding: 40px; color: var(--text-dim); font-size: 0.86rem; }
+
+.bt-summary { display: none; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.bt-stat { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 9px;
+  padding: 12px 18px; min-width: 140px; }
+.bt-stat .lbl { font-size: 0.66rem; color: var(--text-dim); font-weight: 700; }
+.bt-stat .val { font-size: 1.15rem; font-weight: 900; margin-top: 3px; }
+.bt-best { background: linear-gradient(135deg, rgba(38,217,107,.12), rgba(26,111,212,.08));
+  border-color: #26d96b40; }
+
+.bt-table { display: none; width: 100%; border-collapse: collapse; font-size: 0.82rem;
+  background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; overflow: hidden; }
+.bt-table th { text-align: right; padding: 11px 14px; font-size: 0.68rem; font-weight: 800;
+  color: var(--text-dim); letter-spacing: .4px; border-bottom: 1px solid var(--card-bd); background: #08101e; }
+.bt-table th:first-child { text-align: left; }
+.bt-table td { padding: 11px 14px; text-align: right; border-bottom: 1px solid #0d1628; }
+.bt-table td:first-child { text-align: left; font-weight: 700; color: var(--text); }
+.bt-table tr:last-child td { border-bottom: none; }
+.bt-table tr.top td { background: rgba(38,217,107,.07); }
+.bt-table tr.top td:first-child::before { content: "最優  "; color: #26d96b; font-size: 0.66rem; font-weight: 800; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; } .muted { color: var(--text-dim); }
+
+.bt-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
+.bt-empty { text-align: center; padding: 40px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<nav class="bt-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest" class="active">策略回測</a>
+</nav>
+
+<div class="bt-wrap">
+  <h1 class="bt-title">策略回測</h1>
+  <div class="bt-sub">
+    用歷史資料驗證：在某個進場訊號下，搭配哪一種出場策略（停損停利、停損不停利、固定持有、移動停利）報酬最高。
+    結果以複利總報酬排名，並與「買進持有」基準比較。
+  </div>
+
+  <div class="bt-form">
+    <div class="bt-field">
+      <label>股票代碼</label>
+      <input class="bt-input" id="codeInput" placeholder="如 2330" maxlength="6">
+      <div class="bt-quick">
+        <span class="bt-chip" onclick="setCode('2330')">2330</span>
+        <span class="bt-chip" onclick="setCode('2317')">2317</span>
+        <span class="bt-chip" onclick="setCode('2454')">2454</span>
+        <span class="bt-chip" onclick="setCode('0050')">0050</span>
+        <span class="bt-chip" onclick="setCode('2603')">2603</span>
+      </div>
+    </div>
+    <div class="bt-field">
+      <label>進場訊號</label>
+      <select class="bt-select" id="signalSelect"></select>
+    </div>
+    <div class="bt-field">
+      <label>回測期間</label>
+      <select class="bt-select" id="periodSelect" style="min-width:120px">
+        <option value="2y">2 年</option>
+        <option value="3y" selected>3 年</option>
+        <option value="5y">5 年</option>
+        <option value="10y">10 年</option>
+      </select>
+    </div>
+    <button class="bt-run" id="runBtn" onclick="runBacktest()">開始回測</button>
+  </div>
+
+  <div class="bt-loading" id="loading" style="display:none">回測計算中，請稍候…</div>
+
+  <div class="bt-summary" id="summary"></div>
+
+  <table class="bt-table" id="resultTable">
+    <thead>
+      <tr>
+        <th>出場策略</th>
+        <th>複利總報酬</th>
+        <th>勝率</th>
+        <th>平均每筆</th>
+        <th>交易次數</th>
+        <th>平均持有(天)</th>
+        <th>最大單筆獲利</th>
+        <th>最大單筆虧損</th>
+      </tr>
+    </thead>
+    <tbody id="resultBody"></tbody>
+  </table>
+
+  <div class="bt-empty" id="emptyState">輸入股票代碼並選擇進場訊號，點「開始回測」</div>
+
+  <div class="bt-note" id="noteBox" style="display:none">
+    說明：複利總報酬假設每次訊號進場、平倉後再投入同一檔（不重疊持倉）。固定持有策略不中途停損停利。
+    過去績效不代表未來，回測僅供策略比較參考。
+  </div>
+</div>
+
+<script>
+let signalsMap = {};
+
+window.onload = async () => {
+  try {
+    signalsMap = await (await fetch('/api/backtest/signals')).json();
+    const sel = document.getElementById('signalSelect');
+    sel.innerHTML = Object.entries(signalsMap).map(([k,v]) =>
+      `<option value="${k}">${v}</option>`).join('');
+  } catch(e) {}
+};
+
+function setCode(c) { document.getElementById('codeInput').value = c; }
+
+async function runBacktest() {
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
+  if (!code) { alert('請輸入股票代碼'); return; }
+  const signal = document.getElementById('signalSelect').value;
+  const period = document.getElementById('periodSelect').value;
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('summary').style.display = 'none';
+  document.getElementById('resultTable').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('noteBox').style.display = 'none';
+
+  try {
+    const r = await fetch('/api/backtest/run', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code, signal, period }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      document.getElementById('emptyState').textContent = data.error;
+      document.getElementById('emptyState').style.display = 'block';
+      return;
+    }
+    render(data);
+  } catch(e) {
+    document.getElementById('emptyState').textContent = '回測失敗：' + e.message;
+    document.getElementById('emptyState').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    document.getElementById('loading').style.display = 'none';
+  }
+}
+
+function cls(v) { return v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted'); }
+function sign(v) { return v > 0 ? '+' : ''; }
+
+function render(d) {
+  // Summary
+  const best = d.best || {};
+  const summary = document.getElementById('summary');
+  summary.innerHTML = `
+    <div class="bt-stat"><div class="lbl">標的</div><div class="val">${d.name}（${d.code}）</div></div>
+    <div class="bt-stat"><div class="lbl">進場訊號 / 期間</div><div class="val" style="font-size:.92rem">${d.signal_name}・${d.period}</div></div>
+    <div class="bt-stat"><div class="lbl">訊號出現次數</div><div class="val">${d.n_signals} 次</div></div>
+    <div class="bt-stat"><div class="lbl">買進持有報酬(基準)</div><div class="val ${cls(d.buy_hold_ret)}">${sign(d.buy_hold_ret)}${d.buy_hold_ret}%</div></div>
+    <div class="bt-stat bt-best"><div class="lbl">最優出場策略</div>
+      <div class="val">${best.strategy || '-'}</div>
+      <div style="font-size:.74rem;margin-top:4px" class="${cls(best.total_ret)}">複利總報酬 ${sign(best.total_ret)}${best.total_ret}%・勝率 ${best.win_rate}%</div>
+    </div>`;
+  summary.style.display = 'flex';
+
+  // Table
+  const body = document.getElementById('resultBody');
+  body.innerHTML = d.results.map((x, i) => `
+    <tr class="${i === 0 ? 'top' : ''}">
+      <td>${x.strategy}</td>
+      <td class="${cls(x.total_ret)}">${sign(x.total_ret)}${x.total_ret}%</td>
+      <td>${x.win_rate}%</td>
+      <td class="${cls(x.avg_ret)}">${sign(x.avg_ret)}${x.avg_ret}%</td>
+      <td>${x.trades}</td>
+      <td>${x.avg_hold}</td>
+      <td class="pos">+${x.max_win}%</td>
+      <td class="neg">${x.max_loss}%</td>
+    </tr>`).join('');
+  document.getElementById('resultTable').style.display = 'table';
+  document.getElementById('noteBox').style.display = 'block';
+}
+</script>
+</body>
+</html>
