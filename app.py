@@ -2547,7 +2547,7 @@ def _load_tw_inst():
     import urllib.request, datetime
     try:
         today = datetime.date.today().strftime('%Y%m%d')
-        url = f'https://www.twse.com.tw/rwd/zh/fund/T86?date={today}&selectType=ALLBUT0999&response=json'
+        url = f'https://www.twse.com.tw/fund/T86?date={today}&selectType=ALLBUT0999&response=json'
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         raw = json.loads(urllib.request.urlopen(req, timeout=12).read())
         if raw.get('stat') != 'OK': return {}
@@ -2596,7 +2596,7 @@ def _load_tw_inst_history(days: int = 6):
 
     def _fetch_day(ymd):
         """回傳該日 T86 data list；非交易日回 None；網路錯誤重試後仍失敗回 'ERR'。"""
-        url = f'https://www.twse.com.tw/rwd/zh/fund/T86?date={ymd}&selectType=ALLBUT0999&response=json'
+        url = f'https://www.twse.com.tw/fund/T86?date={ymd}&selectType=ALLBUT0999&response=json'
         for attempt in range(3):
             try:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
