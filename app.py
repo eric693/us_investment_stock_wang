@@ -4584,6 +4584,16 @@ def _save_agent_cfg(cfg: dict):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
+def _agent_api_key(cfg: dict = None) -> str:
+    """取得 Claude API Key：優先環境變數（避免金鑰寫死在設定檔／進版控），其次設定檔。"""
+    key = os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('CLAUDE_API_KEY')
+    if key:
+        return key.strip()
+    if cfg is None:
+        cfg = _load_agent_cfg()
+    return (cfg.get('claude_api_key') or '').strip()
+
+
 def _default_agent_cfg() -> dict:
     return {
         'enabled': False,
@@ -4597,6 +4607,17 @@ def _default_agent_cfg() -> dict:
         'holdings': [],          # [{code, name, buy_price, shares, date}]
         'candidates': [],        # last scan results
         'notifications': [],     # last 50 notification logs
+        'goal': {                # 目標導向操盤：在期限內把資產累積到目標金額
+            'enabled':       False,
+            'start_capital': 0,      # 計畫起始/可投入總資金
+            'cash':          0,      # 目前未投入的現金（可用來加碼）
+            'target_amount': 0,      # 目標金額
+            'start_date':    '',     # YYYY-MM-DD
+            'target_date':   '',     # YYYY-MM-DD
+            'risk':          'balanced',  # conservative / balanced / aggressive
+            'last_review':   '',     # 最近一次目標檢討日期
+            'last_status':   None,   # 最近一次達標試算快照
+        },
         'last_scan': '',
         'last_morning': '',
         'last_close': '',
@@ -4827,13 +4848,16 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
     return output
 
 
-def _run_agent_scan_with_ai(cfg: dict, claude_client) -> str:
+def _run_agent_scan_with_ai(cfg: dict, claude_client, us_context: str = '') -> str:
     """Run breakout scan and ask Claude for top picks summary."""
     candidates = _run_agent_scan(cfg)
     if not candidates:
         return '本次掃描未找到符合條件的標的。'
 
     summary_lines = ['以下為本次掃描結果，請從中挑選最值得關注的 3-5 支，並說明理由：', '']
+    if us_context:
+        summary_lines.append(us_context + '（台股開盤常跟隨昨夜美股，請把此偏向納入挑選與進場節奏）')
+        summary_lines.append('')
     for c in candidates[:10]:
         summary_lines.append(
             f"{c['name']}（{c['code']}） 現價:{c['price']} 得分:{c['score']}/5 "
@@ -4899,6 +4923,216 @@ def _is_close_time() -> bool:
     return 825 <= t <= 855   # 13:45 - 14:15
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  目標導向操盤層（目標金額/期限 → 需要報酬 → 結合持倉與現金 → 每日買賣建議）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _quick_price(code: str) -> float:
+    """抓單一台股最新收盤價（上市找不到退回上櫃）。"""
+    try:
+        h = yf.Ticker(tw_normalize(code)).history(period='5d', interval='1d')
+        if h.empty:
+            h = yf.Ticker(code + '.TWO').history(period='5d', interval='1d')
+        return safe_float(h['Close'].iloc[-1]) if not h.empty else 0.0
+    except Exception:
+        return 0.0
+
+
+# 昨夜美股對台股的領先指標（費半/那指/台積電ADR 對半導體權重最大）
+_US_INDEX_SET = [
+    ('sox',     '^SOX',     '費城半導體'),
+    ('nasdaq',  '^IXIC',    '那斯達克'),
+    ('sp500',   '^GSPC',    '標普500'),
+    ('dow',     '^DJI',     '道瓊'),
+    ('vix',     '^VIX',     'VIX'),
+    ('tsm_adr', 'TSM',      '台積電ADR'),
+    ('usdtwd',  'USDTWD=X', '美元台幣'),
+]
+
+
+def _us_overnight_snapshot() -> dict:
+    """抓昨夜美股各指數漲跌，並用科技權重算出對台股今日開盤的偏向（偏多/偏空/中性）。"""
+    cached = _cache_get('us_overnight')
+    if cached:
+        return cached
+    data = {}
+    for key, sym, label in _US_INDEX_SET:
+        try:
+            h = yf.Ticker(sym).history(period='5d')
+            closes = [c for c in h['Close'].tolist() if c == c]   # 去除 NaN
+            if len(closes) >= 2 and closes[-2]:
+                data[key] = {'label': label, 'v': round(closes[-1], 2),
+                             'pct': round((closes[-1] / closes[-2] - 1) * 100, 2)}
+        except Exception:
+            pass
+
+    # 科技權重偏向：費半最重，台積電 ADR、那指次之
+    weights = {'sox': 0.35, 'nasdaq': 0.25, 'tsm_adr': 0.25, 'sp500': 0.15}
+    score = sum(data[k]['pct'] * w for k, w in weights.items() if k in data)
+    bias = '偏多' if score > 0.4 else ('偏空' if score < -0.4 else '中性')
+    note = '；VIX 跳升，留意避險情緒' if data.get('vix', {}).get('pct', 0) > 8 else ''
+
+    parts = [f"{data[k]['label']} {data[k]['pct']:+.2f}%"
+             for k in ('sox', 'nasdaq', 'sp500', 'dow', 'tsm_adr') if k in data]
+    summary = f"昨夜美股：{'、'.join(parts)}（對台股偏向：{bias}{note}）" if parts else ''
+
+    out = {'data': data, 'bias': bias, 'score': round(score, 2), 'summary': summary}
+    _cache_set('us_overnight', out, ttl=600)
+    return out
+
+
+def _portfolio_snapshot(holdings: list) -> dict:
+    """依持倉算成本、目前市值、未實現損益。"""
+    rows, cost, mkt = [], 0.0, 0.0
+    for h in holdings:
+        code   = str(h.get('code', '')).upper().strip()
+        if not code:
+            continue
+        shares = safe_float(h.get('shares', 0))
+        buy    = safe_float(h.get('buy_price', 0))
+        price  = _quick_price(code)
+        v, c   = price * shares, buy * shares
+        cost += c; mkt += v
+        rows.append({
+            'code': code, 'name': h.get('name', code) or code,
+            'shares': shares, 'buy_price': buy, 'price': round(price, 2),
+            'value': round(v, 0),
+            'pnl_pct': round((price - buy) / buy * 100, 2) if buy else 0,
+        })
+    return {'rows': rows, 'cost': round(cost, 0), 'market_value': round(mkt, 0),
+            'pnl': round(mkt - cost, 0),
+            'pnl_pct': round((mkt - cost) / cost * 100, 2) if cost else 0}
+
+
+def _goal_metrics(goal: dict, market_value: float, cash: float = 0.0) -> dict:
+    """達標試算：需要的年化報酬、進度、是否落後於目標曲線。"""
+    start_cap = safe_float(goal.get('start_capital', 0))
+    target    = safe_float(goal.get('target_amount', 0))
+    current   = market_value + safe_float(cash)
+    try:
+        sd = pd.Timestamp(goal.get('start_date'))
+        td = pd.Timestamp(goal.get('target_date'))
+    except Exception:
+        return {'valid': False}
+    if pd.isna(sd) or pd.isna(td) or start_cap <= 0 or target <= 0 or td <= sd:
+        return {'valid': False}
+
+    today       = pd.Timestamp.now(tz='Asia/Taipei').tz_localize(None).normalize()
+    years_total = max((td - sd).days / 365.25, 0.01)
+    elapsed     = min(max((today - sd).days / 365.25, 0), years_total)
+    years_left  = max(years_total - elapsed, 0.01)
+
+    req_cagr     = (target / start_cap) ** (1 / years_total) - 1
+    on_track_val = start_cap * (1 + req_cagr) ** elapsed
+    req_cagr_now = (target / current) ** (1 / years_left) - 1 if current > 0 else None
+
+    return {
+        'valid':         True,
+        'start_capital': round(start_cap, 0),
+        'target_amount': round(target, 0),
+        'current_value': round(current, 0),
+        'years_total':   round(years_total, 2),
+        'years_left':    round(years_left, 2),
+        'req_cagr':      round(req_cagr * 100, 2),          # 整段期間需要的年化
+        'req_cagr_now':  round(req_cagr_now * 100, 2) if req_cagr_now is not None else None,  # 從現在到期限需要的年化
+        'on_track_value':round(on_track_val, 0),            # 此刻按計畫應達到的資產
+        'gap':           round(current - on_track_val, 0),  # 領先(+)/落後(-)
+        'progress_pct':  round(current / target * 100, 1),  # 距目標完成度
+    }
+
+
+def _goal_status(cfg: dict) -> dict:
+    """組合『目標 + 持倉快照 + 達標試算』給前端與每日檢討使用。"""
+    goal = cfg.get('goal', {}) or {}
+    snap = _portfolio_snapshot(cfg.get('holdings', []))
+    metrics = _goal_metrics(goal, snap['market_value'], goal.get('cash', 0))
+    return {'goal': goal, 'portfolio': snap, 'metrics': metrics}
+
+
+def _run_goal_review(cfg: dict, client) -> dict:
+    """目標導向每日檢討：算進度→看持倉賣訊→掃買進候選→Claude 產生明日買賣清單→推 LINE。"""
+    goal = cfg.get('goal', {}) or {}
+    if not goal.get('enabled'):
+        return {}
+
+    status  = _goal_status(cfg)
+    metrics = status['metrics']
+    snap    = status['portfolio']
+
+    holdings_analysis = _run_agent_holdings_analysis(cfg, client)
+    candidates        = _run_agent_scan(cfg)[:8]
+    us                = _us_overnight_snapshot()
+
+    # 組給 Claude 的脈絡
+    lines = ['你是使用者的目標導向操盤助理。以下是目前狀況，請依「達標」角度給出明確、可執行的明日操作計畫。', '']
+    if us.get('summary'):
+        lines.append(us['summary'] + '。台股常受前一夜美股影響，請把這個偏向納入明日進出場節奏（偏空時保守、偏多時可積極，半導體類股看費半與台積電ADR）。')
+    if metrics.get('valid'):
+        lines.append(f"目標：在 {goal.get('target_date')} 前把資產累積到 {metrics['target_amount']:,.0f} 元"
+                     f"（起始 {metrics['start_capital']:,.0f} 元）。")
+        lines.append(f"目前總資產 {metrics['current_value']:,.0f} 元（持股市值 {snap['market_value']:,.0f} + 現金 {safe_float(goal.get('cash',0)):,.0f}），"
+                     f"完成度 {metrics['progress_pct']}%。")
+        lines.append(f"達標需要年化報酬 {metrics['req_cagr']}%；從現在到期限還需年化 {metrics['req_cagr_now']}%。")
+        gap = metrics['gap']
+        lines.append(f"目前{'領先' if gap >= 0 else '落後'}計畫曲線 {abs(gap):,.0f} 元"
+                     f"（此刻應達 {metrics['on_track_value']:,.0f} 元）。")
+    else:
+        lines.append('（目標參數尚未完整設定，僅就持倉與候選給建議。）')
+    lines.append(f"可投入現金：{safe_float(goal.get('cash', 0)):,.0f} 元；風險偏好：{goal.get('risk','balanced')}。")
+
+    lines.append('\n--- 目前持倉 ---')
+    if holdings_analysis:
+        for h in holdings_analysis:
+            lines.append(f"{h['name']}（{h['code']}）現價 {h['price']} 損益 {h['pnl_pct']:+.1f}%；分析：{h['recommendation'][:120]}")
+    else:
+        lines.append('（無持倉）')
+
+    lines.append('\n--- 今日篩出的買進候選（15 因子評分）---')
+    if candidates:
+        for c in candidates:
+            lines.append(f"{c['name']}（{c['code']}）現價 {c['price']} 評等 {c['grade']}（{c['score']}/{c['max_score']}）"
+                         f" 乖離 {c.get('bias20','?')}% {c.get('kd','')}")
+    else:
+        lines.append('（今日無符合條件候選）')
+
+    lines.append(
+        '\n請用繁體中文、不要 emoji，輸出以下四段：'
+        '\n1) 進度評估：一句話講現在達標機率與該偏積極或保守。'
+        '\n2) 明日買進清單：從候選挑 1-3 檔，每檔給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
+        '\n3) 該賣出/減碼：列出持倉中該獲利了結或停損的，講明理由與價位；沒有就說「持倉續抱」。'
+        '\n4) 一句總結。'
+    )
+
+    try:
+        resp = client.messages.create(
+            model='claude-opus-4-8', max_tokens=900,
+            system=_AGENT_SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': '\n'.join(lines)}],
+        )
+        plan = _strip_emoji(resp.content[0].text)
+    except Exception as e:
+        plan = f'AI 檢討失敗：{e}'
+
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+    cfg = _load_agent_cfg()
+    cfg.setdefault('goal', {})
+    cfg['goal']['last_review'] = today
+    cfg['goal']['last_status'] = status
+    cfg['goal']['last_plan']   = plan
+    _save_agent_cfg(cfg)
+
+    head = ''
+    if metrics.get('valid'):
+        head = (f"完成度 {metrics['progress_pct']}%・還需年化 {metrics['req_cagr_now']}%・"
+                f"{'領先' if metrics['gap'] >= 0 else '落後'} {abs(metrics['gap']):,.0f} 元\n")
+    if us.get('summary'):
+        head += us['summary'] + '\n'
+    if head:
+        head += '\n'
+    _agent_notify(cfg, f'[{today}] 目標導向操盤檢討', head + plan)
+    return {'status': status, 'plan': plan}
+
+
 def _agent_loop():
     if not _IS_SCHEDULER:
         return
@@ -4919,10 +5153,14 @@ def _agent_loop():
             # Morning briefing (08:20-09:00)
             if _is_premarket() and cfg.get('last_morning', '') != today:
                 cfg = _load_agent_cfg()
+                us = _us_overnight_snapshot()
                 holdings_analysis = _run_agent_holdings_analysis(cfg, client)
-                scan_ai = _run_agent_scan_with_ai(cfg, client)
+                scan_ai = _run_agent_scan_with_ai(cfg, client, us.get('summary', ''))
 
                 lines = [f'[{today}] 早盤前分析報告', '']
+                if us.get('summary'):
+                    lines.append(us['summary'])
+                    lines.append('')
                 if holdings_analysis:
                     lines.append('--- 持倉建議 ---')
                     for h in holdings_analysis:
@@ -4988,6 +5226,15 @@ def _agent_loop():
                     _run_daily_optimizer(_load_agent_cfg(), client)
                 except Exception as e:
                     print(f'[Agent] optimizer error: {e}')
+
+            # 目標導向每日檢討（盤後，每日一次；策略優化跑完後接著跑）
+            elif (now.hour >= 15
+                  and cfg.get('goal', {}).get('enabled')
+                  and cfg.get('goal', {}).get('last_review', '') != today):
+                try:
+                    _run_goal_review(_load_agent_cfg(), client)
+                except Exception as e:
+                    print(f'[Agent] goal review error: {e}')
 
         except Exception as e:
             print(f'[Agent] loop error: {e}')
@@ -5179,6 +5426,61 @@ def agent_notifications_api():
 def agent_daily_strategy_api():
     cfg = _load_agent_cfg()
     return jsonify(cfg.get('daily_strategy', {}))
+
+
+@app.route('/api/agent/goal', methods=['GET', 'POST'])
+def agent_goal_api():
+    """讀取/設定目標（金額、期限、現金、風險偏好）。"""
+    cfg = _load_agent_cfg()
+    if request.method == 'GET':
+        return jsonify(cfg.get('goal', {}))
+    body = request.get_json(force=True) or {}
+    goal = cfg.get('goal', {}) or {}
+    for k in ('enabled', 'start_capital', 'cash', 'target_amount',
+              'start_date', 'target_date', 'risk'):
+        if k in body:
+            goal[k] = body[k]
+    cfg['goal'] = goal
+    _save_agent_cfg(cfg)
+    return jsonify({'ok': True, 'goal': goal})
+
+
+@app.route('/api/agent/goal/status')
+def agent_goal_status_api():
+    """回傳目標 + 持倉快照 + 達標試算（即時計算，含明日買賣計畫快取）。"""
+    cfg = _load_agent_cfg()
+    status = _goal_status(cfg)
+    status['last_plan'] = cfg.get('goal', {}).get('last_plan', '')
+    status['last_review'] = cfg.get('goal', {}).get('last_review', '')
+    return jsonify(status)
+
+
+@app.route('/api/market/overnight')
+def market_overnight_api():
+    """昨夜美股快照與對台股偏向（供晨報、目標檢討、前端 banner 使用）。"""
+    return jsonify(_us_overnight_snapshot())
+
+
+@app.route('/api/agent/goal/review_now', methods=['POST'])
+def agent_goal_review_now():
+    """手動觸發目標導向檢討（背景執行，完成後推 LINE 並更新快取）。"""
+    cfg = _load_agent_cfg()
+    api_key = _agent_api_key(cfg)
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+    if not cfg.get('goal', {}).get('enabled'):
+        return jsonify({'error': '尚未啟用目標導向操盤，請先設定並啟用目標'}), 400
+
+    def _bg():
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            _run_goal_review(_load_agent_cfg(), client)
+        except Exception as e:
+            print(f'[Agent] goal review_now error: {e}')
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({'ok': True, 'message': '目標檢討已在背景執行（約 1-2 分鐘），完成後會更新並推播明日買賣計畫'})
 
 
 @app.route('/api/agent/optimize_now', methods=['POST'])
@@ -5579,61 +5881,151 @@ def _tool_get_holdings():
 #  策略回測引擎
 # ═══════════════════════════════════════════════════════════════════════════
 
-# 進場訊號（可由 AI 或使用者挑選）
-ENTRY_SIGNALS = {
-    'kd_gc':        'KD 黃金交叉',
-    'ma_gc':        'MA5 上穿 MA20',
-    'macd_gc':      'MACD 黃金交叉',
-    'rsi_recover':  'RSI 由 30 以下回升',
-    'breakout_ma20':'股價突破月線(MA20)',
-    'buy_hold':     '買進並持有（純比較出場策略用）',
-}
+# ── 進場訊號（向量化，可回測。籌碼面因無歷史逐日資料故不納入）────────────────
+def _cross_up(a, b):
+    """a 由下往上穿越 b（b 可為 Series 或純量）。回傳 boolean Series。"""
+    if np.isscalar(b):
+        return (a.shift(1) <= b) & (a > b)
+    return (a.shift(1) <= b.shift(1)) & (a > b)
+
+
+def _bt_indicators(hist):
+    """一次算好回測訊號需要的所有技術指標序列。"""
+    close = hist['Close']; high = hist['High']; low = hist['Low']
+    openp = hist['Open'];  vol  = hist['Volume']
+    k, d = calc_kd(high, low, close)
+    macd, macd_sig, _ = calc_macd(close)
+    bb_up, _bb_mid, bb_low = calc_bollinger(close)
+    return {
+        'open': openp, 'close': close, 'high': high, 'low': low, 'vol': vol,
+        'ma5':  close.rolling(5,  min_periods=1).mean(),
+        'ma10': close.rolling(10, min_periods=1).mean(),
+        'ma20': close.rolling(20, min_periods=1).mean(),
+        'ma60': close.rolling(60, min_periods=1).mean(),
+        'vma5':  vol.rolling(5,  min_periods=1).mean(),
+        'vma20': vol.rolling(20, min_periods=1).mean(),
+        'k': k, 'd': d, 'macd': macd, 'macd_sig': macd_sig,
+        'rsi': calc_rsi(close), 'bb_up': bb_up, 'bb_low': bb_low,
+    }
+
+
+# 每個訊號 fn(ctx) -> boolean Series（該根 K 棒是否觸發進場）
+def _sig_ma_gc(c):         return _cross_up(c['ma5'], c['ma20'])
+def _sig_ma_bull(c):
+    a = (c['ma5'] > c['ma10']) & (c['ma10'] > c['ma20']) & (c['ma20'] > c['ma60'])
+    return a & ~a.shift(1).fillna(False)
+def _sig_ma20_turn_up(c):
+    s = c['ma20'].diff()
+    return (s > 0) & (s.shift(1) <= 0)
+def _sig_pullback_ma20(c):
+    gap  = (c['close'] - c['ma20']) / c['ma20']
+    cond = (gap >= 0) & (gap <= 0.03) & (c['ma20'].diff() > 0)
+    return cond & ~cond.shift(1).fillna(False)
+def _sig_breakout_ma20(c): return _cross_up(c['close'], c['ma20'])
+def _sig_breakout_ma60(c): return _cross_up(c['close'], c['ma60'])
+
+def _sig_kd_gc(c):         return _cross_up(c['k'], c['d'])
+def _sig_kd_low_gc(c):     return _cross_up(c['k'], c['d']) & (c['k'] < 35)
+def _sig_kd_os_up(c):      return _cross_up(c['k'], 20)
+def _sig_macd_gc(c):       return _cross_up(c['macd'], c['macd_sig'])
+def _sig_macd_zero(c):     return _cross_up(c['macd'], 0)
+def _sig_rsi_recover(c):   return (c['rsi'].shift(1) <= 30) & (c['rsi'] > 30)
+def _sig_rsi_cross50(c):   return _cross_up(c['rsi'], 50)
+def _sig_mtm_up(c):        return _cross_up(c['close'] - c['close'].shift(10), 0)
+
+def _sig_vol_spike(c):     return (c['vol'] > 1.5 * c['vma20']) & (c['close'] > c['close'].shift(1))
+def _sig_high_vol_breakout(c):
+    prior_high = c['high'].rolling(20).max().shift(1)
+    return (c['close'] > prior_high) & (c['vol'] > 1.5 * c['vma20'])
+def _sig_vol5_cross20(c):  return _cross_up(c['vma5'], c['vma20'])
+def _sig_bb_break_up(c):   return _cross_up(c['close'], c['bb_up'])
+def _sig_bb_os_recover(c): return (c['close'].shift(1) <= c['bb_low'].shift(1)) & (c['close'] > c['bb_low'])
+
+def _sig_hammer(c):
+    omin = np.minimum(c['open'], c['close'])
+    omax = np.maximum(c['open'], c['close'])
+    body  = (c['close'] - c['open']).abs()
+    lower = omin - c['low']
+    upper = c['high'] - omax
+    rng   = c['high'] - c['low']
+    return (lower >= 2 * body) & (upper <= body) & (rng > 0) & (body > 0)
+def _sig_engulf(c):
+    po = c['open'].shift(1); pc = c['close'].shift(1)
+    return (pc < po) & (c['close'] > c['open']) & (c['close'] >= po) & (c['open'] <= pc)
+def _sig_up3(c):
+    up = c['close'] > c['close'].shift(1)
+    return up & up.shift(1) & up.shift(2)
+
+
+# 分組目錄（前端勾選用）。code 同時是回測訊號代碼。
+_SIGNAL_DEFS = [
+    ('趨勢與均線', [
+        ('ma_gc',         'MA5 上穿 MA20（黃金交叉）',        _sig_ma_gc),
+        ('ma_bull',       '均線多頭排列成形（5>10>20>60）',   _sig_ma_bull),
+        ('ma20_turn_up',  '月線(MA20)翻揚向上',               _sig_ma20_turn_up),
+        ('pullback_ma20', '回測月線守穩（貼月線上方續攻）',   _sig_pullback_ma20),
+        ('breakout_ma20', '股價突破月線(MA20)',               _sig_breakout_ma20),
+        ('breakout_ma60', '股價突破季線(MA60)',               _sig_breakout_ma60),
+    ]),
+    ('動能指標', [
+        ('kd_gc',       'KD 黃金交叉',                        _sig_kd_gc),
+        ('kd_low_gc',   'KD 低檔黃金交叉（K<35，起漲更準）',  _sig_kd_low_gc),
+        ('kd_os_up',    'KD 的 K 值由超賣(20)回升',           _sig_kd_os_up),
+        ('macd_gc',     'MACD 黃金交叉',                      _sig_macd_gc),
+        ('macd_zero',   'MACD 由負翻正（穿越 0 軸）',         _sig_macd_zero),
+        ('rsi_recover', 'RSI 由 30 以下回升',                 _sig_rsi_recover),
+        ('rsi_cross50', 'RSI 向上突破 50（轉強）',            _sig_rsi_cross50),
+        ('mtm_up',      '動量 MTM 由負翻正',                  _sig_mtm_up),
+    ]),
+    ('量價結構', [
+        ('vol_spike',         '爆量收紅（量 > 1.5 倍均量）',      _sig_vol_spike),
+        ('high_vol_breakout', '帶量突破近 20 日新高',            _sig_high_vol_breakout),
+        ('vol5_cross20',      '量能轉強（5 日均量站上 20 日）',   _sig_vol5_cross20),
+        ('bb_break_up',       '突破布林上軌',                    _sig_bb_break_up),
+        ('bb_os_recover',     '布林下軌低接反彈',                _sig_bb_os_recover),
+    ]),
+    ('K 線型態', [
+        ('hammer', '鎚子線（底部反轉）', _sig_hammer),
+        ('engulf', '多頭吞噬',          _sig_engulf),
+        ('up3',    '連續上漲 3 天',      _sig_up3),
+    ]),
+]
+
+SIGNAL_FNS    = {code: fn    for _g, items in _SIGNAL_DEFS for code, _l, fn  in items}
+ENTRY_SIGNALS = {code: label for _g, items in _SIGNAL_DEFS for code, label, _fn in items}
+ENTRY_SIGNALS['buy_hold'] = '買進並持有（基準）'
+SIGNAL_GROUPS_PUBLIC = [
+    {'name': g, 'signals': [{'code': code, 'label': label} for code, label, _fn in items]}
+    for g, items in _SIGNAL_DEFS
+]
 
 
 def _compute_entry_mask(hist, signal):
-    """回傳 boolean numpy 陣列，標記每根 K 棒是否觸發進場訊號。"""
-    close = hist['Close']
-    high  = hist['High']
-    low   = hist['Low']
-    n     = len(close)
-
-    if signal == 'buy_hold':
+    """signal 可為單一代碼或代碼清單；清單時逐根 AND（全部滿足當天才進場）。
+    回傳 boolean numpy 陣列。"""
+    codes = list(signal) if isinstance(signal, (list, tuple)) else [signal]
+    codes = [c for c in codes if c]
+    n = len(hist)
+    if codes == ['buy_hold']:
         mask = np.zeros(n, dtype=bool)
         if n: mask[0] = True
         return mask
+    codes = [c for c in codes if c != 'buy_hold'] or ['kd_gc']
+    ctx = _bt_indicators(hist)
+    out = None
+    for code in codes:
+        fn = SIGNAL_FNS.get(code)
+        if fn is None:
+            continue
+        m = fn(ctx).fillna(False).to_numpy(dtype=bool)
+        out = m if out is None else (out & m)
+    return out if out is not None else np.zeros(n, dtype=bool)
 
-    if signal == 'kd_gc':
-        k_s, d_s = calc_kd(high, low, close)
-        prev = (k_s.shift(1) <= d_s.shift(1))
-        now  = (k_s > d_s)
-        return (prev & now).fillna(False).values
 
-    if signal == 'ma_gc':
-        ma5  = close.rolling(5,  min_periods=1).mean()
-        ma20 = close.rolling(20, min_periods=1).mean()
-        prev = (ma5.shift(1) <= ma20.shift(1))
-        now  = (ma5 > ma20)
-        return (prev & now).fillna(False).values
-
-    if signal == 'macd_gc':
-        macd_s, sig_s, _ = calc_macd(close)
-        prev = (macd_s.shift(1) <= sig_s.shift(1))
-        now  = (macd_s > sig_s)
-        return (prev & now).fillna(False).values
-
-    if signal == 'rsi_recover':
-        rsi  = calc_rsi(close)
-        prev = (rsi.shift(1) <= 30)
-        now  = (rsi > 30)
-        return (prev & now).fillna(False).values
-
-    if signal == 'breakout_ma20':
-        ma20 = close.rolling(20, min_periods=1).mean()
-        prev = (close.shift(1) <= ma20.shift(1))
-        now  = (close > ma20)
-        return (prev & now).fillna(False).values
-
-    return np.zeros(n, dtype=bool)
+def _signal_label(signal):
+    codes = list(signal) if isinstance(signal, (list, tuple)) else [signal]
+    names = [ENTRY_SIGNALS.get(c, c) for c in codes if c]
+    return ' + '.join(names) if names else '—'
 
 
 # 出場策略網格（type, 參數）
@@ -5721,28 +6113,37 @@ def _summarize(trades):
     }
 
 
-def _run_backtest(ticker, signal='kd_gc', period='3y'):
-    """對單一台股跑進場訊號 + 全出場策略網格回測，回傳排名結果。"""
+def _bt_load_history(ticker, period='3y'):
+    """下載單一台股日線歷史；上市找不到自動退回上櫃。回傳 (hist, code, name) 或 (None, err, None)。"""
+    code = ticker.replace('.TW', '').replace('.TWO', '')
     yf_ticker = tw_normalize(ticker)
     try:
-        stock = yf.Ticker(yf_ticker)
-        hist  = stock.history(period=period, interval='1d')
+        hist = yf.Ticker(yf_ticker).history(period=period, interval='1d')
         if hist.empty or len(hist) < 60:
-            yf_ticker = ticker.replace('.TW', '').replace('.TWO', '') + '.TWO'
-            stock = yf.Ticker(yf_ticker)
-            hist  = stock.history(period=period, interval='1d')
+            hist = yf.Ticker(code + '.TWO').history(period=period, interval='1d')
         if hist.empty or len(hist) < 60:
-            return {'error': f'{ticker} 歷史資料不足，無法回測'}
+            return None, f'{ticker} 歷史資料不足，無法回測', None
     except Exception as e:
-        return {'error': str(e)}
+        return None, str(e), None
+    return hist, code, tw_cn_name(code, code)
 
-    if signal not in ENTRY_SIGNALS:
-        signal = 'kd_gc'
-    entry_mask = _compute_entry_mask(hist, signal)
+
+def _normalize_signal(signal):
+    """把使用者/AI 傳入的訊號整理成乾淨清單，過濾未知代碼。"""
+    codes = list(signal) if isinstance(signal, (list, tuple)) else [signal]
+    codes = [c for c in codes if c in ENTRY_SIGNALS]
+    return codes or ['kd_gc']
+
+
+def _run_backtest(ticker, signal='kd_gc', period='3y'):
+    """對單一台股跑進場訊號（可多條件 AND）+ 全出場策略網格回測，回傳排名結果。"""
+    hist, code, name = _bt_load_history(ticker, period)
+    if hist is None:
+        return {'error': code}
+
+    codes      = _normalize_signal(signal)
+    entry_mask = _compute_entry_mask(hist, codes)
     n_signals  = int(entry_mask.sum())
-
-    code = ticker.replace('.TW', '').replace('.TWO', '')
-    name = tw_cn_name(code, code)
 
     # 基準：買進並持有整段期間的報酬
     bh_ret = round((hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100, 1)
@@ -5760,14 +6161,50 @@ def _run_backtest(ticker, signal='kd_gc', period='3y'):
     return {
         'code':        code,
         'name':        name,
-        'signal':      signal,
-        'signal_name': ENTRY_SIGNALS[signal],
+        'signal':      codes if len(codes) > 1 else codes[0],
+        'signal_name': _signal_label(codes),
         'period':      period,
         'bars':        len(hist),
         'n_signals':   n_signals,
         'buy_hold_ret':bh_ret,
         'best':        results[0] if results else None,
         'results':     results,
+    }
+
+
+def _optimize_backtest(ticker, period='3y', min_trades=4):
+    """『AI 幫我組最佳策略』核心：對一檔總當試 所有進場訊號 × 全出場策略，
+    依複利總報酬排名，挑出最賺的『進場×出場』組合。資料只下載一次。"""
+    hist, code, name = _bt_load_history(ticker, period)
+    if hist is None:
+        return {'error': code}
+
+    bh_ret = round((hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100, 1)
+    grid   = _exit_strategy_grid()
+    combos = []
+    for sig_code, sig_label in ENTRY_SIGNALS.items():
+        if sig_code == 'buy_hold':
+            continue
+        mask   = _compute_entry_mask(hist, sig_code)
+        n_sig  = int(mask.sum())
+        if n_sig < min_trades:
+            continue
+        for cfg in grid:
+            trades = _simulate_trades(hist, mask, cfg)
+            summ   = _summarize(trades)
+            if summ['trades'] < min_trades:    # 樣本太少不可靠，跳過
+                continue
+            summ.update({'entry_code': sig_code, 'entry': sig_label,
+                         'strategy': cfg['name'], 'n_signals': n_sig})
+            combos.append(summ)
+
+    combos.sort(key=lambda x: x['total_ret'], reverse=True)
+    return {
+        'code': code, 'name': name, 'period': period,
+        'bars': len(hist), 'buy_hold_ret': bh_ret,
+        'tested': len(combos),
+        'best': combos[0] if combos else None,
+        'top':  combos[:12],
     }
 
 
@@ -6031,21 +6468,91 @@ def backtest_page():
     return render_template('backtest.html')
 
 
+@app.route('/goal')
+def goal_page():
+    return render_template('goal.html')
+
+
 @app.route('/api/backtest/signals')
 def backtest_signals():
-    return jsonify(ENTRY_SIGNALS)
+    # groups：分組供前端勾選；flat：代碼→名稱對照（相容舊用法）
+    return jsonify({'groups': SIGNAL_GROUPS_PUBLIC, 'flat': ENTRY_SIGNALS})
 
 
 @app.route('/api/backtest/run', methods=['POST'])
 def backtest_run():
     body   = request.get_json(force=True) or {}
     code   = str(body.get('code', '')).strip().upper().replace('.TW', '').replace('.TWO', '')
-    signal = body.get('signal', 'kd_gc')
+    # 支援單一 signal 或多條件 signals 清單（逐根 AND）
+    signal = body.get('signals') or body.get('signal') or 'kd_gc'
     period = body.get('period', '3y')
     if not code:
         return jsonify({'error': '請輸入股票代碼'}), 400
     result = _run_backtest(code, signal, period)
     return jsonify(result)
+
+
+@app.route('/api/backtest/optimize', methods=['POST'])
+def backtest_optimize():
+    """AI 幫我組最佳策略：總當試所有進場×出場組合，回傳最賺的組合排名。"""
+    body   = request.get_json(force=True) or {}
+    code   = str(body.get('code', '')).strip().upper().replace('.TW', '').replace('.TWO', '')
+    period = body.get('period', '3y')
+    if not code:
+        return jsonify({'error': '請輸入股票代碼'}), 400
+    return jsonify(_optimize_backtest(code, period))
+
+
+@app.route('/api/backtest/advice', methods=['POST'])
+def backtest_advice():
+    """對既有回測/最佳化結果，由 Claude 寫出文字操作建議與預期報酬（不重算）。"""
+    import anthropic
+    body    = request.get_json(force=True) or {}
+    cfg     = _load_agent_cfg()
+    api_key = (body.get('api_key', '') or '').strip() or _agent_api_key(cfg)
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key，請至 AI Agent 頁面設定'}), 400
+
+    name   = body.get('name', body.get('code', ''))
+    code   = body.get('code', '')
+    period = body.get('period', '3y')
+    bh     = body.get('buy_hold_ret', 0)
+    best   = body.get('best') or {}
+    rows   = body.get('top') or body.get('results') or []
+    mode   = body.get('mode', 'run')   # 'run' 單一訊號 / 'optimize' 最佳化
+
+    lines = [f'標的：{name}（{code}），回測期間 {period}，買進持有基準報酬 {bh}%。']
+    if mode == 'optimize':
+        lines.append(f'最佳組合：進場「{best.get("entry","-")}」+ 出場「{best.get("strategy","-")}」。')
+    else:
+        lines.append(f'進場訊號：{body.get("signal_name","-")}，訊號出現 {body.get("n_signals","-")} 次。')
+        lines.append(f'最優出場策略：{best.get("strategy","-")}。')
+    lines.append(f'該組合複利總報酬 {best.get("total_ret","-")}%、勝率 {best.get("win_rate","-")}%、'
+                 f'平均每筆 {best.get("avg_ret","-")}%、交易 {best.get("trades","-")} 次、'
+                 f'平均持有 {best.get("avg_hold","-")} 天、最大單筆獲利 {best.get("max_win","-")}%、'
+                 f'最大單筆虧損 {best.get("max_loss","-")}%。')
+    lines.append('\n其他組合摘要：')
+    for r in rows[:6]:
+        tag = f"{r.get('entry','')}+{r['strategy']}" if r.get('entry') else r.get('strategy', '')
+        lines.append(f"- {tag}：總報酬{r.get('total_ret','-')}% 勝率{r.get('win_rate','-')}% 交易{r.get('trades','-')}次")
+    lines.append(
+        '\n請用繁體中文、不要用 emoji，3-5 句話給出：'
+        '(1) 這檔最適合的操作方式（進場時機＋該配哪種停損停利/持有方式）；'
+        '(2) 依勝率與平均每筆估算的「單次預期報酬」白話說明；'
+        '(3) 風險提醒（樣本數、過度最佳化、過去不代表未來）。'
+    )
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-opus-4-8', max_tokens=600,
+            system=_AGENT_SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': '\n'.join(lines)}],
+        )
+        return jsonify({'advice': _strip_emoji(resp.content[0].text)})
+    except anthropic.AuthenticationError:
+        return jsonify({'error': 'API Key 無效'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

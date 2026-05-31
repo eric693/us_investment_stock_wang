@@ -30,7 +30,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .bt-form {
   display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
   background: var(--card-bg); border: 1px solid var(--card-bd);
-  border-radius: 10px; padding: 16px; margin-bottom: 20px;
+  border-radius: 10px; padding: 16px; margin-bottom: 14px;
 }
 .bt-field { display: flex; flex-direction: column; gap: 5px; }
 .bt-field label { font-size: 0.68rem; color: var(--text-dim); font-weight: 700; }
@@ -40,16 +40,40 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 }
 .bt-input { width: 140px; text-transform: uppercase; }
 .bt-input:focus, .bt-select:focus { border-color: var(--accent); }
-.bt-select { min-width: 180px; }
-.bt-run {
-  background: var(--accent); color: #fff; border: none; border-radius: 7px;
-  padding: 10px 24px; font-size: 0.85rem; font-weight: 800; cursor: pointer;
-}
-.bt-run:hover { opacity: .9; } .bt-run:disabled { opacity: .4; cursor: default; }
+.bt-select { min-width: 120px; }
 .bt-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .bt-chip { background: #0d1628; border: 1px solid var(--card-bd); border-radius: 5px;
   padding: 4px 10px; font-size: 0.72rem; color: var(--text-mid); cursor: pointer; }
 .bt-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.bt-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.bt-run {
+  background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 10px 22px; font-size: 0.85rem; font-weight: 800; cursor: pointer;
+}
+.bt-run.ai { background: linear-gradient(135deg, #c79a3a, #e0b84d); color: #1a1300; }
+.bt-run:hover { opacity: .9; } .bt-run:disabled { opacity: .4; cursor: default; }
+.bt-run.ghost { background: transparent; border: 1px solid var(--card-bd); color: var(--text-mid); }
+
+/* 條件勾選面板 */
+.bt-picker {
+  background: var(--card-bg); border: 1px solid var(--card-bd);
+  border-radius: 10px; padding: 0 16px; margin-bottom: 20px; overflow: hidden;
+  max-height: 0; transition: max-height .25s ease, padding .25s ease;
+}
+.bt-picker.open { max-height: 900px; padding: 16px; }
+.bt-picker .hint { font-size: 0.74rem; color: var(--text-dim); margin-bottom: 12px; line-height: 1.6; }
+.bt-group { margin-bottom: 14px; }
+.bt-group h4 { font-size: 0.72rem; color: var(--gold); margin: 0 0 8px; font-weight: 800; letter-spacing: .5px; }
+.bt-opts { display: flex; gap: 8px; flex-wrap: wrap; }
+.bt-opt {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  background: #0a1120; border: 1px solid var(--card-bd); border-radius: 6px;
+  padding: 6px 11px; font-size: 0.76rem; color: var(--text-mid); user-select: none;
+}
+.bt-opt:hover { border-color: var(--accent); }
+.bt-opt.sel { border-color: var(--accent); color: #fff; background: rgba(26,111,212,.12); }
+.bt-opt input { accent-color: var(--accent); }
 
 .bt-loading { text-align: center; padding: 40px; color: var(--text-dim); font-size: 0.86rem; }
 
@@ -73,6 +97,14 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .bt-table tr.top td:first-child::before { content: "最優  "; color: #26d96b; font-size: 0.66rem; font-weight: 800; }
 .pos { color: #ff4e4e; } .neg { color: #26d96b; } .muted { color: var(--text-dim); }
 
+/* AI 建議 */
+.bt-advice { display: none; margin-top: 18px; background: var(--card-bg);
+  border: 1px solid var(--card-bd); border-left: 3px solid var(--gold);
+  border-radius: 10px; padding: 16px 18px; }
+.bt-advice h3 { font-size: 0.86rem; margin: 0 0 8px; color: var(--gold); }
+.bt-advice .body { font-size: 0.84rem; line-height: 1.75; color: var(--text); white-space: pre-wrap; }
+.bt-advice .body.dim { color: var(--text-dim); }
+
 .bt-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
 .bt-empty { text-align: center; padding: 40px; color: var(--text-dim); }
 </style>
@@ -86,13 +118,14 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   <a href="/screener">篩選器</a>
   <a href="/agent">AI Agent</a>
   <a href="/backtest" class="active">策略回測</a>
+  <a href="/goal">目標操盤</a>
 </nav>
 
 <div class="bt-wrap">
   <h1 class="bt-title">策略回測</h1>
   <div class="bt-sub">
-    用歷史資料驗證：在某個進場訊號下，搭配哪一種出場策略（停損停利、停損不停利、固定持有、移動停利）報酬最高。
-    結果以複利總報酬排名，並與「買進持有」基準比較。
+    用歷史資料驗證：在某個進場訊號下，搭配哪一種出場策略報酬最高。
+    不知道挑哪些？直接按「AI 幫我組最佳策略」，系統會把所有進場訊號 × 所有出場策略總當試一遍，挑出這檔最賺的組合。
   </div>
 
   <div class="bt-form">
@@ -108,19 +141,34 @@ body { margin: 0; background: var(--bg); color: var(--text); }
       </div>
     </div>
     <div class="bt-field">
-      <label>進場訊號</label>
-      <select class="bt-select" id="signalSelect"></select>
-    </div>
-    <div class="bt-field">
       <label>回測期間</label>
-      <select class="bt-select" id="periodSelect" style="min-width:120px">
+      <select class="bt-select" id="periodSelect">
         <option value="2y">2 年</option>
         <option value="3y" selected>3 年</option>
         <option value="5y">5 年</option>
         <option value="10y">10 年</option>
       </select>
     </div>
-    <button class="bt-run" id="runBtn" onclick="runBacktest()">開始回測</button>
+    <div class="bt-field" style="flex:1; min-width:260px;">
+      <label>動作</label>
+      <div class="bt-actions">
+        <button class="bt-run ai" id="optBtn" onclick="runOptimize()">AI 幫我組最佳策略</button>
+        <button class="bt-run ghost" id="toggleBtn" onclick="togglePicker()">自選條件回測 ▾</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bt-picker" id="picker">
+    <div class="hint">
+      勾選一個以上進場條件。勾多個＝<b>全部滿足的當天才進場</b>（AND 組合，就像凱基那樣）。
+      選好後按下方「開始回測」。<br>
+      註：法人買賣超等籌碼面條件無逐日歷史資料，無法回測，故此處不列；那些請用篩選器或 AI Agent。
+    </div>
+    <div id="groups"></div>
+    <div class="bt-actions" style="margin-top:6px;">
+      <button class="bt-run" id="runBtn" onclick="runBacktest()">開始回測</button>
+      <span class="bt-chip" onclick="clearSel()">清除勾選</span>
+    </div>
   </div>
 
   <div class="bt-loading" id="loading" style="display:none">回測計算中，請稍候…</div>
@@ -128,99 +176,140 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   <div class="bt-summary" id="summary"></div>
 
   <table class="bt-table" id="resultTable">
-    <thead>
-      <tr>
-        <th>出場策略</th>
-        <th>複利總報酬</th>
-        <th>勝率</th>
-        <th>平均每筆</th>
-        <th>交易次數</th>
-        <th>平均持有(天)</th>
-        <th>最大單筆獲利</th>
-        <th>最大單筆虧損</th>
-      </tr>
-    </thead>
+    <thead><tr id="resultHead"></tr></thead>
     <tbody id="resultBody"></tbody>
   </table>
 
-  <div class="bt-empty" id="emptyState">輸入股票代碼並選擇進場訊號，點「開始回測」</div>
+  <div class="bt-advice" id="adviceBox">
+    <h3>AI 操作建議與預期報酬</h3>
+    <div class="body dim" id="adviceBody">產生中…</div>
+  </div>
+
+  <div class="bt-empty" id="emptyState">輸入股票代碼，按「AI 幫我組最佳策略」，或自選條件回測</div>
 
   <div class="bt-note" id="noteBox" style="display:none">
-    說明：複利總報酬假設每次訊號進場、平倉後再投入同一檔（不重疊持倉）。固定持有策略不中途停損停利。
+    說明：複利總報酬假設每次訊號進場、平倉後再投入同一檔（不重疊持倉）。為避免樣本過少失真，最佳化會略過交易次數過少的組合。
     過去績效不代表未來，回測僅供策略比較參考。
   </div>
 </div>
 
 <script>
-let signalsMap = {};
+let groups = [];
+let selected = new Set();
 
 window.onload = async () => {
   try {
-    signalsMap = await (await fetch('/api/backtest/signals')).json();
-    const sel = document.getElementById('signalSelect');
-    sel.innerHTML = Object.entries(signalsMap).map(([k,v]) =>
-      `<option value="${k}">${v}</option>`).join('');
+    const r = await (await fetch('/api/backtest/signals')).json();
+    groups = r.groups || [];
+    document.getElementById('groups').innerHTML = groups.map(g => `
+      <div class="bt-group">
+        <h4>${g.name}</h4>
+        <div class="bt-opts">
+          ${g.signals.map(s => `
+            <label class="bt-opt" data-code="${s.code}">
+              <input type="checkbox" value="${s.code}" onchange="toggleSel(this)">${s.label}
+            </label>`).join('')}
+        </div>
+      </div>`).join('');
   } catch(e) {}
 };
 
 function setCode(c) { document.getElementById('codeInput').value = c; }
+function togglePicker() {
+  const p = document.getElementById('picker');
+  p.classList.toggle('open');
+  document.getElementById('toggleBtn').textContent =
+    p.classList.contains('open') ? '收合條件 ▴' : '自選條件回測 ▾';
+}
+function toggleSel(cb) {
+  const lab = cb.closest('.bt-opt');
+  if (cb.checked) { selected.add(cb.value); lab.classList.add('sel'); }
+  else { selected.delete(cb.value); lab.classList.remove('sel'); }
+}
+function clearSel() {
+  selected.clear();
+  document.querySelectorAll('.bt-opt input').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.bt-opt').forEach(l => l.classList.remove('sel'));
+}
+
+function getCode() {
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
+  if (!code) { alert('請輸入股票代碼'); return null; }
+  return code;
+}
+function busy(on) {
+  document.getElementById('runBtn').disabled = on;
+  document.getElementById('optBtn').disabled = on;
+  document.getElementById('loading').style.display = on ? 'block' : 'none';
+  if (on) {
+    document.getElementById('summary').style.display = 'none';
+    document.getElementById('resultTable').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('noteBox').style.display = 'none';
+    document.getElementById('adviceBox').style.display = 'none';
+  }
+}
+function fail(msg) {
+  const e = document.getElementById('emptyState');
+  e.textContent = msg; e.style.display = 'block';
+}
 
 async function runBacktest() {
-  const code = document.getElementById('codeInput').value.trim().toUpperCase();
-  if (!code) { alert('請輸入股票代碼'); return; }
-  const signal = document.getElementById('signalSelect').value;
-  const period = document.getElementById('periodSelect').value;
-
-  const btn = document.getElementById('runBtn');
-  btn.disabled = true;
-  document.getElementById('loading').style.display = 'block';
-  document.getElementById('summary').style.display = 'none';
-  document.getElementById('resultTable').style.display = 'none';
-  document.getElementById('emptyState').style.display = 'none';
-  document.getElementById('noteBox').style.display = 'none';
-
+  const code = getCode(); if (!code) return;
+  if (selected.size === 0) { alert('請至少勾選一個進場條件'); return; }
+  busy(true);
   try {
     const r = await fetch('/api/backtest/run', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ code, signal, period }),
+      body: JSON.stringify({ code, signals: [...selected], period: periodVal() }),
     });
     const data = await r.json();
-    if (data.error) {
-      document.getElementById('emptyState').textContent = data.error;
-      document.getElementById('emptyState').style.display = 'block';
-      return;
-    }
-    render(data);
-  } catch(e) {
-    document.getElementById('emptyState').textContent = '回測失敗：' + e.message;
-    document.getElementById('emptyState').style.display = 'block';
-  } finally {
-    btn.disabled = false;
-    document.getElementById('loading').style.display = 'none';
-  }
+    if (data.error) { fail(data.error); return; }
+    renderRun(data);
+    fetchAdvice({ mode:'run', ...data });
+  } catch(e) { fail('回測失敗：' + e.message); }
+  finally { busy(false); }
 }
 
+async function runOptimize() {
+  const code = getCode(); if (!code) return;
+  busy(true);
+  document.getElementById('loading').textContent = 'AI 正在總當試所有進場 × 出場組合，請稍候…';
+  try {
+    const r = await fetch('/api/backtest/optimize', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code, period: periodVal() }),
+    });
+    const data = await r.json();
+    if (data.error) { fail(data.error); return; }
+    if (!data.best) { fail('此檔在所選期間找不到足夠樣本的有效組合，請拉長回測期間或換一檔。'); return; }
+    renderOptimize(data);
+    fetchAdvice({ mode:'optimize', ...data });
+  } catch(e) { fail('最佳化失敗：' + e.message); }
+  finally { busy(false); document.getElementById('loading').textContent = '回測計算中，請稍候…'; }
+}
+
+function periodVal() { return document.getElementById('periodSelect').value; }
 function cls(v) { return v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted'); }
 function sign(v) { return v > 0 ? '+' : ''; }
 
-function render(d) {
-  // Summary
+function renderRun(d) {
   const best = d.best || {};
-  const summary = document.getElementById('summary');
-  summary.innerHTML = `
+  document.getElementById('summary').innerHTML = `
     <div class="bt-stat"><div class="lbl">標的</div><div class="val">${d.name}（${d.code}）</div></div>
-    <div class="bt-stat"><div class="lbl">進場訊號 / 期間</div><div class="val" style="font-size:.92rem">${d.signal_name}・${d.period}</div></div>
+    <div class="bt-stat"><div class="lbl">進場訊號 / 期間</div><div class="val" style="font-size:.86rem">${d.signal_name}・${d.period}</div></div>
     <div class="bt-stat"><div class="lbl">訊號出現次數</div><div class="val">${d.n_signals} 次</div></div>
     <div class="bt-stat"><div class="lbl">買進持有報酬(基準)</div><div class="val ${cls(d.buy_hold_ret)}">${sign(d.buy_hold_ret)}${d.buy_hold_ret}%</div></div>
     <div class="bt-stat bt-best"><div class="lbl">最優出場策略</div>
       <div class="val">${best.strategy || '-'}</div>
       <div style="font-size:.74rem;margin-top:4px" class="${cls(best.total_ret)}">複利總報酬 ${sign(best.total_ret)}${best.total_ret}%・勝率 ${best.win_rate}%</div>
     </div>`;
-  summary.style.display = 'flex';
+  document.getElementById('summary').style.display = 'flex';
 
-  // Table
-  const body = document.getElementById('resultBody');
-  body.innerHTML = d.results.map((x, i) => `
+  document.getElementById('resultHead').innerHTML =
+    ['出場策略','複利總報酬','勝率','平均每筆','交易次數','平均持有(天)','最大單筆獲利','最大單筆虧損']
+      .map(h => `<th>${h}</th>`).join('');
+  document.getElementById('resultBody').innerHTML = d.results.map((x, i) => `
     <tr class="${i === 0 ? 'top' : ''}">
       <td>${x.strategy}</td>
       <td class="${cls(x.total_ret)}">${sign(x.total_ret)}${x.total_ret}%</td>
@@ -231,8 +320,60 @@ function render(d) {
       <td class="pos">+${x.max_win}%</td>
       <td class="neg">${x.max_loss}%</td>
     </tr>`).join('');
+  showTable();
+}
+
+function renderOptimize(d) {
+  const best = d.best || {};
+  document.getElementById('summary').innerHTML = `
+    <div class="bt-stat"><div class="lbl">標的</div><div class="val">${d.name}（${d.code}）</div></div>
+    <div class="bt-stat"><div class="lbl">期間 / 試過組合</div><div class="val" style="font-size:.86rem">${d.period}・${d.tested} 組</div></div>
+    <div class="bt-stat"><div class="lbl">買進持有報酬(基準)</div><div class="val ${cls(d.buy_hold_ret)}">${sign(d.buy_hold_ret)}${d.buy_hold_ret}%</div></div>
+    <div class="bt-stat bt-best"><div class="lbl">AI 挑出的最佳組合</div>
+      <div class="val" style="font-size:.92rem">${best.entry}<br>＋ ${best.strategy}</div>
+      <div style="font-size:.74rem;margin-top:4px" class="${cls(best.total_ret)}">複利總報酬 ${sign(best.total_ret)}${best.total_ret}%・勝率 ${best.win_rate}%・交易 ${best.trades} 次</div>
+    </div>`;
+  document.getElementById('summary').style.display = 'flex';
+
+  document.getElementById('resultHead').innerHTML =
+    ['進場訊號','出場策略','複利總報酬','勝率','平均每筆','交易次數','平均持有(天)']
+      .map(h => `<th>${h}</th>`).join('');
+  document.getElementById('resultBody').innerHTML = d.top.map((x, i) => `
+    <tr class="${i === 0 ? 'top' : ''}">
+      <td>${x.entry}</td>
+      <td>${x.strategy}</td>
+      <td class="${cls(x.total_ret)}">${sign(x.total_ret)}${x.total_ret}%</td>
+      <td>${x.win_rate}%</td>
+      <td class="${cls(x.avg_ret)}">${sign(x.avg_ret)}${x.avg_ret}%</td>
+      <td>${x.trades}</td>
+      <td>${x.avg_hold}</td>
+    </tr>`).join('');
+  showTable();
+}
+
+function showTable() {
   document.getElementById('resultTable').style.display = 'table';
   document.getElementById('noteBox').style.display = 'block';
+}
+
+async function fetchAdvice(payload) {
+  const box = document.getElementById('adviceBox');
+  const body = document.getElementById('adviceBody');
+  box.style.display = 'block';
+  body.className = 'body dim';
+  body.textContent = 'AI 產生建議中…';
+  try {
+    const r = await fetch('/api/backtest/advice', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (data.error) { body.textContent = '（無法產生建議：' + data.error + '）'; return; }
+    body.className = 'body';
+    body.textContent = data.advice || '（無建議）';
+  } catch(e) {
+    body.textContent = '（建議產生失敗：' + e.message + '）';
+  }
 }
 </script>
 </body>

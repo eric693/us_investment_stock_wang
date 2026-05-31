@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>目標導向操盤</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.gl-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; }
+.gl-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.gl-nav .brand span { color: var(--gold); }
+.gl-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.gl-nav a:hover { color: var(--text); background: #0d1628; }
+.gl-nav a.active { color: #fff; background: var(--accent); }
+.gl-nav a.home { background: linear-gradient(135deg, #1a6fd4, #7c4dff); color: #fff; }
+
+.gl-wrap { max-width: 1000px; margin: 0 auto; padding: 22px 20px; }
+.gl-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.gl-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 20px; line-height: 1.6; }
+
+.gl-card { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 18px; margin-bottom: 18px; }
+.gl-card h2 { font-size: 0.95rem; margin: 0 0 14px; }
+.gl-card h2 .sub { font-size: 0.72rem; color: var(--text-dim); font-weight: 500; margin-left: 8px; }
+
+.gl-grid { display: flex; gap: 14px; flex-wrap: wrap; }
+.gl-field { display: flex; flex-direction: column; gap: 5px; }
+.gl-field label { font-size: 0.68rem; color: var(--text-dim); font-weight: 700; }
+.gl-input, .gl-select { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 7px;
+  color: var(--text); padding: 9px 12px; font-size: 0.84rem; outline: none; width: 160px; }
+.gl-input:focus { border-color: var(--accent); }
+.gl-toggle { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+
+.gl-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 10px 22px; font-size: 0.85rem; font-weight: 800; cursor: pointer; }
+.gl-btn.gold { background: linear-gradient(135deg, #c79a3a, #e0b84d); color: #1a1300; }
+.gl-btn:hover { opacity: .9; } .gl-btn:disabled { opacity: .4; cursor: default; }
+.gl-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+
+.gl-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.gl-stat { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 9px; padding: 12px 16px; min-width: 150px; }
+.gl-stat .lbl { font-size: 0.66rem; color: var(--text-dim); font-weight: 700; }
+.gl-stat .val { font-size: 1.2rem; font-weight: 900; margin-top: 3px; }
+.gl-stat.hl { background: linear-gradient(135deg, rgba(199,154,58,.14), rgba(26,111,212,.08)); border-color: #c79a3a55; }
+
+.gl-bar { height: 12px; background: #0a1120; border-radius: 8px; overflow: hidden; margin: 12px 0 4px; border: 1px solid var(--card-bd); }
+.gl-bar > div { height: 100%; background: linear-gradient(90deg, #1a6fd4, #26d96b); }
+
+table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.gl-tbl th { text-align: right; padding: 9px 12px; font-size: 0.68rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--card-bd); }
+.gl-tbl th:first-child { text-align: left; }
+.gl-tbl td { padding: 9px 12px; text-align: right; border-bottom: 1px solid #0d1628; }
+.gl-tbl td:first-child { text-align: left; font-weight: 700; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; } .muted { color: var(--text-dim); }
+
+.gl-plan { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.8; color: var(--text); }
+.gl-plan.dim { color: var(--text-dim); }
+.gl-hint { font-size: 0.74rem; color: var(--text-dim); line-height: 1.6; margin-top: 10px; }
+.gl-msg { font-size: 0.78rem; margin-top: 10px; color: var(--gold); }
+
+.gl-us { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 18px; font-size: 0.8rem; }
+.gl-us .bias { font-weight: 900; padding: 3px 10px; border-radius: 6px; font-size: 0.82rem; }
+.gl-us .bias.up { background: rgba(255,78,78,.15); color: #ff6b6b; }
+.gl-us .bias.down { background: rgba(38,217,107,.15); color: #26d96b; }
+.gl-us .bias.flat { background: #0d1628; color: var(--text-mid); }
+.gl-us .idx { color: var(--text-mid); }
+.gl-us .idx b { color: var(--text); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<nav class="gl-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/goal" class="active">目標操盤</a>
+</nav>
+
+<div class="gl-wrap">
+  <h1 class="gl-title">目標導向操盤</h1>
+  <div class="gl-sub">
+    設定「在多久之內把資產累積到多少」，系統會算出需要的年化報酬，結合你目前的持股與現金，
+    每天盤後自動檢討進度，產生「明日該買哪些、買多少、該賣什麼」的計畫並推 LINE。
+    持倉請在 <a href="/agent" style="color:var(--accent)">AI Agent</a> 頁面維護。
+  </div>
+
+  <div class="gl-us" id="usBanner" style="display:none"></div>
+
+  <!-- 目標設定 -->
+  <div class="gl-card">
+    <h2>目標設定 <span class="sub">改完按「儲存目標」</span></h2>
+    <div class="gl-grid">
+      <div class="gl-field"><label>起始/可投入總資金（元）</label><input class="gl-input" id="startCapital" type="number" placeholder="1000000"></div>
+      <div class="gl-field"><label>目前未投入現金（元）</label><input class="gl-input" id="cash" type="number" placeholder="200000"></div>
+      <div class="gl-field"><label>目標金額（元）</label><input class="gl-input" id="targetAmount" type="number" placeholder="2000000"></div>
+      <div class="gl-field"><label>起始日期</label><input class="gl-input" id="startDate" type="date"></div>
+      <div class="gl-field"><label>目標期限</label><input class="gl-input" id="targetDate" type="date"></div>
+      <div class="gl-field"><label>風險偏好</label>
+        <select class="gl-select" id="risk">
+          <option value="conservative">保守</option>
+          <option value="balanced" selected>穩健</option>
+          <option value="aggressive">積極</option>
+        </select>
+      </div>
+    </div>
+    <div class="gl-row">
+      <label class="gl-toggle"><input type="checkbox" id="enabled"> 啟用目標導向操盤（每日盤後自動檢討＋推播）</label>
+    </div>
+    <div class="gl-row">
+      <button class="gl-btn" id="saveBtn" onclick="saveGoal()">儲存目標</button>
+      <span class="gl-msg" id="saveMsg"></span>
+    </div>
+  </div>
+
+  <!-- 達標試算 -->
+  <div class="gl-card">
+    <h2>達標試算 <span class="sub">依目前資產即時計算</span></h2>
+    <div id="metrics"><div class="gl-plan dim">設定並儲存目標後，這裡會顯示達標所需報酬與進度。</div></div>
+  </div>
+
+  <!-- 持倉快照 -->
+  <div class="gl-card">
+    <h2>目前持倉 <span class="sub" id="snapSub"></span></h2>
+    <div id="snapshot"><div class="gl-plan dim">讀取中…</div></div>
+  </div>
+
+  <!-- 明日買賣計畫 -->
+  <div class="gl-card">
+    <h2>明日買賣計畫 <span class="sub">AI 依達標角度產生</span></h2>
+    <div class="gl-row" style="margin-top:0">
+      <button class="gl-btn gold" id="reviewBtn" onclick="reviewNow()">立即檢討，產生明日買賣計畫</button>
+      <span class="gl-msg" id="reviewMsg"></span>
+    </div>
+    <div class="gl-hint">檢討在背景執行約 1-2 分鐘，完成後本頁與 LINE 都會收到計畫。可重新整理本頁查看最新計畫。</div>
+    <div id="plan" style="margin-top:14px"><div class="gl-plan dim">尚無計畫。</div></div>
+  </div>
+</div>
+
+<script>
+const fmt = n => (n === null || n === undefined) ? '-' : Number(n).toLocaleString('zh-TW');
+const cls = v => v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted');
+const sign = v => v > 0 ? '+' : '';
+
+async function loadGoal() {
+  try {
+    const g = await (await fetch('/api/agent/goal')).json();
+    if (g.start_capital) startCapital.value = g.start_capital;
+    if (g.cash) cash.value = g.cash;
+    if (g.target_amount) targetAmount.value = g.target_amount;
+    if (g.start_date) startDate.value = g.start_date;
+    if (g.target_date) targetDate.value = g.target_date;
+    if (g.risk) risk.value = g.risk;
+    enabled.checked = !!g.enabled;
+  } catch(e) {}
+}
+
+async function saveGoal() {
+  saveBtn.disabled = true; saveMsg.textContent = '儲存中…';
+  const payload = {
+    enabled: enabled.checked,
+    start_capital: Number(startCapital.value) || 0,
+    cash: Number(cash.value) || 0,
+    target_amount: Number(targetAmount.value) || 0,
+    start_date: startDate.value,
+    target_date: targetDate.value,
+    risk: risk.value,
+  };
+  try {
+    const r = await (await fetch('/api/agent/goal', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+    })).json();
+    saveMsg.textContent = r.ok ? '已儲存' : ('失敗：' + (r.error||''));
+    loadStatus();
+  } catch(e) { saveMsg.textContent = '失敗：' + e.message; }
+  finally { saveBtn.disabled = false; setTimeout(()=>saveMsg.textContent='', 3000); }
+}
+
+async function loadStatus() {
+  try {
+    const s = await (await fetch('/api/agent/goal/status')).json();
+    renderMetrics(s.metrics);
+    renderSnapshot(s.portfolio);
+    renderPlan(s.last_plan, s.last_review);
+  } catch(e) {}
+}
+
+function renderMetrics(m) {
+  const el = document.getElementById('metrics');
+  if (!m || !m.valid) {
+    el.innerHTML = '<div class="gl-plan dim">目標參數尚未完整（需要起始資金、目標金額、起始日與期限）。</div>';
+    return;
+  }
+  const prog = Math.min(m.progress_pct, 100);
+  el.innerHTML = `
+    <div class="gl-stats">
+      <div class="gl-stat hl"><div class="lbl">達標需要年化報酬</div><div class="val">${m.req_cagr}%</div></div>
+      <div class="gl-stat"><div class="lbl">從現在到期限還需年化</div><div class="val">${m.req_cagr_now ?? '-'}%</div></div>
+      <div class="gl-stat"><div class="lbl">目前總資產</div><div class="val">${fmt(m.current_value)}</div></div>
+      <div class="gl-stat"><div class="lbl">距目標完成度</div><div class="val">${m.progress_pct}%</div></div>
+      <div class="gl-stat"><div class="lbl">vs 計畫曲線</div><div class="val ${cls(m.gap)}">${sign(m.gap)}${fmt(m.gap)}</div></div>
+      <div class="gl-stat"><div class="lbl">剩餘時間</div><div class="val">${m.years_left} 年</div></div>
+    </div>
+    <div class="gl-bar"><div style="width:${prog}%"></div></div>
+    <div class="gl-hint">目標 ${fmt(m.target_amount)} 元・此刻按計畫應達 ${fmt(m.on_track_value)} 元
+      （${m.gap >= 0 ? '領先' : '落後'} ${fmt(Math.abs(m.gap))} 元）。</div>`;
+}
+
+function renderSnapshot(p) {
+  const el = document.getElementById('snapshot');
+  document.getElementById('snapSub').textContent =
+    `市值 ${fmt(p.market_value)}・損益 ${sign(p.pnl)}${fmt(p.pnl)}（${p.pnl_pct}%）`;
+  if (!p.rows || !p.rows.length) {
+    el.innerHTML = '<div class="gl-plan dim">尚無持倉。請至 AI Agent 頁面新增持倉。</div>';
+    return;
+  }
+  el.innerHTML = `<table class="gl-tbl">
+    <thead><tr><th>標的</th><th>股數</th><th>買入價</th><th>現價</th><th>市值</th><th>損益%</th></tr></thead>
+    <tbody>${p.rows.map(r => `<tr>
+      <td>${r.name}（${r.code}）</td><td>${fmt(r.shares)}</td><td>${r.buy_price}</td>
+      <td>${r.price}</td><td>${fmt(r.value)}</td>
+      <td class="${cls(r.pnl_pct)}">${sign(r.pnl_pct)}${r.pnl_pct}%</td></tr>`).join('')}</tbody></table>`;
+}
+
+function renderPlan(plan, date) {
+  const el = document.getElementById('plan');
+  if (!plan) { el.innerHTML = '<div class="gl-plan dim">尚無計畫，按上方按鈕立即產生。</div>'; return; }
+  el.innerHTML = `<div class="gl-hint">最近檢討：${date || '-'}</div><div class="gl-plan">${plan.replace(/</g,'&lt;')}</div>`;
+}
+
+async function reviewNow() {
+  reviewBtn.disabled = true; reviewMsg.textContent = '檢討中…';
+  try {
+    const r = await (await fetch('/api/agent/goal/review_now', {method:'POST'})).json();
+    reviewMsg.textContent = r.ok ? '已在背景執行，約 1-2 分鐘後重新整理查看' : ('失敗：' + (r.error||''));
+  } catch(e) { reviewMsg.textContent = '失敗：' + e.message; }
+  finally { reviewBtn.disabled = false; }
+}
+
+async function loadUs() {
+  try {
+    const u = await (await fetch('/api/market/overnight')).json();
+    if (!u || !u.data || !Object.keys(u.data).length) return;
+    const order = ['sox','nasdaq','sp500','dow','tsm_adr','vix','usdtwd'];
+    const idx = order.filter(k => u.data[k]).map(k => {
+      const d = u.data[k];
+      return `<span class="idx">${d.label} <b class="${cls(d.pct)}">${sign(d.pct)}${d.pct}%</b></span>`;
+    }).join('');
+    const bc = u.bias === '偏多' ? 'up' : (u.bias === '偏空' ? 'down' : 'flat');
+    document.getElementById('usBanner').innerHTML =
+      `<span class="bias ${bc}">昨夜美股 → 台股 ${u.bias}</span>${idx}`;
+    document.getElementById('usBanner').style.display = 'flex';
+  } catch(e) {}
+}
+
+loadGoal();
+loadStatus();
+loadUs();
+</script>
+</body>
+</html>
