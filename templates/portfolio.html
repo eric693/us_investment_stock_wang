@@ -145,7 +145,7 @@
 <!-- Nav -->
 <nav class="pf-nav">
   <div class="brand">US<span>STOCK</span></div>
-  <a class="nav-link" href="/ai" style="background:linear-gradient(135deg,#1a6fd4,#7c4dff);color:#fff">AI 首頁</a>
+  <a class="nav-link" href="/ai" style="background:linear-gradient(135deg,#2563a8, #173a6b);color:#fff">AI 首頁</a>
   <a class="nav-link" href="/">美股分析</a>
   <a class="nav-link" href="/tw">台股分析</a>
   <a class="nav-link active" href="/portfolio">投資組合</a>
@@ -734,7 +734,7 @@ function renderCharts(holdings) {
   if (!hasPrices) return;
 
   const labels = [], vals = [], pcts = [], colors = [];
-  const palette = ['#3d8ef8','#00d68f','#f0b429','#9f6aeb','#e84646','#1ac8f0','#e8c84a','#8e44ad','#27ae60','#e67e22'];
+  const palette = ['#3d8ef8','#00d68f','#f0b429','#5b8def','#e84646','#1ac8f0','#e8c84a','#14b8a6','#27ae60','#e67e22'];
 
   holdings.forEach((h, i) => {
     const p = _portPrices[h.ticker];

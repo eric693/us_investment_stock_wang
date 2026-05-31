@@ -124,10 +124,10 @@
 }
 .chat-header-icon {
   width: 36px; height: 36px;
-  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
-  border-radius: 50%;
+  background: linear-gradient(135deg, #2563a8 0%, #173a6b 100%);
+  border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 1rem;
+  font-size: 0.78rem; font-weight: 900; letter-spacing: 0.5px; color: #fff;
 }
 .chat-header-name { font-size: 0.95rem; font-weight: 800; color: var(--text); }
 .chat-header-sub  { font-size: 0.7rem; color: var(--text-dim); margin-top: 1px; }
@@ -164,7 +164,7 @@
   font-size: 0.8rem; font-weight: 800; flex-shrink: 0;
 }
 .msg.assistant .msg-avatar {
-  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
+  background: linear-gradient(135deg, #2563a8 0%, #173a6b 100%);
   color: #fff;
 }
 .msg.user .msg-avatar {
@@ -216,10 +216,12 @@
   padding: 40px;
 }
 .welcome-icon {
-  font-size: 3rem;
-  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  width: 64px; height: 64px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.05rem; font-weight: 900; letter-spacing: 1px;
+  color: var(--gold);
+  background: linear-gradient(135deg, #0f1c33, #0b1424);
+  border: 1px solid var(--card-bd2);
 }
 .welcome-title { font-size: 1.3rem; font-weight: 800; color: var(--text); }
 .welcome-sub   { font-size: 0.84rem; max-width: 480px; line-height: 1.6; }
@@ -331,9 +333,9 @@
 
 <!-- ── Navbar ───────────────────────────────────────────────────────── -->
 <nav class="navbar">
-  <div class="nav-brand">📈 股票分析平台</div>
+  <div class="nav-brand">股票分析<span>平台</span></div>
   <div class="nav-links">
-    <a href="/ai"    class="nav-link" style="background:linear-gradient(135deg,#1a6fd4,#7c4dff);color:#fff">AI 首頁</a>
+    <a href="/ai"    class="nav-link" style="background:linear-gradient(135deg,#2563a8, #173a6b);color:#fff">AI 首頁</a>
     <a href="/"      class="nav-link">美股</a>
     <a href="/tw"    class="nav-link">台股</a>
     <a href="/screener" class="nav-link">篩選器</a>
@@ -349,7 +351,7 @@
 
   <!-- ── Sidebar ───────────────────────────────────────────────────── -->
   <aside class="predict-sidebar" id="sidebar">
-    <div class="sidebar-title">⚙️ 分析設定</div>
+    <div class="sidebar-title">分析設定</div>
 
     <div class="sidebar-section">
       <div class="sidebar-label">Claude API Key</div>
@@ -366,7 +368,7 @@
              placeholder="例：2330、0050" maxlength="10"
              style="text-transform:uppercase">
       <button class="analyze-btn" id="analyzeBtn" onclick="analyzeStock()">
-        🔍 取得數據並分析
+        取得數據並分析
       </button>
     </div>
 
@@ -394,7 +396,7 @@
   <!-- ── Chat area ──────────────────────────────────────────────────── -->
   <section class="predict-chat">
     <div class="chat-header">
-      <div class="chat-header-icon">🤖</div>
+      <div class="chat-header-icon">AI</div>
       <div>
         <div class="chat-header-name">AI 明日預測分析師</div>
         <div class="chat-header-sub">整合月扣抵、籌碼、法人、技術指標，預判明日漲跌</div>
@@ -405,7 +407,7 @@
     <div class="chat-messages" id="chatMessages">
       <!-- Welcome screen -->
       <div class="chat-welcome" id="welcomeScreen">
-        <div class="welcome-icon">📊</div>
+        <div class="welcome-icon">AI</div>
         <div class="welcome-title">台股 AI 明日預測分析師</div>
         <div class="welcome-sub">
           整合月線扣抵、借券餘額、當沖比、三大法人、KD/MACD 等多維度指標，
@@ -518,7 +520,7 @@ function addMessage(role, content, streaming = false) {
 
   const avatar = document.createElement('div');
   avatar.className = 'msg-avatar';
-  avatar.textContent = role === 'assistant' ? '🤖' : '👤';
+  avatar.textContent = role === 'assistant' ? 'AI' : '我';
 
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
@@ -546,7 +548,7 @@ async function analyzeStock() {
   currentStockCode = code;
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true;
-  btn.textContent = '⏳ 取得數據中…';
+  btn.textContent = '取得數據中…';
   setStatus('取得數據中…');
 
   try {
@@ -570,7 +572,7 @@ async function analyzeStock() {
     alert('網路錯誤：' + e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔍 取得數據並分析';
+    btn.textContent = '取得數據並分析';
   }
 }
 
@@ -716,7 +718,7 @@ async function processStream(resp, bubble, userText) {
         try {
           const obj = JSON.parse(payload);
           if (obj.error) {
-            bubble.innerHTML = `<span style="color:#ff4e4e">❌ ${obj.error}</span>`;
+            bubble.innerHTML = `<span style="color:#ff4e4e">${obj.error}</span>`;
             return fullText;
           }
           if (obj.text) {

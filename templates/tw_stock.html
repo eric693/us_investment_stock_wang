@@ -189,9 +189,9 @@
 <!-- Navigation -->
 <nav class="topnav">
   <div class="brand">TW<span>STOCK</span></div>
-  <a class="market-switch" href="/ai" style="background:linear-gradient(135deg,#1a6fd4,#7c4dff);color:#fff;border-color:transparent;">AI 首頁</a>
+  <a class="market-switch" href="/ai" style="background:linear-gradient(135deg,#2563a8, #173a6b);color:#fff;border-color:transparent;">AI 首頁</a>
   <a class="market-switch" href="/">美股</a>
-  <a class="market-switch" href="/portfolio" style="background:rgba(159,106,235,.15);color:#9f6aeb;border-color:rgba(159,106,235,.3);">投資組合</a>
+  <a class="market-switch" href="/portfolio" style="background:rgba(79,118,173,.15);color:#7ba6db;border-color:rgba(79,118,173,.3);">投資組合</a>
   <a class="market-switch" href="/screener" style="background:rgba(240,180,41,.1);color:var(--gold);border-color:rgba(240,180,41,.25);">策略選股</a>
   <div class="search-wrap">
     <input id="tickerInput" type="text" placeholder="輸入股票代碼 (2330, 0050, 2454...)" autocomplete="off" spellcheck="false">
@@ -539,7 +539,7 @@
               <input type="number" id="maInput1" min="1" max="500" value="5">
             </div>
             <div class="ma-cfg-item">
-              <span class="ma-cfg-dot" style="background:#d94fff"></span>
+              <span class="ma-cfg-dot" style="background:#2bb6c4"></span>
               <label>MA2</label>
               <input type="number" id="maInput2" min="1" max="500" value="20">
             </div>
@@ -1969,7 +1969,7 @@ async function renderIntraday(ticker) {
        decreasing:{line:{color:'#00d68f',width:1},fillcolor:'#00d68f'},showlegend:false},
       {type:'scatter',mode:'lines',x:dates,y:vwapArr,name:'VWAP',line:{color:'#f0b429',width:1.5,dash:'dot'},connectgaps:false},
       {type:'scatter',mode:'lines',x:dates,y:ma5, name:'MA5',  line:{color:'#ffa000',width:1.2},connectgaps:false},
-      {type:'scatter',mode:'lines',x:dates,y:ma20,name:'MA20', line:{color:'#d94fff',width:1.2},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:ma20,name:'MA20', line:{color:'#2bb6c4',width:1.2},connectgaps:false},
     ], {
       paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:11},showlegend:true,
       legend:{orientation:'h',x:0,y:1.06,bgcolor:'rgba(0,0,0,0)',font:{size:10,color:'#8aaabf'}},
@@ -2025,7 +2025,7 @@ async function renderHourly(ticker) {
        increasing:{line:{color:'#e84646',width:1},fillcolor:'#e84646'},
        decreasing:{line:{color:'#00d68f',width:1},fillcolor:'#00d68f'},showlegend:false},
       {type:'scatter',mode:'lines',x:dates,y:d.ma.ma5, name:'MA5',  line:{color:'#ffa000',width:1.2},connectgaps:false},
-      {type:'scatter',mode:'lines',x:dates,y:d.ma.ma20,name:'MA20', line:{color:'#d94fff',width:1.2},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.ma.ma20,name:'MA20', line:{color:'#2bb6c4',width:1.2},connectgaps:false},
       {type:'scatter',mode:'lines',x:dates,y:d.ma.ma60,name:'MA60', line:{color:'#00aaff',width:1.2},connectgaps:false},
       {type:'scatter',mode:'lines',x:dates,y:d.bollinger.upper,name:'BB上軌',line:{color:'rgba(100,130,160,0.5)',width:1,dash:'dot'},connectgaps:false,showlegend:false},
       {type:'scatter',mode:'lines',x:dates,y:d.bollinger.lower,name:'BB下軌',line:{color:'rgba(100,130,160,0.5)',width:1,dash:'dot'},connectgaps:false,showlegend:false},
@@ -2063,7 +2063,7 @@ async function renderHourly(ticker) {
     },{responsive:true,displayModeBar:false});
     // RSI
     Plotly.newPlot('rsiChart', [
-      {type:'scatter',mode:'lines',x:dates,y:d.rsiSeries,name:'RSI',line:{color:'#9f6aeb',width:1.5},connectgaps:false},
+      {type:'scatter',mode:'lines',x:dates,y:d.rsiSeries,name:'RSI',line:{color:'#f0b429',width:1.5},connectgaps:false},
     ], {
       paper_bgcolor:BG,plot_bgcolor:BG,font:{color:'#6888a0',size:9},
       margin:{l:60,r:8,t:4,b:28},
@@ -2118,7 +2118,7 @@ function renderCharts(d) {
       increasing:{line:{color:'#e84646',width:1}, fillcolor:'#e84646'},
       decreasing:{line:{color:'#00d68f',width:1}, fillcolor:'#00d68f'}, showlegend:false },
     { type:'scatter', mode:'lines', x:dates, y:ma1arr, name:`MA${maSettings.m1}`, line:{color:'#ffa000',width:1.5}, connectgaps:false },
-    { type:'scatter', mode:'lines', x:dates, y:ma2arr, name:`MA${maSettings.m2}`, line:{color:'#d94fff',width:1.5}, connectgaps:false },
+    { type:'scatter', mode:'lines', x:dates, y:ma2arr, name:`MA${maSettings.m2}`, line:{color:'#2bb6c4',width:1.5}, connectgaps:false },
     { type:'scatter', mode:'lines', x:dates, y:ma3arr, name:`MA${maSettings.m3}`, line:{color:'#36c6ff',width:1.5}, connectgaps:false },
   ], {
     paper_bgcolor:BG, plot_bgcolor:BG, font:{color:'#6888a0',size:11},
