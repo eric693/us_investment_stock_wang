@@ -98,15 +98,41 @@ def _save_monitor_cfg(cfg):
     with open(MONITOR_FILE, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
+def _split_for_line(text, size=4800):
+    """LINE 單則上限 5000 字，超長就以行為界線切成多則（單行超長才硬切）。"""
+    if not text:
+        return ['']
+    if len(text) <= size:
+        return [text]
+    chunks, cur = [], ''
+    for line in text.split('\n'):
+        while len(line) > size:        # 單行本身就超長，硬切
+            if cur:
+                chunks.append(cur); cur = ''
+            chunks.append(line[:size]); line = line[size:]
+        if len(cur) + len(line) + 1 > size:
+            chunks.append(cur); cur = line
+        else:
+            cur = (cur + '\n' + line) if cur else line
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def _push_line_msg(token, user_id, text):
+    # 超過單則上限就切成多則；一次 push 最多 5 則，避免整份報告因過長而完全推播失敗
+    chunks = _split_for_line(text)
     try:
-        _requests.post(
-            'https://api.line.me/v2/bot/message/push',
-            headers={'Content-Type': 'application/json',
-                     'Authorization': f'Bearer {token}'},
-            json={'to': user_id, 'messages': [{'type': 'text', 'text': text}]},
-            timeout=10,
-        )
+        for i in range(0, len(chunks), 5):
+            batch = chunks[i:i + 5]
+            _requests.post(
+                'https://api.line.me/v2/bot/message/push',
+                headers={'Content-Type': 'application/json',
+                         'Authorization': f'Bearer {token}'},
+                json={'to': user_id,
+                      'messages': [{'type': 'text', 'text': c} for c in batch]},
+                timeout=10,
+            )
     except Exception as e:
         print(f'[Monitor] LINE error: {e}')
 
@@ -5720,9 +5746,20 @@ def agent_goal_status_api():
     cfg = _load_agent_cfg()
     status = _goal_status(cfg)
     g = cfg.get('goal', {})
-    status['last_plan']     = g.get('last_plan', '')
-    status['last_review']   = g.get('last_review', '')
-    status['review_status'] = g.get('review_status', '')
+    status['last_plan']   = g.get('last_plan', '')
+    status['last_review'] = g.get('last_review', '')
+    rs = g.get('review_status', '')
+    # 保險：若檢討卡在 running 超過 20 分鐘（多半是行程重啟導致背景執行緒中斷），
+    # 視為逾時，避免前端永遠輪詢
+    if rs == 'running':
+        started = g.get('review_started', '')
+        try:
+            age = (pd.Timestamp.now(tz='Asia/Taipei') - pd.Timestamp(started, tz='Asia/Taipei')).total_seconds()
+            if started and age > 1200:
+                rs = 'error'
+        except Exception:
+            pass
+    status['review_status'] = rs
     return jsonify(status)
 
 
