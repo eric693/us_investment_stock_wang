@@ -434,9 +434,21 @@
       </div>
     </div>
 
+    <!-- 已附加截圖預覽 -->
+    <div id="imgPreviewBar" style="display:none;padding:10px 20px 0;">
+      <div style="display:inline-flex;align-items:center;gap:10px;background:#0a1020;border:1px solid var(--card-bd);border-radius:8px;padding:6px 10px;">
+        <img id="imgPreviewThumb" alt="" style="height:42px;max-width:80px;object-fit:cover;border-radius:4px;border:1px solid var(--card-bd);">
+        <span style="font-size:0.74rem;color:var(--text-dim);">已附加截圖，將連同訊息給 AI 分析</span>
+        <button onclick="clearPendingImage()" title="移除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.95rem;line-height:1;">✕</button>
+      </div>
+    </div>
     <div class="chat-input-area">
+      <input type="file" id="chatImgInput" accept="image/*" style="display:none" onchange="onChatImgPick(event)">
+      <button class="send-btn" id="attachBtn" onclick="document.getElementById('chatImgInput').click()" title="上傳截圖" style="background:#13233a;">
+        <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 11l2.5 3 3.5-4.5L19 18H5l3.5-7z"/></svg>
+      </button>
       <div class="chat-input-wrap">
-        <textarea id="chatInput" rows="1" placeholder="輸入問題，或點左側按鈕分析個股…"
+        <textarea id="chatInput" rows="1" placeholder="輸入問題、貼上(Ctrl+V)或上傳截圖讓 AI 看圖分析…"
                   onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
       </div>
       <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="送出">
@@ -511,7 +523,7 @@ function renderMarkdown(text) {
 }
 
 // ── Add message to chat ────────────────────────────────────────────────────
-function addMessage(role, content, streaming = false) {
+function addMessage(role, content, streaming = false, imgUrl = null) {
   hideWelcome();
   const wrap = document.getElementById('chatMessages');
 
@@ -528,7 +540,10 @@ function addMessage(role, content, streaming = false) {
     bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
     bubble.dataset.streaming = '1';
   } else {
-    bubble.innerHTML = renderMarkdown(content);
+    let html = '';
+    if (imgUrl) html += `<img src="${imgUrl}" style="max-width:220px;max-height:220px;border-radius:8px;border:1px solid var(--card-bd);display:block;margin-bottom:6px;">`;
+    html += renderMarkdown(content);
+    bubble.innerHTML = html;
   }
 
   div.appendChild(avatar);
@@ -537,6 +552,56 @@ function addMessage(role, content, streaming = false) {
   scrollToBottom();
   return bubble;
 }
+
+// ── 截圖上傳／貼上 ──────────────────────────────────────────────────────────
+let _pendingImage = null;   // { dataUrl, media_type }
+
+function onChatImgPick(e) {
+  const f = e.target.files && e.target.files[0];
+  if (f) handleChatImage(f);
+  e.target.value = '';
+}
+function handleChatImage(file) {
+  if (!file.type.startsWith('image/')) { alert('請選擇圖片檔'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    let mt = (String(dataUrl).match(/^data:(image\/[a-zA-Z+]+);base64,/) || [])[1] || 'image/png';
+    if (mt === 'image/jpg') mt = 'image/jpeg';
+    if (!['image/png','image/jpeg','image/gif','image/webp'].includes(mt)) mt = 'image/png';
+    _pendingImage = { dataUrl, media_type: mt };
+    document.getElementById('imgPreviewThumb').src = dataUrl;
+    document.getElementById('imgPreviewBar').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+function clearPendingImage() {
+  _pendingImage = null;
+  document.getElementById('imgPreviewBar').style.display = 'none';
+  document.getElementById('imgPreviewThumb').src = '';
+}
+// Ctrl+V 貼上截圖
+window.addEventListener('paste', (e) => {
+  const items = (e.clipboardData || window.clipboardData)?.items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) { handleChatImage(f); e.preventDefault(); }
+      return;
+    }
+  }
+});
+// 拖曳圖片到輸入區
+(function initChatDnd() {
+  const area = document.querySelector('.chat-input-area');
+  if (!area) return;
+  ['dragover','dragenter'].forEach(ev => area.addEventListener(ev, e => { e.preventDefault(); }));
+  area.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
+    if (f) handleChatImage(f);
+  });
+})();
 
 // ── Analyze stock ─────────────────────────────────────────────────────────
 async function analyzeStock() {
@@ -652,7 +717,7 @@ async function sendMessage() {
   if (isStreaming) return;
   const input = document.getElementById('chatInput');
   const text  = input.value.trim();
-  if (!text) return;
+  if (!text && !_pendingImage) return;
 
   const key = getApiKey();
   if (!key) { alert('請先輸入 Claude API Key'); return; }
@@ -661,8 +726,24 @@ async function sendMessage() {
   input.style.height = 'auto';
   hideWelcome();
 
-  addMessage('user', text);
-  messages.push({ role: 'user', content: text });
+  const img = _pendingImage;
+  clearPendingImage();
+
+  // 顯示在對話框（含縮圖）
+  addMessage('user', text || '（請分析這張截圖）', false, img ? img.dataUrl : null);
+
+  // 送給 Claude：有圖就用 content 陣列（圖片 + 文字）
+  let content;
+  if (img) {
+    content = [
+      { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.dataUrl.split(',')[1] } },
+      { type: 'text',  text: text || '請分析這張截圖（可能是走勢圖或持倉），給出你的判斷。' },
+    ];
+  } else {
+    content = text;
+  }
+  messages.push({ role: 'user', content });
+  const imgTurnIdx = img ? messages.length - 1 : -1;
 
   // Keep last 10 turns only
   if (messages.length > 20) messages = messages.slice(-20);
@@ -686,6 +767,10 @@ async function sendMessage() {
 
     const fullText = await processStream(resp, bubble, text);
     messages.push({ role: 'assistant', content: fullText });
+    // 回覆完成後，把歷史中的大張圖片換成文字標記，避免之後每次請求重傳 base64
+    if (imgTurnIdx >= 0 && messages[imgTurnIdx]) {
+      messages[imgTurnIdx] = { role: 'user', content: (text || '請分析這張截圖') + '\n[已上傳一張截圖]' };
+    }
   } catch(e) {
     bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
   } finally {

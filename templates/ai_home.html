@@ -346,9 +346,8 @@ let scopeHint = '';
 let pendingImage = null;   // {data: base64, mediaType}
 
 // ── Image upload ──────────────────────────────────────────────────
-function onImagePick(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+function processImageFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
@@ -363,14 +362,40 @@ function onImagePick(e) {
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       pendingImage = { mediaType: 'image/jpeg', data: dataUrl.split(',')[1] };
       document.getElementById('imgThumb').src = dataUrl;
-      document.getElementById('imgName').textContent = file.name;
+      document.getElementById('imgName').textContent = file.name || '貼上的截圖';
       document.getElementById('imgPreview').style.display = 'flex';
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+function onImagePick(e) {
+  const file = e.target.files[0];
+  if (file) processImageFile(file);
   e.target.value = '';
 }
+// Ctrl+V 貼上截圖
+window.addEventListener('paste', (e) => {
+  const items = (e.clipboardData || window.clipboardData)?.items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) { processImageFile(f); e.preventDefault(); }
+      return;
+    }
+  }
+});
+// 拖曳圖片到輸入區
+(function initAiDnd() {
+  const area = document.querySelector('.chat-input');
+  if (!area) return;
+  ['dragover','dragenter'].forEach(ev => area.addEventListener(ev, e => e.preventDefault()));
+  area.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
+    if (f) processImageFile(f);
+  });
+})();
 
 function clearImage() {
   pendingImage = null;

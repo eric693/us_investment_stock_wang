@@ -5426,6 +5426,9 @@ def agent_holdings_api():
 
     if request.method == 'GET':
         holdings = cfg.get('holdings', [])
+        # raw=1：只回原始持倉清單（不打 yfinance 報價），供投資組合頁快速共用同一份資料
+        if request.args.get('raw'):
+            return jsonify(holdings)
         enriched = []
         for h in holdings:
             code  = h.get('code', '')
@@ -5455,14 +5458,21 @@ def agent_holdings_api():
         code = body.get('code', '').strip().upper().replace('.TW', '').replace('.TWO', '')
         if not code:
             return jsonify({'error': '代碼不可為空'}), 400
+        prev     = next((h for h in cfg.get('holdings', []) if h.get('code') == code), {})
         existing = [h for h in cfg.get('holdings', []) if h.get('code') != code]
-        existing.append({
+        # 以既有紀錄為底合併，避免某一邊編輯時把另一邊設定的欄位（如群組）洗掉
+        record = dict(prev)
+        record.update({
             'code':      code,
-            'buy_price': safe_float(body.get('buy_price', 0)),
-            'shares':    safe_int(body.get('shares', 0)),
-            'date':      body.get('date', pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')),
-            'note':      body.get('note', ''),
+            'buy_price': safe_float(body.get('buy_price', prev.get('buy_price', 0))),
+            'shares':    safe_int(body.get('shares', prev.get('shares', 0))),
+            'date':      body.get('date') or prev.get('date') or pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d'),
         })
+        # 只在請求有帶這些欄位時才覆寫，沒帶就沿用既有值
+        for field in ('note', 'group', 'name'):
+            if field in body:
+                record[field] = body.get(field, '')
+        existing.append(record)
         cfg['holdings'] = existing
         _save_agent_cfg(cfg)
         return jsonify({'ok': True})

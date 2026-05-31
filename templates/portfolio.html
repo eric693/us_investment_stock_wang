@@ -397,38 +397,42 @@
 // ═══════════════════════════════════════════
 // DATA LAYER — localStorage
 // ═══════════════════════════════════════════
+// 持倉與「持倉管理（AI Agent）」共用同一份來源（伺服器 agent holdings），不再各自獨立。
+// 群組（自選觀察清單）仍存在投資組合自己的 store（localStorage + /api/portfolio/data）。
 const STORE_KEY = 'pflio_v2';
-function loadData() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || { groups: {}, holdings: [] }; }
-  catch { return { groups: {}, holdings: [] }; }
+let _sharedHoldings = [];   // 來自「持倉管理」的同一份持倉，映射成投資組合用的欄位
+
+// 群組（watchlist）讀寫
+function loadGroups() {
+  try { return (JSON.parse(localStorage.getItem(STORE_KEY)) || {}).groups || {}; }
+  catch { return {}; }
 }
 function saveData(d) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(d));
-  // 同步到伺服器，讓持倉跨裝置／換瀏覽器都看得到
+  const groups = d.groups || {};
+  localStorage.setItem(STORE_KEY, JSON.stringify({ groups }));
   fetch('/api/portfolio/data', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ groups: d.groups || {}, holdings: d.holdings || [] }),
-  }).catch(() => { /* 離線時仍保有 localStorage */ });
+    body: JSON.stringify({ groups }),
+  }).catch(() => {});
 }
-function getData() { return loadData(); }
+function getData() { return { groups: loadGroups(), holdings: _sharedHoldings }; }
 
-// 開頁時與伺服器同步（跨裝置來源）：
-//   伺服器有資料 → 覆蓋本機；伺服器空但本機有 → 首次遷移，把本機推上伺服器；都空或離線 → 沿用本機
-async function syncFromServer() {
+// 從伺服器拉「持倉管理」那份持倉（單一來源，跨頁共用）
+async function loadSharedHoldings() {
   try {
-    const r = await fetch('/api/portfolio/data');
+    const r = await fetch('/api/agent/holdings?raw=1');
     if (!r.ok) return;
-    const srv = await r.json();
-    const srvHas   = (srv.holdings && srv.holdings.length) || (srv.groups && Object.keys(srv.groups).length);
-    const local    = loadData();
-    const localHas = (local.holdings && local.holdings.length) || (local.groups && Object.keys(local.groups).length);
-    if (srvHas) {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ groups: srv.groups || {}, holdings: srv.holdings || [] }));
-    } else if (localHas) {
-      saveData(local);   // 把既有的本機持倉遷移上伺服器
-    }
-  } catch (e) { /* 離線：沿用本機資料 */ }
+    const arr = await r.json();
+    _sharedHoldings = (arr || []).map(h => ({
+      ticker:    h.code,
+      shares:    h.shares,
+      costPrice: h.buy_price,
+      buyDate:   h.date || '',
+      note:      h.note || '',
+      group:     h.group || '',
+    }));
+  } catch (e) { /* 離線：保留現有 */ }
 }
 
 // ═══════════════════════════════════════════
@@ -449,7 +453,7 @@ function switchTab(name) {
   document.querySelectorAll('.pf-tab').forEach((b,i) => b.classList.toggle('active', ['groups','portfolio','compare'][i]===name));
   document.querySelectorAll('.pf-section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
-  if (name==='portfolio') { renderPortfolio(); refreshPortfolioPrices(); }
+  if (name==='portfolio') { loadSharedHoldings().then(() => { renderPortfolio(); refreshPortfolioPrices(); }); }
   if (name==='groups')    renderGroups();
 }
 
@@ -642,7 +646,8 @@ let _portPrices = {};
 function openAddHoldingModal(idx) {
   const d = getData();
   document.getElementById('addHoldingTitle').textContent = idx != null ? '編輯持倉' : '新增持倉';
-  document.getElementById('editHoldingIdx').value = idx != null ? idx : '';
+  // 存原始代碼，編輯時若代碼被改才好刪掉舊紀錄
+  document.getElementById('editHoldingIdx').value = (idx != null && d.holdings[idx]) ? d.holdings[idx].ticker : '';
   document.getElementById('holdingTicker').value = '';
   document.getElementById('holdingShares').value = '';
   document.getElementById('holdingCost').value = '';
@@ -669,7 +674,7 @@ function openAddHoldingModal(idx) {
   setTimeout(() => document.getElementById('holdingTicker').focus(), 100);
 }
 
-function saveHolding() {
+async function saveHolding() {
   const ticker = document.getElementById('holdingTicker').value.trim().toUpperCase();
   const shares = parseFloat(document.getElementById('holdingShares').value);
   const cost   = parseFloat(document.getElementById('holdingCost').value);
@@ -681,29 +686,38 @@ function saveHolding() {
   if (!shares || shares <= 0) { showToast('請輸入有效股數', 'red'); return; }
   if (!cost || cost <= 0) { showToast('請輸入成本均價', 'red'); return; }
 
-  const d = getData();
-  const entry = { ticker, shares, costPrice: cost, buyDate: date, group, note };
-  const idx = document.getElementById('editHoldingIdx').value;
-
-  if (idx !== '') {
-    d.holdings[parseInt(idx)] = entry;
-    showToast('持倉已更新', 'green');
-  } else {
-    d.holdings.push(entry);
-    showToast(`已加入 ${ticker}`, 'green');
+  const orig = document.getElementById('editHoldingIdx').value;   // 編輯時的原始代碼
+  try {
+    // 寫進與「持倉管理」共用的同一份持倉
+    await fetch('/api/agent/holdings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code: ticker, buy_price: cost, shares, date, note, group }),
+    });
+    // 編輯時若代碼被改，刪掉舊代碼那筆
+    if (orig && orig !== ticker) {
+      await fetch(`/api/agent/holdings?code=${encodeURIComponent(orig)}`, { method: 'DELETE' });
+    }
+    showToast(orig ? '持倉已更新' : `已加入 ${ticker}`, 'green');
+  } catch (e) {
+    showToast('儲存失敗，請稍後再試', 'red');
+    return;
   }
-  saveData(d);
   closeModal('addHoldingModal');
+  await loadSharedHoldings();
   renderPortfolio();
   refreshPortfolioPrices();
 }
 
-function deleteHolding(idx) {
+async function deleteHolding(idx) {
   const d = getData();
   const h = d.holdings[idx];
-  if (!confirm(`確定刪除 ${h.ticker} 的持倉紀錄？`)) return;
-  d.holdings.splice(idx, 1);
-  saveData(d);
+  if (!h) return;
+  if (!confirm(`確定刪除 ${h.ticker} 的持倉紀錄？（持倉管理那邊也會一併移除）`)) return;
+  try {
+    await fetch(`/api/agent/holdings?code=${encodeURIComponent(h.ticker)}`, { method: 'DELETE' });
+  } catch (e) { showToast('刪除失敗', 'red'); return; }
+  await loadSharedHoldings();
   renderPortfolio();
   showToast('已刪除', '');
 }
@@ -1062,26 +1076,32 @@ function renderImportPreview() {
     </tr>`).join('');
   document.getElementById('importPreview').style.display = _importRows.length ? 'block' : 'none';
 }
-function confirmImportHoldings() {
+async function confirmImportHoldings() {
   const rows = _importRows.filter(h => (h.code||'').trim());
   if (!rows.length) { _importStatus('沒有可匯入的持倉', 'var(--red)'); return; }
-  const d = getData();
+  _importStatus(`匯入中… 0/${rows.length}`);
   let added = 0;
   for (const h of rows) {
-    const ticker = (h.code||'').trim().toUpperCase();
-    const shares = parseFloat(h.shares) || 0;
-    const cost   = parseFloat(h.buy_price) || 0;
-    const idx = d.holdings.findIndex(x => x.ticker === ticker);
-    const entry = { ticker, shares, costPrice: cost, buyDate: '', group: '', note: '截圖匯入' };
-    if (idx >= 0) d.holdings[idx] = { ...d.holdings[idx], ...entry };
-    else d.holdings.push(entry);
-    added++;
+    try {
+      await fetch('/api/agent/holdings', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          code: (h.code||'').trim().toUpperCase(),
+          buy_price: parseFloat(h.buy_price) || 0,
+          shares: parseInt(h.shares) || 0,
+          note: '截圖匯入',
+        }),
+      });
+      added++;
+      _importStatus(`匯入中… ${added}/${rows.length}`);
+    } catch (e) { /* 略過單筆失敗 */ }
   }
-  saveData(d);
   _importRows = [];
   document.getElementById('importPreview').style.display = 'none';
   _importStatus(`已匯入 ${added} 檔持倉`, 'var(--green)');
   showToast(`已匯入 ${added} 檔持倉`, 'green');
+  await loadSharedHoldings();
   renderPortfolio();
   refreshPortfolioPrices();
 }
@@ -1120,8 +1140,20 @@ window.addEventListener('paste', (e) => {
 // ═══════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════
+async function loadGroupsFromServer() {
+  try {
+    const r = await fetch('/api/portfolio/data');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d.groups && Object.keys(d.groups).length) {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ groups: d.groups }));
+    }
+  } catch (e) {}
+}
+
 (async function initPortfolio() {
-  await syncFromServer();            // 先拿伺服器資料
+  // 持倉與「持倉管理」共用同一份；群組從伺服器同步
+  await Promise.all([ loadSharedHoldings(), loadGroupsFromServer() ]);
   renderGroups();
   const active = document.querySelector('.pf-section.active');
   if (active && active.id === 'tab-portfolio') { renderPortfolio(); refreshPortfolioPrices(); }
