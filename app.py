@@ -2552,6 +2552,72 @@ def _get_tw_inst(code: str):
     return data.get(code)
 
 
+# ── TWSE 三大法人「多日」歷史快取（供連N日買超）────────────────────────
+_tw_inst_hist_cache: dict = {}
+_tw_inst_hist_lock  = threading.Lock()
+
+def _load_tw_inst_history(days: int = 6):
+    """抓近 N 個交易日的 T86，組成每檔股票的法人買賣超序列（最新在前）。快取 4 小時。"""
+    import urllib.request, datetime
+    result: dict = {}
+    collected = 0
+    today = datetime.date.today()
+    def _n(s): return safe_float(str(s).replace(',', '').replace(' ', ''))
+
+    def _fetch_day(ymd):
+        """回傳該日 T86 data list；非交易日回 None；網路錯誤重試後仍失敗回 'ERR'。"""
+        url = f'https://www.twse.com.tw/rwd/zh/fund/T86?date={ymd}&selectType=ALLBUT0999&response=json'
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                raw = json.loads(urllib.request.urlopen(req, timeout=12).read())
+                if raw.get('stat') == 'OK':
+                    return raw.get('data', [])
+                return None   # 明確非交易日（假日）
+            except Exception:
+                time.sleep(0.6)  # 多半是被限流，稍候重試
+        return 'ERR'
+
+    # 由今天往回逐「日曆日」掃，跳過週末，直到湊滿 N 個交易日。
+    # 為確保「連續日」語意正確：遇到網路錯誤(ERR)直接中止，不以更早的日期頂替造成跳日。
+    for back in range(0, days + 12):
+        if collected >= days:
+            break
+        day = today - datetime.timedelta(days=back)
+        if day.weekday() >= 5:   # 5=六 6=日
+            continue
+        data = _fetch_day(day.strftime('%Y%m%d'))
+        if data == 'ERR':
+            break          # 寧可資料少也不要跳日
+        if data is None:
+            continue       # 假日，往前一天
+        for row in data:
+            if len(row) < 19:
+                continue
+            code = str(row[0]).strip()
+            rec = result.setdefault(code, {'foreign': [], 'trust': [], 'dealer': [], 'total': []})
+            rec['foreign'].append(_n(row[4]))
+            rec['trust'].append(_n(row[10]))
+            rec['dealer'].append(_n(row[11]))
+            rec['total'].append(_n(row[18]))
+        collected += 1
+        time.sleep(0.5)    # 禮貌性間隔，降低被限流機率（此載入每 4 小時才一次）
+    if result:
+        with _tw_inst_hist_lock:
+            _tw_inst_hist_cache['data'] = result
+            _tw_inst_hist_cache['ts']   = time.time()
+    return result
+
+def _get_tw_inst_hist(code: str):
+    """回傳單一股票的多日法人序列 dict（最新在前），找不到回 None。"""
+    with _tw_inst_hist_lock:
+        ts   = _tw_inst_hist_cache.get('ts', 0)
+        data = _tw_inst_hist_cache.get('data', {})
+    if time.time() - ts > 14400 or not data:
+        data = _load_tw_inst_history()
+    return data.get(code)
+
+
 # ── TWSE 融資融券快取 ──────────────────────────────────────────────────
 _tw_margin_cache: dict = {}
 _tw_margin_lock  = threading.Lock()
@@ -3442,6 +3508,38 @@ def _eval_condition(hist, info, cond, extra=None):
                 ok = tot > 0 and fn > 0 and fn / tot >= 0.8
                 return ok, f'外資主導 外資{fn:,.0f} 合計{tot:,.0f}'
 
+        # ── 三大法人「連續N日」買超（多日序列）─────────────────────────────
+        elif ctype in ('inst_foreign_buy_ndays', 'inst_trust_buy_ndays',
+                       'inst_3_buy_ndays', 'inst_net_sum_above', 'inst_foreign_sell_ndays'):
+            ih = (extra or {}).get('inst_hist')
+            if ih is None:
+                return False, '非台股或無多日法人資料'
+            days = int(params.get('days', 3))
+            fseq = ih.get('foreign', [])[:days]
+            tseq = ih.get('trust',   [])[:days]
+            sseq = ih.get('total',   [])[:days]
+
+            if ctype == 'inst_foreign_buy_ndays':
+                if len(fseq) < days: return False, f'外資資料不足{days}日'
+                ok = all(v > 0 for v in fseq)
+                return ok, f'外資近{days}日{"連續買超" if ok else "未連續買超"} {[round(v) for v in fseq]}'
+            elif ctype == 'inst_foreign_sell_ndays':
+                if len(fseq) < days: return False, f'外資資料不足{days}日'
+                ok = all(v < 0 for v in fseq)
+                return ok, f'外資近{days}日{"連續賣超" if ok else "未連續賣超"}'
+            elif ctype == 'inst_trust_buy_ndays':
+                if len(tseq) < days: return False, f'投信資料不足{days}日'
+                ok = all(v > 0 for v in tseq)
+                return ok, f'投信近{days}日{"連續買超" if ok else "未連續買超"} {[round(v) for v in tseq]}'
+            elif ctype == 'inst_3_buy_ndays':
+                if len(sseq) < days: return False, f'法人資料不足{days}日'
+                ok = all(v > 0 for v in sseq)
+                return ok, f'三大法人近{days}日{"連續買超" if ok else "未連續買超"}'
+            elif ctype == 'inst_net_sum_above':
+                thr = float(params.get('threshold', 5000)) * 1000
+                ssum = sum(sseq)
+                return ssum >= thr, f'近{days}日累計買超 {ssum/1000:.0f}千股 {"≥" if ssum>=thr else "<"} {params.get("threshold",5000)}千股'
+
         # ── 多週期指標 ────────────────────────────────────────────────────
         elif ctype in ('weekly_kd_golden_cross', 'weekly_macd_golden_cross',
                        'weekly_rsi_cross_above', 'monthly_kd_oversold',
@@ -3544,6 +3642,8 @@ _MARGIN_TYPES  = {'margin_increase','margin_decrease','short_decrease',
                   'short_increase','high_short_ratio','margin_continuous_up'}
 _INST_TYPES    = {'inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell',
                   'inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'}
+_INST_HIST_TYPES = {'inst_foreign_buy_ndays','inst_trust_buy_ndays','inst_3_buy_ndays',
+                    'inst_net_sum_above','inst_foreign_sell_ndays'}
 
 def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
     """Scan a single ticker and return result dict or None."""
@@ -3585,6 +3685,10 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
             code = ticker.replace('.TW','').replace('.TWO','')
             it = _get_tw_inst(code)
             if it: extra['inst'] = it
+        if ctypes & _INST_HIST_TYPES and is_tw:
+            code = ticker.replace('.TW','').replace('.TWO','')
+            ih = _get_tw_inst_hist(code)
+            if ih: extra['inst_hist'] = ih
 
         cond_results = []
         all_passed   = True
@@ -5071,11 +5175,15 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 - bb_oversold 布林超賣
 
 【籌碼面】
-- inst_foreign_buy 外資買超
-- inst_trust_buy 投信買超
-- inst_3_buy 三大法人同步買超
-- inst_total_above {threshold:1000} 法人合計買超超過 N 張
+- inst_foreign_buy 外資今日買超
+- inst_trust_buy 投信今日買超
+- inst_3_buy 三大法人今日同步買超
+- inst_total_above {threshold:1000} 法人合計買超超過 N 千股
 - inst_foreign_dominant 外資主導買超
+- inst_foreign_buy_ndays {days:3} 外資「連續N日」買超（連買，比單日有力）
+- inst_trust_buy_ndays {days:3} 投信「連續N日」買超
+- inst_3_buy_ndays {days:3} 三大法人「連續N日」買超
+- inst_net_sum_above {days:5, threshold:5000} 近N日法人累計買超超過 X 千股
 - margin_decrease 融資減少（散戶退場）
 - short_decrease 融券/借券減少（空方回補）
 - inst_pct_above {threshold:20} 法人持股比例高

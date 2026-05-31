@@ -439,6 +439,11 @@ const COND_DEFS = {
   inst_3_buy:               { label:'三大法人今日合計買超',       badge:'chip', params:[] },
   inst_total_above:         { label:'三大法人買超 > N千股',       badge:'chip', params:[{key:'threshold',label:'千股',default:1000,type:'number'}] },
   inst_foreign_dominant:    { label:'外資主導買超（>80%）',       badge:'chip', params:[] },
+  inst_foreign_buy_ndays:   { label:'外資連續N日買超',           badge:'chip', params:[{key:'days',label:'天數',default:3,type:'number'}] },
+  inst_trust_buy_ndays:     { label:'投信連續N日買超',           badge:'chip', params:[{key:'days',label:'天數',default:3,type:'number'}] },
+  inst_3_buy_ndays:         { label:'三大法人連續N日買超',       badge:'chip', params:[{key:'days',label:'天數',default:3,type:'number'}] },
+  inst_net_sum_above:       { label:'近N日法人累計買超>X千股',   badge:'chip', params:[{key:'days',label:'天數',default:5,type:'number'},{key:'threshold',label:'千股',default:5000,type:'number'}] },
+  inst_foreign_sell_ndays:  { label:'外資連續N日賣超（警示）',   badge:'exit', params:[{key:'days',label:'天數',default:3,type:'number'}] },
 };
 
 const EXIT_COND_OPTIONS = [
@@ -548,7 +553,7 @@ const COND_CATS = {
   'K線型態':['candle_big_red','candle_long_lower_wick','candle_hammer','candle_inv_hammer','candle_bullish_engulfing','candle_harami','candle_morning_star','candle_three_soldiers','candle_belt_hold','candle_meeting_line','candle_doji','candle_shooting_star','candle_hanging_man','candle_bearish_engulfing','candle_evening_star','candle_three_crows'],
   '基本面': ['pe_below','pe_above','div_yield_above','market_cap_above','market_cap_below','inst_pct_above'],
   '融資券':  ['margin_increase','margin_decrease','short_decrease','short_increase','high_short_ratio','margin_continuous_up'],
-  '三大法人':['inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell','inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'],
+  '三大法人':['inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell','inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant','inst_foreign_buy_ndays','inst_trust_buy_ndays','inst_3_buy_ndays','inst_net_sum_above','inst_foreign_sell_ndays'],
 };
 
 let _pickerCat = '均線';
