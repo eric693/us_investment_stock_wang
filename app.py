@@ -3828,5 +3828,355 @@ import sys
 sys.modules[__name__].__dict__['_run_server_scan'] = _run_server_scan_with_exit
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  明日預測模組 — AI 分析師
+# ═══════════════════════════════════════════════════════════════════════════
+
+_PREDICT_SYSTEM_PROMPT = """你是一位精通台股技術分析與籌碼追蹤的專業交易員助理。
+你會收到使用者提供的個股代碼，系統會自動取得以下數據供你分析：
+
+【均線扣抵環境】
+- 20MA（月線）當前值與明日扣抵預估值
+- 最新收盤價 vs 明日扣抵價，判斷月線走向
+
+【五大起漲籌碼防禦指標】
+1. 量能結構：5MV 是否站上 20MV，且 20MV 走平或上揚
+2. 借券動向：借券賣出餘額是否連續減少（空方回補）
+3. 乖離位階：股價在 20MA 之上且乖離率 < 6%（剛轉強未過熱）
+4. 反彈幅度：從近期低點反彈 < 15%（仍處低檔初升段）
+5. 籌碼穩定度：當沖比 < 40%（主力籌碼穩定）
+
+【量價動能】KD、MACD/OSC、成交量爆量或窒息量
+
+【法人籌碼】外資、投信、自營商買賣超
+
+【近期新聞】可能影響股價的事件
+
+分析時請嚴格依照以下格式輸出：
+
+### 📊 綜合趨勢評估
+- **基本基調：** 偏多上攻 / 震盪洗盤 / 偏空回檔
+- **五大起漲指標符合度：** X/5 項（列出符合與不符合的項目）
+
+### 📈 明日實戰預測
+- **預估漲跌幅區間：** 例如 +1.5% ~ +3.0%
+- **多方攻擊關鍵壓力價：** [價位 + 技術依據]
+- **空方防守關鍵支撐價：** [價位 + 技術依據]
+
+### 🔍 各指標詳細分析
+（逐項說明均線扣抵、量能、借券、KD、MACD、法人）
+
+### ⚠️ 主要風險
+（列出 2-3 點需要注意的風險）
+
+回應請使用繁體中文，語氣專業簡潔。若使用者沒有提供股票代碼，請主動詢問並引導使用者輸入台股代碼（如 2330、0050 等）。"""
+
+
+def _fetch_predict_data(code: str) -> dict:
+    """取得股票分析所需的所有數據"""
+    import urllib.request, datetime
+    ticker_yf = code + '.TW'
+    result = {'code': code, 'ticker': ticker_yf, 'error': None}
+
+    try:
+        stock = yf.Ticker(ticker_yf)
+        hist = stock.history(period='6mo', interval='1d')
+        if hist.empty:
+            ticker_yf = code + '.TWO'
+            stock = yf.Ticker(ticker_yf)
+            hist = stock.history(period='6mo', interval='1d')
+        if hist.empty:
+            result['error'] = f'找不到股票代碼 {code}'
+            return result
+
+        close = hist['Close']
+        high  = hist['High']
+        low   = hist['Low']
+        vol   = hist['Volume']
+        n     = len(close)
+
+        price = float(close.iloc[-1])
+        result['price'] = round(price, 2)
+        result['name']  = tw_cn_name(code, code)
+
+        # ── 均線 ──────────────────────────────────────────────
+        ma5  = float(close.rolling(5,  min_periods=1).mean().iloc[-1])
+        ma20 = float(close.rolling(20, min_periods=1).mean().iloc[-1])
+        ma60 = float(close.rolling(60, min_periods=1).mean().iloc[-1])
+        result['ma5']  = round(ma5,  2)
+        result['ma20'] = round(ma20, 2)
+        result['ma60'] = round(ma60, 2)
+
+        # ── 月線扣抵（明日扣抵值 = 21 個交易日前的收盤價）──────
+        deduct_idx = max(0, n - 21)
+        deduct_price = float(close.iloc[deduct_idx])
+        result['ma20_deduct_price'] = round(deduct_price, 2)
+        result['ma20_trend'] = '上揚（支撐防護罩）' if price > deduct_price else '下彎（蓋頭壓力）'
+
+        # ── 乖離率 ────────────────────────────────────────────
+        bias = (price - ma20) / ma20 * 100 if ma20 else 0
+        result['bias20'] = round(bias, 2)
+
+        # ── 反彈幅度（近 60 日低點）─────────────────────────
+        recent_low = float(low.iloc[-60:].min()) if n >= 60 else float(low.min())
+        rebound_pct = (price - recent_low) / recent_low * 100 if recent_low else 0
+        result['recent_low']   = round(recent_low, 2)
+        result['rebound_pct']  = round(rebound_pct, 2)
+
+        # ── 成交量均量 ────────────────────────────────────────
+        mv5  = float(vol.rolling(5,  min_periods=1).mean().iloc[-1])
+        mv20 = float(vol.rolling(20, min_periods=1).mean().iloc[-1])
+        mv20_prev = float(vol.rolling(20, min_periods=1).mean().iloc[-2]) if n > 2 else mv20
+        result['mv5']  = int(mv5)
+        result['mv20'] = int(mv20)
+        result['vol_structure'] = '健康（5MV>20MV，20MV上揚）' if mv5 > mv20 and mv20 >= mv20_prev else (
+            '普通（5MV>20MV，但20MV走平或下彎）' if mv5 > mv20 else '偏弱（5MV<20MV）')
+
+        # ── KD ───────────────────────────────────────────────
+        kd = calc_kd(high, low, close)
+        k_val = round(float(kd['K'].iloc[-1]), 1)
+        d_val = round(float(kd['D'].iloc[-1]), 1)
+        result['k'] = k_val
+        result['d'] = d_val
+        if k_val < 20:   kd_status = '低檔築底'
+        elif k_val > 80: kd_status = '高檔鈍化'
+        elif k_val > d_val and float(kd['K'].iloc[-2]) <= float(kd['D'].iloc[-2]):
+            kd_status = '黃金交叉（剛發生）'
+        elif k_val < d_val and float(kd['K'].iloc[-2]) >= float(kd['D'].iloc[-2]):
+            kd_status = '死亡交叉（剛發生）'
+        else:
+            kd_status = f'{'K>D 上行' if k_val > d_val else 'K<D 下行'}'
+        result['kd_status'] = kd_status
+
+        # ── MACD ─────────────────────────────────────────────
+        macd_d = calc_macd(close)
+        macd_v = round(float(macd_d['macd'].iloc[-1]), 3)
+        dea_v  = round(float(macd_d['signal'].iloc[-1]), 3)
+        osc    = round(float(macd_d['histogram'].iloc[-1]), 3)
+        osc_prev = round(float(macd_d['histogram'].iloc[-2]), 3)
+        result['macd']    = macd_v
+        result['dea']     = dea_v
+        result['osc']     = osc
+        result['osc_trend'] = '紅柱放大（動能增強）' if osc > 0 and osc > osc_prev else (
+            '紅柱收縮（動能減弱）' if osc > 0 else (
+            '綠柱收縮（賣壓減少）' if osc < 0 and osc > osc_prev else '綠柱放大（賣壓增加）'))
+
+        # ── 近日最高最低（支撐壓力）─────────────────────────
+        result['high_20d'] = round(float(high.iloc[-20:].max()), 2)
+        result['low_20d']  = round(float(low.iloc[-20:].min()), 2)
+        result['high_5d']  = round(float(high.iloc[-5:].max()), 2)
+        result['low_5d']   = round(float(low.iloc[-5:].min()), 2)
+
+        # ── 法人資料 ─────────────────────────────────────────
+        inst = _get_tw_inst(code)
+        if inst:
+            result['inst'] = {
+                'foreign_net': inst.get('foreign_net', 0),
+                'trust_net':   inst.get('trust_net', 0),
+                'dealer_net':  inst.get('dealer_net', 0),
+                'total_net':   inst.get('total_net', 0),
+            }
+        else:
+            result['inst'] = None
+
+        # ── 融資融券 ─────────────────────────────────────────
+        mg = _get_tw_margin(code)
+        if mg:
+            margin_chg = mg['margin_today'] - mg['margin_prev']
+            short_chg  = mg['short_today']  - mg['short_prev']
+            result['margin'] = {
+                'margin_today': mg['margin_today'],
+                'margin_chg':   margin_chg,
+                'short_today':  mg['short_today'],
+                'short_chg':    short_chg,
+            }
+        else:
+            result['margin'] = None
+
+        # ── 借券賣出餘額（近 5 日趨勢）──────────────────────
+        try:
+            today_str = datetime.date.today().strftime('%Y%m%d')
+            url = f'https://www.twse.com.tw/rwd/zh/shortselling/TWT93U?date={today_str}&response=json'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            short_data = {}
+            if raw.get('stat') == 'OK':
+                for row in raw.get('data', []):
+                    if str(row[0]).strip() == code:
+                        short_data = {
+                            'lending_balance': safe_float(str(row[6]).replace(',','')),
+                            'lending_sell':    safe_float(str(row[4]).replace(',','')),
+                        }
+                        break
+            result['lending'] = short_data if short_data else None
+        except Exception:
+            result['lending'] = None
+
+        # ── 當沖比 ────────────────────────────────────────────
+        try:
+            today_str = datetime.date.today().strftime('%Y%m%d')
+            url = f'https://www.twse.com.tw/rwd/zh/dayTrading/TWTB4U?date={today_str}&response=json'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            day_trade_ratio = None
+            if raw.get('stat') == 'OK':
+                for row in raw.get('data', []):
+                    if str(row[0]).strip() == code:
+                        total_vol    = safe_float(str(row[2]).replace(',',''))
+                        daytrade_vol = safe_float(str(row[4]).replace(',',''))
+                        if total_vol > 0:
+                            day_trade_ratio = round(daytrade_vol / total_vol * 100, 1)
+                        break
+            result['day_trade_ratio'] = day_trade_ratio
+        except Exception:
+            result['day_trade_ratio'] = None
+
+    except Exception as e:
+        result['error'] = str(e)
+
+    return result
+
+
+def _build_analysis_context(data: dict) -> str:
+    """將股票數據轉成給 Claude 的分析文字"""
+    if data.get('error'):
+        return f"錯誤：{data['error']}"
+
+    code  = data['code']
+    name  = data.get('name', code)
+    price = data.get('price', 0)
+    lines = [f"## {name}（{code}）股票分析數據", f"最新收盤價：{price}"]
+
+    # 月線扣抵
+    lines.append(f"\n### 【月線扣抵環境】")
+    lines.append(f"- 20MA 當前值：{data.get('ma20', 'N/A')}")
+    lines.append(f"- 明日扣抵估算價：{data.get('ma20_deduct_price', 'N/A')}")
+    lines.append(f"- 月線方向研判：{data.get('ma20_trend', 'N/A')}")
+    lines.append(f"- 乖離率（20MA）：{data.get('bias20', 'N/A')}%（{'✅ <6%，未過熱' if abs(data.get('bias20', 99)) < 6 else '⚠️ >6%，注意過熱'}）")
+
+    # 五大指標
+    lines.append(f"\n### 【五大起漲籌碼指標】")
+    lines.append(f"1. 量能結構：{data.get('vol_structure', 'N/A')}（5MV={data.get('mv5',0):,} vs 20MV={data.get('mv20',0):,}）")
+
+    lending = data.get('lending')
+    if lending:
+        lines.append(f"2. 借券賣出餘額：今日 {lending.get('lending_balance', 'N/A'):,} 張（借券賣出：{lending.get('lending_sell', 'N/A'):,}）")
+    else:
+        lines.append(f"2. 借券資料：今日尚未取得或非交易時間")
+
+    rebound = data.get('rebound_pct', 0)
+    lines.append(f"3. 乖離位階：乖離 {data.get('bias20', 'N/A')}%（{'✅ 符合' if 0 < data.get('bias20', 99) < 6 else '❌ 不符合'}）")
+    lines.append(f"4. 反彈幅度：從近期低點 {data.get('recent_low', 'N/A')} 反彈 {rebound:.1f}%（{'✅ 符合 <15%' if rebound < 15 else '⚠️ 已超過15%'}）")
+
+    dtr = data.get('day_trade_ratio')
+    if dtr is not None:
+        lines.append(f"5. 當沖比：{dtr}%（{'✅ <40%，籌碼穩定' if dtr < 40 else '⚠️ ≥40%，籌碼較虛浮'}）")
+    else:
+        lines.append(f"5. 當沖比：今日尚未取得（非交易時間或資料延遲）")
+
+    # 技術指標
+    lines.append(f"\n### 【技術指標】")
+    lines.append(f"- KD：K={data.get('k','N/A')} / D={data.get('d','N/A')} → {data.get('kd_status','N/A')}")
+    lines.append(f"- MACD：{data.get('macd','N/A')} / DEA：{data.get('dea','N/A')}")
+    lines.append(f"- OSC 柱狀：{data.get('osc','N/A')} → {data.get('osc_trend','N/A')}")
+
+    # 支撐壓力
+    lines.append(f"\n### 【近期支撐壓力】")
+    lines.append(f"- 近 5 日最高：{data.get('high_5d','N/A')}（短線壓力）")
+    lines.append(f"- 近 20 日最高：{data.get('high_20d','N/A')}（中期壓力）")
+    lines.append(f"- 近 5 日最低：{data.get('low_5d','N/A')}（短線支撐）")
+    lines.append(f"- 近 20 日最低：{data.get('low_20d','N/A')}（中期支撐）")
+    lines.append(f"- MA5={data.get('ma5','N/A')} / MA20={data.get('ma20','N/A')} / MA60={data.get('ma60','N/A')}")
+
+    # 法人
+    inst = data.get('inst')
+    lines.append(f"\n### 【三大法人（今日）】")
+    if inst:
+        total = inst.get('total_net', 0)
+        lines.append(f"- 外資買賣超：{inst.get('foreign_net', 0):+,.0f} 張")
+        lines.append(f"- 投信買賣超：{inst.get('trust_net', 0):+,.0f} 張")
+        lines.append(f"- 自營商買賣超：{inst.get('dealer_net', 0):+,.0f} 張")
+        lines.append(f"- 三大合計：{total:+,.0f} 張（{'主力買超' if total > 0 else '主力賣超'}）")
+    else:
+        lines.append(f"- 今日法人資料尚未取得")
+
+    # 融資融券
+    mg = data.get('margin')
+    lines.append(f"\n### 【融資融券】")
+    if mg:
+        lines.append(f"- 融資餘額：{mg.get('margin_today', 0):,.0f}（{'增加' if mg.get('margin_chg', 0) > 0 else '減少'} {abs(mg.get('margin_chg', 0)):,.0f}）")
+        lines.append(f"- 融券餘額：{mg.get('short_today', 0):,.0f}（{'增加' if mg.get('short_chg', 0) > 0 else '減少'} {abs(mg.get('short_chg', 0)):,.0f}）")
+    else:
+        lines.append(f"- 今日融資融券資料尚未取得")
+
+    return '\n'.join(lines)
+
+
+@app.route('/predict')
+def predict_page():
+    return render_template('predict.html')
+
+
+@app.route('/api/predict/analyze/<code>')
+def predict_analyze(code):
+    """取得股票分析數據（JSON）"""
+    code = code.strip().upper().replace('.TW', '').replace('.TWO', '')
+    data = _fetch_predict_data(code)
+    return jsonify(data)
+
+
+@app.route('/api/predict/chat', methods=['POST'])
+def predict_chat():
+    """Claude AI 聊天端點（串流）"""
+    import anthropic
+    from flask import Response, stream_with_context
+
+    body = request.get_json(force=True)
+    messages   = body.get('messages', [])
+    api_key    = body.get('api_key', '').strip()
+    stock_code = body.get('stock_code', '').strip()
+
+    if not api_key:
+        return jsonify({'error': '請先設定 Claude API Key'}), 400
+    if not messages:
+        return jsonify({'error': '訊息不可為空'}), 400
+
+    # 如果有股票代碼，自動取得數據並注入到最後一條 user 訊息前
+    context_msg = None
+    if stock_code:
+        code = stock_code.upper().replace('.TW', '').replace('.TWO', '')
+        data = _fetch_predict_data(code)
+        ctx  = _build_analysis_context(data)
+        context_msg = {
+            'role':    'user',
+            'content': f"請根據以下最新數據分析這支股票：\n\n{ctx}\n\n請依照你的分析框架給出明日漲跌預測。"
+        }
+
+    def generate():
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            send_msgs = list(messages)
+            if context_msg:
+                send_msgs = [context_msg] + [m for m in messages if m.get('role') != 'user' or m != messages[-1]]
+                send_msgs = [context_msg] + messages[1:] if len(messages) > 1 else [context_msg]
+
+            with client.messages.stream(
+                model='claude-opus-4-8',
+                max_tokens=2048,
+                system=_PREDICT_SYSTEM_PROMPT,
+                messages=send_msgs,
+            ) as stream:
+                for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+            yield "data: [DONE]\n\n"
+        except anthropic.AuthenticationError:
+            yield f"data: {json.dumps({'error': 'API Key 無效，請重新確認'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6001, debug=False)

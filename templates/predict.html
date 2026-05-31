@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 明日預測分析師</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+/* ── Layout ─────────────────────────────────────────────────── */
+.predict-wrap {
+  display: flex;
+  height: calc(100vh - 56px);
+  gap: 0;
+  overflow: hidden;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+.predict-sidebar {
+  width: 280px;
+  min-width: 220px;
+  background: var(--card-bg);
+  border-right: 1px solid var(--card-bd);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  gap: 16px;
+  overflow-y: auto;
+}
+.sidebar-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-dim);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+.sidebar-section { display: flex; flex-direction: column; gap: 8px; }
+.sidebar-label { font-size: 0.72rem; color: var(--text-dim); font-weight: 700; }
+.sidebar-input {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s;
+}
+.sidebar-input:focus { border-color: var(--accent); }
+.sidebar-input[type="password"] { letter-spacing: 2px; }
+.analyze-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 9px 0;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: opacity .15s;
+  width: 100%;
+}
+.analyze-btn:hover { opacity: .85; }
+.analyze-btn:disabled { opacity: .4; cursor: default; }
+
+/* ── Stock metrics panel ─────────────────────────────────────── */
+.metrics-panel {
+  background: #060c18;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+.metrics-panel.visible { display: flex; }
+.metric-row { display: flex; justify-content: space-between; align-items: center; }
+.metric-label { font-size: 0.68rem; color: var(--text-dim); }
+.metric-val { font-size: 0.75rem; font-weight: 700; color: var(--text); }
+.metric-val.green { color: #26d96b; }
+.metric-val.red   { color: #ff4e4e; }
+.metric-val.yellow { color: #f4c542; }
+.metrics-title {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--accent);
+  margin-bottom: 4px;
+  letter-spacing: .4px;
+}
+.metrics-divider {
+  border: none;
+  border-top: 1px solid var(--card-bd);
+  margin: 4px 0;
+}
+
+/* ── Quick stocks ─────────────────────────────────────────────── */
+.quick-stocks { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick-stock {
+  background: #0d1628;
+  border: 1px solid var(--card-bd);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: var(--text-mid);
+  cursor: pointer;
+  transition: all .15s;
+}
+.quick-stock:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Chat area ───────────────────────────────────────────────── */
+.predict-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.chat-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--card-bd);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chat-header-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem;
+}
+.chat-header-name { font-size: 0.95rem; font-weight: 800; color: var(--text); }
+.chat-header-sub  { font-size: 0.7rem; color: var(--text-dim); margin-top: 1px; }
+.chat-status {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  padding: 3px 10px;
+  background: #0a1020;
+  border-radius: 20px;
+  border: 1px solid var(--card-bd);
+}
+.chat-status.ready { color: #26d96b; border-color: #26d96b30; background: #26d96b10; }
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Messages ────────────────────────────────────────────────── */
+.msg {
+  display: flex;
+  gap: 10px;
+  max-width: 860px;
+}
+.msg.user { flex-direction: row-reverse; align-self: flex-end; }
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.8rem; font-weight: 800; flex-shrink: 0;
+}
+.msg.assistant .msg-avatar {
+  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
+  color: #fff;
+}
+.msg.user .msg-avatar {
+  background: #1a2540;
+  color: var(--text-mid);
+  border: 1px solid var(--card-bd);
+}
+.msg-bubble {
+  background: var(--card-bg);
+  border: 1px solid var(--card-bd);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  color: var(--text);
+  max-width: 100%;
+}
+.msg.user .msg-bubble {
+  background: #0d1e40;
+  border-color: #1a3060;
+}
+
+/* ── Markdown in bubble ──────────────────────────────────────── */
+.msg-bubble h3 { font-size: 0.88rem; font-weight: 800; color: var(--accent); margin: 12px 0 6px; }
+.msg-bubble h3:first-child { margin-top: 0; }
+.msg-bubble strong { color: #e2e8f0; }
+.msg-bubble ul, .msg-bubble ol { padding-left: 18px; margin: 4px 0; }
+.msg-bubble li { margin: 2px 0; }
+.msg-bubble code {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.78rem;
+  font-family: monospace;
+}
+.msg-bubble hr { border-color: var(--card-bd); margin: 10px 0; }
+
+/* ── Welcome screen ──────────────────────────────────────────── */
+.chat-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 40px;
+}
+.welcome-icon {
+  font-size: 3rem;
+  background: linear-gradient(135deg, #3d8ef8 0%, #7c4dff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.welcome-title { font-size: 1.3rem; font-weight: 800; color: var(--text); }
+.welcome-sub   { font-size: 0.84rem; max-width: 480px; line-height: 1.6; }
+.welcome-steps {
+  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+  margin-top: 8px;
+}
+.welcome-step {
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.75rem;
+  color: var(--text-mid);
+  display: flex; align-items: center; gap: 8px;
+}
+.welcome-step-num {
+  width: 22px; height: 22px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 800; flex-shrink: 0;
+}
+
+/* ── Input bar ───────────────────────────────────────────────── */
+.chat-input-area {
+  padding: 16px 20px;
+  border-top: 1px solid var(--card-bd);
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.chat-input-wrap {
+  flex: 1;
+  background: #0a1020;
+  border: 1px solid var(--card-bd);
+  border-radius: 10px;
+  display: flex;
+  align-items: flex-end;
+  padding: 10px 14px;
+  gap: 8px;
+  transition: border-color .15s;
+}
+.chat-input-wrap:focus-within { border-color: var(--accent); }
+#chatInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  resize: none;
+  max-height: 120px;
+  font-family: inherit;
+}
+#chatInput::placeholder { color: var(--text-dim); }
+.send-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: opacity .15s;
+  flex-shrink: 0;
+}
+.send-btn:hover { opacity: .85; }
+.send-btn:disabled { opacity: .35; cursor: default; }
+.send-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+/* ── Typing indicator ────────────────────────────────────────── */
+.typing-indicator {
+  display: flex; gap: 4px; align-items: center; padding: 4px 0;
+}
+.typing-indicator span {
+  width: 6px; height: 6px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  animation: bounce 1.2s infinite;
+}
+.typing-indicator span:nth-child(2) { animation-delay: .2s; }
+.typing-indicator span:nth-child(3) { animation-delay: .4s; }
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+/* ── Indicator badge ─────────────────────────────────────────── */
+.indicator-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.badge-green  { background: #26d96b15; color: #26d96b; border: 1px solid #26d96b30; }
+.badge-red    { background: #ff4e4e15; color: #ff4e4e; border: 1px solid #ff4e4e30; }
+.badge-yellow { background: #f4c54215; color: #f4c542; border: 1px solid #f4c54230; }
+
+@media (max-width: 640px) {
+  .predict-sidebar { width: 0; padding: 0; overflow: hidden; display: none; }
+  .predict-sidebar.mobile-open { display: flex; width: 100%; position: absolute; z-index: 100; height: 100%; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Navbar ───────────────────────────────────────────────────────── -->
+<nav class="navbar">
+  <div class="nav-brand">📈 股票分析平台</div>
+  <div class="nav-links">
+    <a href="/"      class="nav-link">美股</a>
+    <a href="/tw"    class="nav-link">台股</a>
+    <a href="/screener" class="nav-link">篩選器</a>
+    <a href="/portfolio" class="nav-link">投資組合</a>
+    <a href="/predict" class="nav-link active">AI 預測</a>
+  </div>
+</nav>
+
+<div class="predict-wrap">
+
+  <!-- ── Sidebar ───────────────────────────────────────────────────── -->
+  <aside class="predict-sidebar" id="sidebar">
+    <div class="sidebar-title">⚙️ 分析設定</div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Claude API Key</div>
+      <input type="password" class="sidebar-input" id="apiKeyInput"
+             placeholder="sk-ant-..." autocomplete="off">
+      <div style="font-size:0.65rem;color:var(--text-dim);line-height:1.4;">
+        Key 僅存於瀏覽器，不會上傳至伺服器
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">股票代碼（台股）</div>
+      <input type="text" class="sidebar-input" id="stockInput"
+             placeholder="例：2330、0050" maxlength="10"
+             style="text-transform:uppercase">
+      <button class="analyze-btn" id="analyzeBtn" onclick="analyzeStock()">
+        🔍 取得數據並分析
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">快速選擇</div>
+      <div class="quick-stocks">
+        <div class="quick-stock" onclick="setStock('2330')">2330 台積電</div>
+        <div class="quick-stock" onclick="setStock('2317')">2317 鴻海</div>
+        <div class="quick-stock" onclick="setStock('2454')">2454 聯發科</div>
+        <div class="quick-stock" onclick="setStock('2382')">2382 廣達</div>
+        <div class="quick-stock" onclick="setStock('2308')">2308 台達電</div>
+        <div class="quick-stock" onclick="setStock('0050')">0050 元大台50</div>
+        <div class="quick-stock" onclick="setStock('2603')">2603 長榮</div>
+        <div class="quick-stock" onclick="setStock('2881')">2881 富邦金</div>
+      </div>
+    </div>
+
+    <!-- Metrics panel -->
+    <div class="metrics-panel" id="metricsPanel">
+      <div class="metrics-title" id="metricsTitle">— 即時指標 —</div>
+      <div id="metricsContent"></div>
+    </div>
+  </aside>
+
+  <!-- ── Chat area ──────────────────────────────────────────────────── -->
+  <section class="predict-chat">
+    <div class="chat-header">
+      <div class="chat-header-icon">🤖</div>
+      <div>
+        <div class="chat-header-name">AI 明日預測分析師</div>
+        <div class="chat-header-sub">整合月扣抵、籌碼、法人、技術指標，預判明日漲跌</div>
+      </div>
+      <div class="chat-status" id="chatStatus">待機中</div>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+      <!-- Welcome screen -->
+      <div class="chat-welcome" id="welcomeScreen">
+        <div class="welcome-icon">📊</div>
+        <div class="welcome-title">台股 AI 明日預測分析師</div>
+        <div class="welcome-sub">
+          整合月線扣抵、借券餘額、當沖比、三大法人、KD/MACD 等多維度指標，
+          由 Claude AI 幫你研判明日漲跌方向與關鍵價位。
+        </div>
+        <div class="welcome-steps">
+          <div class="welcome-step">
+            <div class="welcome-step-num">1</div>
+            輸入 Claude API Key
+          </div>
+          <div class="welcome-step">
+            <div class="welcome-step-num">2</div>
+            輸入台股代碼
+          </div>
+          <div class="welcome-step">
+            <div class="welcome-step-num">3</div>
+            點擊「取得數據並分析」
+          </div>
+          <div class="welcome-step">
+            <div class="welcome-step-num">4</div>
+            與 AI 深入討論
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-input-wrap">
+        <textarea id="chatInput" rows="1" placeholder="輸入問題，或點左側按鈕分析個股…"
+                  onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="送出">
+        <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+      </button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let messages = [];
+let isStreaming = false;
+let currentStockCode = '';
+let stockData = null;
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.onload = () => {
+  const saved = localStorage.getItem('claude_api_key');
+  if (saved) document.getElementById('apiKeyInput').value = saved;
+  document.getElementById('apiKeyInput').addEventListener('change', () => {
+    localStorage.setItem('claude_api_key', document.getElementById('apiKeyInput').value);
+  });
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function getApiKey()  { return document.getElementById('apiKeyInput').value.trim(); }
+function getStockCode() { return document.getElementById('stockInput').value.trim().toUpperCase(); }
+
+function setStock(code) {
+  document.getElementById('stockInput').value = code;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function setStatus(text, cls = '') {
+  const el = document.getElementById('chatStatus');
+  el.textContent = text;
+  el.className = 'chat-status ' + cls;
+}
+
+function scrollToBottom() {
+  const el = document.getElementById('chatMessages');
+  el.scrollTop = el.scrollHeight;
+}
+
+function hideWelcome() {
+  const w = document.getElementById('welcomeScreen');
+  if (w) w.style.display = 'none';
+}
+
+// ── Simple markdown renderer ───────────────────────────────────────────────
+function renderMarkdown(text) {
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/### (.+)/g, '<h3>$1</h3>')
+    .replace(/## (.+)/g,  '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.+)/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, s => '<ul>' + s + '</ul>')
+    .replace(/\n{2,}/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
+
+// ── Add message to chat ────────────────────────────────────────────────────
+function addMessage(role, content, streaming = false) {
+  hideWelcome();
+  const wrap = document.getElementById('chatMessages');
+
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = role === 'assistant' ? '🤖' : '👤';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  if (streaming) {
+    bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+    bubble.dataset.streaming = '1';
+  } else {
+    bubble.innerHTML = renderMarkdown(content);
+  }
+
+  div.appendChild(avatar);
+  div.appendChild(bubble);
+  wrap.appendChild(div);
+  scrollToBottom();
+  return bubble;
+}
+
+// ── Analyze stock ─────────────────────────────────────────────────────────
+async function analyzeStock() {
+  const key  = getApiKey();
+  const code = getStockCode();
+  if (!key)  { alert('請先輸入 Claude API Key'); return; }
+  if (!code) { alert('請輸入台股代碼'); return; }
+
+  currentStockCode = code;
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 取得數據中…';
+  setStatus('取得數據中…');
+
+  try {
+    const res  = await fetch(`/api/predict/analyze/${code}`);
+    const data = await res.json();
+    stockData  = data;
+
+    if (data.error) {
+      alert('取得數據失敗：' + data.error);
+      return;
+    }
+
+    // Update sidebar metrics
+    renderMetrics(data);
+
+    // Build initial analysis message
+    messages = [];
+    await sendAnalysis(code, data);
+
+  } catch(e) {
+    alert('網路錯誤：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 取得數據並分析';
+  }
+}
+
+// ── Render sidebar metrics ─────────────────────────────────────────────────
+function renderMetrics(d) {
+  const panel = document.getElementById('metricsPanel');
+  const title = document.getElementById('metricsTitle');
+  const cont  = document.getElementById('metricsContent');
+
+  title.textContent = `${d.name || d.code}（${d.code}）— NT$${d.price}`;
+
+  const priceCls = d.price > d.ma20 ? 'green' : 'red';
+  const biasCls  = Math.abs(d.bias20) < 6 ? 'green' : (d.bias20 > 10 ? 'red' : 'yellow');
+  const reboundCls = d.rebound_pct < 15 ? 'green' : 'yellow';
+  const dtrCls   = d.day_trade_ratio === null ? '' : (d.day_trade_ratio < 40 ? 'green' : 'red');
+
+  const rows = [
+    ['月線方向', d.ma20_trend || 'N/A', d.price > (d.ma20_deduct_price||0) ? 'green' : 'red'],
+    ['月線扣抵估價', `${d.ma20_deduct_price}`, ''],
+    ['乖離率(20MA)', `${d.bias20}%`, biasCls],
+    ['反彈幅度', `${d.rebound_pct?.toFixed(1)}%`, reboundCls],
+    ['當沖比', d.day_trade_ratio !== null ? `${d.day_trade_ratio}%` : '未取得', dtrCls],
+    ['量能結構', d.vol_structure ? d.vol_structure.split('（')[0] : 'N/A', d.vol_structure?.includes('健康') ? 'green' : 'yellow'],
+    ['KD', `K${d.k} / D${d.d}`, d.k < 30 ? 'green' : (d.k > 70 ? 'yellow' : '')],
+    ['MACD OSC', `${d.osc}`, d.osc > 0 ? 'green' : 'red'],
+  ];
+
+  if (d.inst) {
+    const total = d.inst.total_net;
+    rows.push(['三大法人', `${total > 0 ? '+' : ''}${total?.toLocaleString()}張`, total > 0 ? 'green' : 'red']);
+  }
+
+  cont.innerHTML = rows.map(([label, val, cls]) => `
+    <div class="metric-row">
+      <span class="metric-label">${label}</span>
+      <span class="metric-val ${cls}">${val}</span>
+    </div>
+  `).join('<hr class="metrics-divider">');
+
+  panel.classList.add('visible');
+}
+
+// ── Send initial analysis request ──────────────────────────────────────────
+async function sendAnalysis(code, data) {
+  const userText = `請幫我分析 ${data.name || code}（${code}），預測明日漲跌方向與關鍵價位。`;
+  addMessage('user', userText);
+  messages.push({ role: 'user', content: userText });
+
+  setStatus('AI 分析中…', '');
+  isStreaming = true;
+
+  const bubble = addMessage('assistant', '', true);
+
+  try {
+    const resp = await fetch('/api/predict/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key:    getApiKey(),
+        stock_code: code,
+        messages:   [{ role: 'user', content: userText }],
+      }),
+    });
+
+    await processStream(resp, bubble, userText);
+  } catch(e) {
+    bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
+  } finally {
+    isStreaming = false;
+    setStatus('待機中');
+    document.getElementById('sendBtn').disabled = false;
+  }
+}
+
+// ── Send chat message ──────────────────────────────────────────────────────
+async function sendMessage() {
+  if (isStreaming) return;
+  const input = document.getElementById('chatInput');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  const key = getApiKey();
+  if (!key) { alert('請先輸入 Claude API Key'); return; }
+
+  input.value = '';
+  input.style.height = 'auto';
+  hideWelcome();
+
+  addMessage('user', text);
+  messages.push({ role: 'user', content: text });
+
+  // Keep last 10 turns only
+  if (messages.length > 20) messages = messages.slice(-20);
+
+  setStatus('AI 思考中…');
+  isStreaming = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  const bubble = addMessage('assistant', '', true);
+
+  try {
+    const resp = await fetch('/api/predict/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key:    key,
+        stock_code: '',
+        messages:   messages,
+      }),
+    });
+
+    const fullText = await processStream(resp, bubble, text);
+    messages.push({ role: 'assistant', content: fullText });
+  } catch(e) {
+    bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
+  } finally {
+    isStreaming = false;
+    setStatus('待機中');
+    document.getElementById('sendBtn').disabled = false;
+  }
+}
+
+// ── Process SSE stream ─────────────────────────────────────────────────────
+async function processStream(resp, bubble, userText) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+  bubble.innerHTML = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') break;
+
+        try {
+          const obj = JSON.parse(payload);
+          if (obj.error) {
+            bubble.innerHTML = `<span style="color:#ff4e4e">❌ ${obj.error}</span>`;
+            return fullText;
+          }
+          if (obj.text) {
+            fullText += obj.text;
+            bubble.innerHTML = renderMarkdown(fullText);
+            scrollToBottom();
+          }
+        } catch(_) {}
+      }
+    }
+  } catch(e) {
+    bubble.innerHTML += `<br><span style="color:#f4c542">串流中斷</span>`;
+  }
+
+  return fullText;
+}
+</script>
+</body>
+</html>
