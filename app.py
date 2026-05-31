@@ -15,6 +15,23 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
+# ── 排程單一執行權（多 worker 下只讓一個 worker 跑背景排程）──────────────
+# gunicorn 會啟動多個 worker，每個都會 import 本模組並嘗試啟動背景迴圈。
+# 用檔案鎖確保「只有一個 worker」實際執行排程（避免重複推播、重複 API 花費）。
+_scheduler_lock_fh = None
+def _try_become_scheduler() -> bool:
+    global _scheduler_lock_fh
+    try:
+        import fcntl
+        fh = open('/tmp/us_inv_wang_scheduler.lock', 'w')
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _scheduler_lock_fh = fh   # 保留參考，鎖隨行程生命週期持有
+        return True
+    except Exception:
+        return False
+
+_IS_SCHEDULER = _try_become_scheduler()
+
 # ── Taiwan stock Chinese name cache ───────────────────────────────────
 _tw_name_cache: dict[str, str] = {}
 _tw_name_lock  = threading.Lock()
@@ -135,6 +152,8 @@ def _run_server_scan():
             print(f'[Monitor] scan {ticker}: {e}')
 
 def _server_scan_loop():
+    if not _IS_SCHEDULER:
+        return
     time.sleep(15)  # let app finish startup
     while True:
         try:
@@ -4869,8 +4888,10 @@ def _is_close_time() -> bool:
 
 
 def _agent_loop():
+    if not _IS_SCHEDULER:
+        return
     time.sleep(20)
-    print('[Agent] background loop started')
+    print('[Agent] background loop started (this worker is the scheduler)')
     while True:
         try:
             cfg = _load_agent_cfg()
