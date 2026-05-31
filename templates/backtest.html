@@ -107,6 +107,13 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 
 .bt-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
 .bt-empty { text-align: center; padding: 40px; color: var(--text-dim); }
+
+/* 手機版 */
+@media (max-width: 640px) {
+  .bt-wrap { padding: 16px 12px; }
+  .bt-field { min-width: 0 !important; flex: 1 1 140px; }
+  .bt-table { display: block; overflow-x: auto; white-space: nowrap; }
+}
 </style>
 </head>
 <body>

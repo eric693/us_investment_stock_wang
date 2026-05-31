@@ -138,6 +138,34 @@
 .toast.show { opacity:1;transform:translateY(0); }
 .toast.green { border-color:rgba(0,214,143,.4);color:var(--green); }
 .toast.red { border-color:rgba(232,70,70,.4);color:var(--red); }
+
+/* 截圖匯入 */
+.import-bar { background:linear-gradient(135deg,#0a1628,#0a1020);border:1px dashed var(--blue,#3d8ef8);border-radius:12px;padding:16px 18px;margin-bottom:16px; }
+.import-hint { font-size:0.82rem;color:var(--text);line-height:1.6; }
+.import-hint b { color:var(--blue,#3d8ef8); }
+.import-actions { display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap; }
+.import-paste { font-size:0.76rem;color:var(--text-dim); }
+.import-status { margin-top:8px;font-size:0.8rem;color:var(--text-dim); }
+.import-preview { margin-top:14px;border-top:1px solid var(--card-bd);padding-top:12px; }
+.import-preview-head { font-size:0.82rem;font-weight:800;color:var(--blue,#3d8ef8);margin-bottom:8px; }
+.import-table { width:100%;border-collapse:collapse; }
+.import-table th { font-size:0.72rem;color:var(--text-dim);text-align:left;padding:5px 6px;border-bottom:1px solid var(--card-bd);text-transform:uppercase;letter-spacing:.4px; }
+.import-table td { padding:5px 6px;border-bottom:1px solid rgba(21,32,48,.5); }
+.import-cell { background:#0a1320;border:1px solid var(--card-bd2);border-radius:6px;color:var(--text);padding:6px 8px;font-size:0.82rem;width:100%;outline:none; }
+.import-cell:focus { border-color:var(--blue,#3d8ef8); }
+.import-row-del { background:transparent;border:none;color:var(--red);cursor:pointer;font-size:0.95rem; }
+.import-preview-foot { display:flex;gap:10px;margin-top:12px; }
+
+/* 手機版 */
+@media (max-width: 640px) {
+  .pf-body { padding:14px 12px; }
+  .pf-tabs { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .pf-tab { white-space:nowrap; padding:10px 16px; }
+  .import-preview { overflow-x:auto; }
+  .import-table { min-width:460px; }
+  .import-actions { flex-direction:column; align-items:flex-start; }
+  #pieChart,#barChart { height:260px; }
+}
 </style>
 </head>
 <body>
@@ -189,6 +217,28 @@
       <button class="btn btn-primary btn-sm" onclick="openAddHoldingModal()">＋ 新增持倉</button>
       <button class="btn btn-ghost btn-sm" onclick="refreshPortfolioPrices()">↻ 更新報價</button>
       <span id="portUpdateTime" style="font-size:0.76rem;color:var(--text-dim);margin-left:6px;"></span>
+    </div>
+
+    <!-- 截圖匯入 -->
+    <div class="import-bar">
+      <div class="import-hint">一筆一筆輸入太慢？<b>把券商／看盤 App 的持倉截圖丟上來</b>，AI 自動讀出代碼、股數、成本，預覽確認後一鍵匯入。</div>
+      <div class="import-actions">
+        <button class="btn btn-primary btn-sm" id="importBtn" onclick="document.getElementById('holdingImgInput').click()">上傳截圖</button>
+        <span class="import-paste">或直接 Ctrl+V 貼上截圖、把圖拖進來也行</span>
+        <input type="file" id="holdingImgInput" accept="image/*" style="display:none" onchange="onHoldingImgPick(event)">
+      </div>
+      <div class="import-status" id="importStatus"></div>
+      <div class="import-preview" id="importPreview" style="display:none">
+        <div class="import-preview-head">AI 讀到以下持倉，請核對／修改後再匯入：</div>
+        <table class="import-table">
+          <thead><tr><th>代碼</th><th>名稱</th><th>股數</th><th>成本價</th><th>市場</th><th></th></tr></thead>
+          <tbody id="importTbody"></tbody>
+        </table>
+        <div class="import-preview-foot">
+          <button class="btn btn-primary btn-sm" onclick="confirmImportHoldings()">確認匯入</button>
+          <button class="btn btn-ghost btn-sm" onclick="cancelImport()">取消</button>
+        </div>
+      </div>
     </div>
 
     <!-- Summary Cards -->
@@ -352,8 +402,34 @@ function loadData() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || { groups: {}, holdings: [] }; }
   catch { return { groups: {}, holdings: [] }; }
 }
-function saveData(d) { localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
+function saveData(d) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(d));
+  // 同步到伺服器，讓持倉跨裝置／換瀏覽器都看得到
+  fetch('/api/portfolio/data', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ groups: d.groups || {}, holdings: d.holdings || [] }),
+  }).catch(() => { /* 離線時仍保有 localStorage */ });
+}
 function getData() { return loadData(); }
+
+// 開頁時與伺服器同步（跨裝置來源）：
+//   伺服器有資料 → 覆蓋本機；伺服器空但本機有 → 首次遷移，把本機推上伺服器；都空或離線 → 沿用本機
+async function syncFromServer() {
+  try {
+    const r = await fetch('/api/portfolio/data');
+    if (!r.ok) return;
+    const srv = await r.json();
+    const srvHas   = (srv.holdings && srv.holdings.length) || (srv.groups && Object.keys(srv.groups).length);
+    const local    = loadData();
+    const localHas = (local.holdings && local.holdings.length) || (local.groups && Object.keys(local.groups).length);
+    if (srvHas) {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ groups: srv.groups || {}, holdings: srv.holdings || [] }));
+    } else if (localHas) {
+      saveData(local);   // 把既有的本機持倉遷移上伺服器
+    }
+  } catch (e) { /* 離線：沿用本機資料 */ }
+}
 
 // ═══════════════════════════════════════════
 // TOAST
@@ -926,9 +1002,130 @@ function fmtK(v) { const n=parseFloat(v); if(isNaN(n)) return '--'; if(Math.abs(
 function fmtNum(v) { return parseFloat(v).toLocaleString('en-US'); }
 
 // ═══════════════════════════════════════════
+// 截圖匯入持倉
+// ═══════════════════════════════════════════
+let _importRows = [];
+
+function _importStatus(msg, color) {
+  const el = document.getElementById('importStatus');
+  el.textContent = msg || '';
+  el.style.color = color || 'var(--text-dim)';
+}
+function onHoldingImgPick(e) {
+  const f = e.target.files && e.target.files[0];
+  if (f) handleHoldingImage(f);
+  e.target.value = '';
+}
+function _fileToDataUrl(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+async function handleHoldingImage(file) {
+  if (!file.type.startsWith('image/')) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
+  const btn = document.getElementById('importBtn');
+  btn.disabled = true;
+  _importStatus('AI 解析截圖中，請稍候…');
+  document.getElementById('importPreview').style.display = 'none';
+  try {
+    const dataUrl = await _fileToDataUrl(file);
+    const r = await fetch('/api/parse-holdings-image', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ image: dataUrl }),
+    });
+    const j = await r.json();
+    if (!r.ok) { _importStatus(j.error || '解析失敗', 'var(--red)'); return; }
+    if (!j.holdings || !j.holdings.length) { _importStatus('沒有從截圖讀到任何持倉，換一張更清楚的圖試試', 'var(--red)'); return; }
+    _importRows = j.holdings;
+    renderImportPreview();
+    _importStatus(`AI 讀到 ${j.holdings.length} 檔持倉，請核對後匯入`, 'var(--green)');
+  } catch (err) {
+    _importStatus('上傳失敗：' + err, 'var(--red)');
+  } finally {
+    btn.disabled = false;
+  }
+}
+function renderImportPreview() {
+  const tb = document.getElementById('importTbody');
+  tb.innerHTML = _importRows.map((h, i) => `
+    <tr>
+      <td><input class="import-cell" style="width:100px" value="${esc(h.code)}" oninput="_importRows[${i}].code=this.value.toUpperCase()"></td>
+      <td><input class="import-cell" value="${esc(h.name)}" oninput="_importRows[${i}].name=this.value"></td>
+      <td><input class="import-cell" style="width:100px" type="number" value="${h.shares||0}" oninput="_importRows[${i}].shares=this.value"></td>
+      <td><input class="import-cell" style="width:100px" type="number" step="0.01" value="${h.buy_price||0}" oninput="_importRows[${i}].buy_price=this.value"></td>
+      <td><input class="import-cell" style="width:56px" value="${esc(h.market)}" oninput="_importRows[${i}].market=this.value.toUpperCase()"></td>
+      <td><button class="import-row-del" title="移除這列" onclick="_importRows.splice(${i},1);renderImportPreview()">✕</button></td>
+    </tr>`).join('');
+  document.getElementById('importPreview').style.display = _importRows.length ? 'block' : 'none';
+}
+function confirmImportHoldings() {
+  const rows = _importRows.filter(h => (h.code||'').trim());
+  if (!rows.length) { _importStatus('沒有可匯入的持倉', 'var(--red)'); return; }
+  const d = getData();
+  let added = 0;
+  for (const h of rows) {
+    const ticker = (h.code||'').trim().toUpperCase();
+    const shares = parseFloat(h.shares) || 0;
+    const cost   = parseFloat(h.buy_price) || 0;
+    const idx = d.holdings.findIndex(x => x.ticker === ticker);
+    const entry = { ticker, shares, costPrice: cost, buyDate: '', group: '', note: '截圖匯入' };
+    if (idx >= 0) d.holdings[idx] = { ...d.holdings[idx], ...entry };
+    else d.holdings.push(entry);
+    added++;
+  }
+  saveData(d);
+  _importRows = [];
+  document.getElementById('importPreview').style.display = 'none';
+  _importStatus(`已匯入 ${added} 檔持倉`, 'var(--green)');
+  showToast(`已匯入 ${added} 檔持倉`, 'green');
+  renderPortfolio();
+  refreshPortfolioPrices();
+}
+function cancelImport() {
+  _importRows = [];
+  document.getElementById('importPreview').style.display = 'none';
+  _importStatus('');
+}
+window.addEventListener('paste', (e) => {
+  const sec = document.getElementById('tab-portfolio');
+  if (!sec || !sec.classList.contains('active')) return;
+  const items = (e.clipboardData || window.clipboardData)?.items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) { handleHoldingImage(f); e.preventDefault(); }
+      return;
+    }
+  }
+});
+(function initImportDnd() {
+  const bar = document.querySelector('#tab-portfolio .import-bar');
+  if (!bar) return;
+  ['dragover','dragenter'].forEach(ev => bar.addEventListener(ev, e => {
+    e.preventDefault(); bar.style.borderColor = 'var(--green)';
+  }));
+  ['dragleave','drop'].forEach(ev => bar.addEventListener(ev, e => {
+    e.preventDefault(); bar.style.borderColor = '';
+  }));
+  bar.addEventListener('drop', e => {
+    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
+    if (f) handleHoldingImage(f);
+  });
+})();
+
+// ═══════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════
-renderGroups();
+(async function initPortfolio() {
+  await syncFromServer();            // 先拿伺服器資料
+  renderGroups();
+  const active = document.querySelector('.pf-section.active');
+  if (active && active.id === 'tab-portfolio') { renderPortfolio(); refreshPortfolioPrices(); }
+})();
 </script>
 </body>
 </html>

@@ -182,6 +182,12 @@
 .wc-desc   { font-size:0.74rem; color:var(--text-dim); line-height:1.45; min-height:1.2em; }
 .wc-tag    { font-size:0.68rem; }
 .wc-skeleton .wc-name, .wc-skeleton .wc-desc { opacity:.5; }
+
+/* 手機版 */
+@media (max-width: 640px) {
+  .etf-top-row { grid-template-columns: 1fr; }
+  .div-history-table, .tech-table, .qtable { display: block; overflow-x: auto; white-space: nowrap; }
+}
 </style>
 </head>
 <body>

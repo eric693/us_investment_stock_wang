@@ -179,6 +179,45 @@
 }
 .form-add-btn:hover { opacity: .85; }
 
+/* ── 截圖匯入 ─────────────────────────────────────────────────────── */
+.import-bar {
+  background: linear-gradient(135deg, #0a1628, #0a1020);
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.import-hint { font-size: 0.78rem; color: var(--text); line-height: 1.6; }
+.import-hint b { color: var(--accent); }
+.import-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.import-btn {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 8px 18px; font-size: 0.8rem; font-weight: 800; cursor: pointer;
+}
+.import-btn:hover { opacity: .88; }
+.import-btn:disabled { opacity: .5; cursor: default; }
+.import-paste { font-size: 0.74rem; color: var(--text-dim); }
+.import-status { margin-top: 8px; font-size: 0.76rem; color: var(--text-dim); }
+.import-preview { margin-top: 14px; border-top: 1px solid var(--card-bd); padding-top: 12px; }
+.import-preview-head { font-size: 0.78rem; font-weight: 800; color: var(--accent); margin-bottom: 8px; }
+.import-table { width: 100%; border-collapse: collapse; }
+.import-table th {
+  font-size: 0.7rem; color: var(--text-dim); text-align: left; padding: 4px 6px;
+  border-bottom: 1px solid var(--card-bd); text-transform: uppercase; letter-spacing: .4px;
+}
+.import-table td { padding: 5px 6px; border-bottom: 1px solid rgba(21,32,48,.5); }
+.import-cell {
+  background: #0a1020; border: 1px solid var(--card-bd); border-radius: 5px;
+  color: var(--text); padding: 5px 7px; font-size: 0.78rem; width: 100%; outline: none;
+}
+.import-cell:focus { border-color: var(--accent); }
+.import-row-del { background: transparent; border: none; color: var(--red); cursor: pointer; font-size: 0.95rem; }
+.import-preview-foot { display: flex; gap: 10px; margin-top: 12px; }
+.import-cancel {
+  background: transparent; border: 1px solid var(--card-bd2); color: var(--text-dim);
+  border-radius: 6px; padding: 7px 16px; font-size: 0.78rem; font-weight: 700; cursor: pointer;
+}
+
 /* ── Analyze button ───────────────────────────────────────────────── */
 .analyze-row-btn {
   background: transparent;
@@ -397,9 +436,15 @@ select.scan-input { width: 120px; }
 @keyframes blink { 0%,60%,100%{opacity:1} 30%{opacity:.2} }
 
 @media (max-width: 768px) {
-  .agent-wrap { grid-template-columns: 1fr; }
-  .agent-sidebar { display: none; }
+  /* 手機改為自然堆疊、可整頁捲動，側欄改顯示在上方（不再隱藏設定） */
+  .agent-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto; height: auto; }
+  .agent-sidebar { grid-row: auto; border-right: none; border-bottom: 1px solid var(--card-bd); }
+  .agent-main { overflow: visible; }
+  .agent-panel { overflow-y: visible; }
   .add-holding-form { grid-template-columns: 1fr 1fr; }
+  /* 寬表格在手機可水平捲動，不撐破版面 */
+  .holdings-table, .import-table { display: block; overflow-x: auto; white-space: nowrap; }
+  .import-actions { flex-direction: column; align-items: flex-start; }
 }
 </style>
 </head>
@@ -496,6 +541,28 @@ select.scan-input { width: 120px; }
 
     <!-- Holdings tab -->
     <div class="agent-panel active" id="tab-holdings">
+      <!-- 截圖匯入 -->
+      <div class="import-bar">
+        <div class="import-hint">一筆一筆輸入太慢？<b>把券商／看盤 App 的持倉截圖丟上來</b>，AI 自動讀出代碼、股數、成本，預覽確認後一鍵匯入。</div>
+        <div class="import-actions">
+          <button class="import-btn" id="importBtn" onclick="document.getElementById('holdingImgInput').click()">上傳截圖</button>
+          <span class="import-paste">或直接 Ctrl+V 貼上截圖、把圖拖進來也行</span>
+          <input type="file" id="holdingImgInput" accept="image/*" style="display:none" onchange="onHoldingImgPick(event)">
+        </div>
+        <div class="import-status" id="importStatus"></div>
+        <div class="import-preview" id="importPreview" style="display:none">
+          <div class="import-preview-head">AI 讀到以下持倉，請核對／修改後再匯入：</div>
+          <table class="import-table">
+            <thead><tr><th>代碼</th><th>名稱</th><th>股數</th><th>成本價</th><th>市場</th><th></th></tr></thead>
+            <tbody id="importTbody"></tbody>
+          </table>
+          <div class="import-preview-foot">
+            <button class="form-add-btn" onclick="confirmImportHoldings()">確認匯入</button>
+            <button class="import-cancel" onclick="cancelImport()">取消</button>
+          </div>
+        </div>
+      </div>
+
       <div class="add-holding-form">
         <input type="text"   class="form-input" id="h-code"      placeholder="代碼（如 2330）" style="text-transform:uppercase">
         <input type="number" class="form-input" id="h-buyprice"  placeholder="買入價格">
@@ -1014,6 +1081,131 @@ async function runNow() {
     btn.textContent = '立即全面分析並推播';
   }
 }
+
+// ── 截圖匯入持倉 ────────────────────────────────────────────────────────────
+let _importRows = [];
+
+function _importStatus(msg, color) {
+  const el = document.getElementById('importStatus');
+  el.textContent = msg || '';
+  el.style.color = color || 'var(--text-dim)';
+}
+
+function onHoldingImgPick(e) {
+  const f = e.target.files && e.target.files[0];
+  if (f) handleHoldingImage(f);
+  e.target.value = '';
+}
+
+function _fileToDataUrl(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function handleHoldingImage(file) {
+  if (!file.type.startsWith('image/')) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
+  const btn = document.getElementById('importBtn');
+  btn.disabled = true;
+  _importStatus('AI 解析截圖中，請稍候…');
+  document.getElementById('importPreview').style.display = 'none';
+  try {
+    const dataUrl = await _fileToDataUrl(file);
+    const apiKey  = (document.getElementById('claudeKeyInput')?.value || '').trim();
+    const r = await fetch('/api/parse-holdings-image', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ image: dataUrl, api_key: apiKey }),
+    });
+    const j = await r.json();
+    if (!r.ok) { _importStatus(j.error || '解析失敗', 'var(--red)'); return; }
+    if (!j.holdings || !j.holdings.length) { _importStatus('沒有從截圖讀到任何持倉，換一張更清楚的圖試試', 'var(--red)'); return; }
+    _importRows = j.holdings;
+    renderImportPreview();
+    _importStatus(`AI 讀到 ${j.holdings.length} 檔持倉，請核對後匯入`, 'var(--green)');
+  } catch (err) {
+    _importStatus('上傳失敗：' + err, 'var(--red)');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderImportPreview() {
+  const tb = document.getElementById('importTbody');
+  tb.innerHTML = _importRows.map((h, i) => `
+    <tr>
+      <td><input class="import-cell" style="width:90px" value="${h.code || ''}" oninput="_importRows[${i}].code=this.value.toUpperCase()"></td>
+      <td><input class="import-cell" value="${(h.name || '').replace(/"/g,'&quot;')}" oninput="_importRows[${i}].name=this.value"></td>
+      <td><input class="import-cell" style="width:90px" type="number" value="${h.shares || 0}" oninput="_importRows[${i}].shares=this.value"></td>
+      <td><input class="import-cell" style="width:90px" type="number" step="0.01" value="${h.buy_price || 0}" oninput="_importRows[${i}].buy_price=this.value"></td>
+      <td><input class="import-cell" style="width:54px" value="${h.market || ''}" oninput="_importRows[${i}].market=this.value.toUpperCase()"></td>
+      <td><button class="import-row-del" title="移除這列" onclick="_importRows.splice(${i},1);renderImportPreview()">✕</button></td>
+    </tr>`).join('');
+  document.getElementById('importPreview').style.display = _importRows.length ? 'block' : 'none';
+}
+
+async function confirmImportHoldings() {
+  const rows = _importRows.filter(h => (h.code || '').trim());
+  if (!rows.length) { _importStatus('沒有可匯入的持倉', 'var(--red)'); return; }
+  _importStatus(`匯入中… 0/${rows.length}`);
+  let done = 0;
+  for (const h of rows) {
+    try {
+      await fetch('/api/agent/holdings', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          code: (h.code || '').trim().toUpperCase(),
+          buy_price: parseFloat(h.buy_price) || 0,
+          shares: parseInt(h.shares) || 0,
+          date: '',
+        }),
+      });
+    } catch (e) { /* 略過單筆失敗 */ }
+    done++;
+    _importStatus(`匯入中… ${done}/${rows.length}`);
+  }
+  _importRows = [];
+  document.getElementById('importPreview').style.display = 'none';
+  _importStatus(`已匯入 ${done} 檔持倉`, 'var(--green)');
+  await loadHoldings();
+}
+
+function cancelImport() {
+  _importRows = [];
+  document.getElementById('importPreview').style.display = 'none';
+  _importStatus('');
+}
+
+// 貼上（Ctrl+V）與拖曳：僅在持倉分頁作用
+window.addEventListener('paste', (e) => {
+  if (!document.getElementById('tab-holdings')?.classList.contains('active')) return;
+  const items = (e.clipboardData || window.clipboardData)?.items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) { handleHoldingImage(f); e.preventDefault(); }
+      return;
+    }
+  }
+});
+(function initImportDnd() {
+  const bar = document.querySelector('#tab-holdings .import-bar');
+  if (!bar) return;
+  ['dragover','dragenter'].forEach(ev => bar.addEventListener(ev, e => {
+    e.preventDefault(); bar.style.borderColor = 'var(--green)';
+  }));
+  ['dragleave','drop'].forEach(ev => bar.addEventListener(ev, e => {
+    e.preventDefault(); bar.style.borderColor = '';
+  }));
+  bar.addEventListener('drop', e => {
+    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
+    if (f) handleHoldingImage(f);
+  });
+})();
 </script>
 </body>
 </html>

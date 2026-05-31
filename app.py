@@ -177,13 +177,20 @@ threading.Thread(target=_server_scan_loop, daemon=True).start()
 
 # ── TTL Cache ─────────────────────────────────────────────────────────
 _CACHE = {}
+_cache_lock = threading.Lock()
 
 def _cache_get(key):
     e = _CACHE.get(key)
     return e['v'] if e and time.time() < e['t'] else None
 
 def _cache_set(key, val, ttl=300):
-    _CACHE[key] = {'v': val, 't': time.time() + ttl}
+    now = time.time()
+    with _cache_lock:
+        _CACHE[key] = {'v': val, 't': now + ttl}
+        # 順手清掉過期項目，避免長跑的 gunicorn 下無限增長
+        if len(_CACHE) > 50:
+            for k in [k for k, e in _CACHE.items() if e['t'] <= now]:
+                _CACHE.pop(k, None)
 
 # ── Helpers ───────────────────────────────────────────────────────
 def safe_float(v, default=0.0):
@@ -191,7 +198,7 @@ def safe_float(v, default=0.0):
         if v is None: return default
         f = float(v)
         return default if (np.isnan(f) or np.isinf(f)) else f
-    except:
+    except Exception:
         return default
 
 def last_valid(series, default=0.0):
@@ -199,13 +206,13 @@ def last_valid(series, default=0.0):
     try:
         s = series.dropna()
         return safe_float(s.iloc[-1]) if len(s) else default
-    except:
+    except Exception:
         return default
 
 def safe_int(v, default=0):
     try:
         return int(safe_float(v))
-    except:
+    except Exception:
         return default
 
 # ── Technical Indicators ──────────────────────────────────────────
@@ -867,7 +874,7 @@ def get_market():
                 result[key] = {'v': round(safe_float(h['Close'].iloc[-1]), 2), 'pct': 0}
             else:
                 result[key] = None
-        except:
+        except Exception:
             result[key] = None
 
     vix_val = (result.get('vix') or {}).get('v', 20)
@@ -906,7 +913,7 @@ def get_fundamentals(ticker):
                     for lbl in ['Capital Expenditure', 'Capital Expenditures']:
                         if lbl in cf.index:
                             fcf_val = ocf_val + safe_float(cf.loc[lbl].iloc[0]); break
-        except:
+        except Exception:
             pass
 
         # ── Institutional holders ──
@@ -931,7 +938,7 @@ def get_fundamentals(ticker):
                                 'pct':    pct_disp,
                                 'value':  round(val / 1e9, 2),
                             })
-        except:
+        except Exception:
             pass
 
         # ── Earnings date ──
@@ -941,7 +948,7 @@ def get_fundamentals(ticker):
             if cal is not None and not cal.empty:
                 col = cal.columns[0]
                 earnings_date = str(col.date()) if hasattr(col, 'date') else str(col)[:10]
-        except:
+        except Exception:
             pass
 
         mktcap = safe_float(info.get('marketCap', 0))
@@ -1081,7 +1088,7 @@ def get_stock(ticker):
                             if v > 0:
                                 quarterly.append({'period': str(col)[:7], 'revenue': round(v / 1e6, 1)})
                         break
-        except:
+        except Exception:
             pass
 
         def clean(lst):
@@ -1090,7 +1097,7 @@ def get_stock(ticker):
                 try:
                     f = float(x)
                     res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 4))
-                except:
+                except Exception:
                     res.append(None)
             return res
 
@@ -1445,6 +1452,35 @@ def portfolio():
     return render_template('portfolio.html')
 
 
+PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), 'portfolio_data.json')
+_portfolio_lock = threading.Lock()
+
+
+@app.route('/api/portfolio/data', methods=['GET', 'POST'])
+def portfolio_data_api():
+    """投資組合資料的伺服器端持久化，讓持倉跨裝置同步（單一使用者）。"""
+    if request.method == 'GET':
+        try:
+            with open(PORTFOLIO_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            data = {'groups': {}, 'holdings': []}
+        return jsonify({
+            'groups':   data.get('groups', {}) or {},
+            'holdings': data.get('holdings', []) or [],
+        })
+
+    body = request.get_json(force=True) or {}
+    data = {
+        'groups':   body.get('groups', {}) or {},
+        'holdings': body.get('holdings', []) or [],
+    }
+    with _portfolio_lock:
+        with open(PORTFOLIO_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/compare')
 def compare_stocks():
     tickers_raw = request.args.get('tickers', '')
@@ -1571,7 +1607,7 @@ def get_tw_market():
                 result[key] = {'v': round(safe_float(h['Close'].iloc[-1]), 2), 'pct': 0}
             else:
                 result[key] = None
-        except:
+        except Exception:
             result[key] = None
 
     vix_val = (result.get('vix') or {}).get('v', 20)
@@ -1697,7 +1733,7 @@ def get_tw_stock(ticker):
                             if v > 0:
                                 quarterly.append({'period': str(col)[:7], 'revenue': round(v / 1e6, 1)})
                         break
-        except:
+        except Exception:
             pass
 
         # ETF extra data
@@ -1735,7 +1771,7 @@ def get_tw_stock(ticker):
                 try:
                     f = float(x)
                     res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 4))
-                except:
+                except Exception:
                     res.append(None)
             return res
 
@@ -1896,7 +1932,7 @@ def get_tw_fundamentals(ticker):
                     for lbl in ['Capital Expenditure', 'Capital Expenditures']:
                         if lbl in cf.index:
                             fcf_val = ocf_val + safe_float(cf.loc[lbl].iloc[0]); break
-        except:
+        except Exception:
             pass
 
         top_holders = []
@@ -1916,7 +1952,7 @@ def get_tw_fundamentals(ticker):
                             pct_disp = round(pct * 100, 2) if pct < 1 else round(pct, 2)
                             top_holders.append({'holder': holder[:35], 'pct': pct_disp,
                                                 'value': round(val / 1e9, 2)})
-        except:
+        except Exception:
             pass
 
         earnings_date = None
@@ -1925,7 +1961,7 @@ def get_tw_fundamentals(ticker):
             if cal is not None and not cal.empty:
                 col = cal.columns[0]
                 earnings_date = str(col.date()) if hasattr(col, 'date') else str(col)[:10]
-        except:
+        except Exception:
             pass
 
         mktcap    = safe_float(info.get('marketCap', 0))
@@ -1987,7 +2023,7 @@ def get_tw_etf(ticker):
                     elif avg_gap < 200: div_frequency = '半年配'
                     else:               div_frequency = '年配'
                     div_months = sorted(list(set([d.month for d in dates[:8]])))
-        except:
+        except Exception:
             pass
 
         # ── Top holdings ──
@@ -2006,7 +2042,7 @@ def get_tw_etf(ticker):
                     if pct > 1: pct /= 100
                     if name and name != 'nan':
                         holdings.append({'symbol': sym[:10], 'name': name[:30], 'pct': round(pct * 100, 2)})
-        except:
+        except Exception:
             pass
 
         # ── NAV & premium/discount ──
@@ -2022,15 +2058,15 @@ def get_tw_etf(ticker):
             if val:
                 try:
                     locals()[attr] = str(pd.Timestamp(val, unit='s').date())
-                except:
+                except Exception:
                     locals()[attr] = None
 
         if last_div_date:
             try: last_div_date = str(pd.Timestamp(last_div_date, unit='s').date())
-            except: last_div_date = None
+            except Exception: last_div_date = None
         if ex_div_date:
             try: ex_div_date = str(pd.Timestamp(ex_div_date, unit='s').date())
-            except: ex_div_date = None
+            except Exception: ex_div_date = None
 
         # ── Annual yield calculation from history ──
         annual_div = 0
@@ -2229,7 +2265,7 @@ def get_tw_intraday(ticker):
                 try:
                     f = float(x)
                     res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 4))
-                except:
+                except Exception:
                     res.append(None)
             return res
 
@@ -2269,7 +2305,7 @@ def get_tw_hourly(ticker):
                 try:
                     f = float(x)
                     res.append(None if (np.isnan(f) or np.isinf(f)) else round(f, 2))
-                except:
+                except Exception:
                     res.append(None)
             return res
 
@@ -3382,7 +3418,7 @@ def _eval_condition(hist, info, cond, extra=None):
                 try:
                     if safe_float(wr.iloc[i-1]) < thr <= safe_float(wr.iloc[i]):
                         return True, f'WR({period}) 穿越{thr} 現值{safe_float(wr.iloc[-1]):.1f}'
-                except: pass
+                except Exception: pass
             return False, f'WR({period}) = {safe_float(wr.iloc[-1]):.1f} 未穿越{thr}'
 
         elif ctype == 'cci_oversold':
@@ -3401,7 +3437,7 @@ def _eval_condition(hist, info, cond, extra=None):
                 try:
                     if safe_float(cc_s.iloc[i-1]) < thr <= safe_float(cc_s.iloc[i]):
                         return True, f'CCI({period}) 穿越{thr} 現值{safe_float(cc_s.iloc[-1]):.0f}'
-                except: pass
+                except Exception: pass
             return False, f'CCI({period}) = {safe_float(cc_s.iloc[-1]):.0f} 未穿越{thr}'
 
         elif ctype == 'adx_strong_trend':
@@ -3627,7 +3663,7 @@ def _eval_condition(hist, info, cond, extra=None):
                     try:
                         if k.iloc[i-1] < d_.iloc[i-1] and k.iloc[i] > d_.iloc[i]:
                             return True, f'週KD({kn}) 金叉 K={safe_float(k.iloc[-1]):.1f}'
-                    except: pass
+                    except Exception: pass
                 return False, f'週KD({kn}) 無金叉 K={safe_float(k.iloc[-1]):.1f}'
 
             elif ctype == 'weekly_macd_golden_cross':
@@ -3638,7 +3674,7 @@ def _eval_condition(hist, info, cond, extra=None):
                     try:
                         if wm.iloc[i-1] < ws.iloc[i-1] and wm.iloc[i] > ws.iloc[i]:
                             return True, f'週MACD金叉 DIF={safe_float(wm.iloc[-1]):.2f}'
-                    except: pass
+                    except Exception: pass
                 return False, f'週MACD無金叉 DIF={safe_float(wm.iloc[-1]):.2f}'
 
             elif ctype == 'weekly_rsi_cross_above':
@@ -3650,7 +3686,7 @@ def _eval_condition(hist, info, cond, extra=None):
                     try:
                         if safe_float(wr.iloc[i-1]) < thr <= safe_float(wr.iloc[i]):
                             return True, f'週RSI穿越{thr} RSI={safe_float(wr.iloc[-1]):.1f}'
-                    except: pass
+                    except Exception: pass
                 return False, f'週RSI={safe_float(wr.iloc[-1]):.1f} 未穿越{thr}'
 
             elif ctype == 'monthly_kd_oversold':
@@ -4515,7 +4551,6 @@ def predict_chat():
             client = anthropic.Anthropic(api_key=api_key)
             send_msgs = list(messages)
             if context_msg:
-                send_msgs = [context_msg] + [m for m in messages if m.get('role') != 'user' or m != messages[-1]]
                 send_msgs = [context_msg] + messages[1:] if len(messages) > 1 else [context_msg]
 
             with client.messages.stream(
@@ -4534,6 +4569,109 @@ def predict_chat():
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+_PARSE_HOLDINGS_PROMPT = """你是持倉截圖解析器。使用者上傳的是券商 App／看盤軟體的持倉（庫存）截圖。
+請辨識畫面中每一檔股票，輸出「純 JSON 陣列」，不要任何說明文字、不要 markdown 程式碼框。
+
+每個元素格式：
+{"code": "股票代碼", "name": "名稱", "shares": 股數整數, "buy_price": 成本均價數字, "market": "TW 或 US"}
+
+規則：
+- code：台股只保留數字代碼（例如 2330），美股用英文代碼（例如 AAPL、NVDA）。
+- market：台股填 "TW"，美股填 "US"。無法判斷時，純數字代碼視為 TW、英文字母代碼視為 US。
+- shares：填「股數」。若截圖單位是「張」，請換算成股數（1 張 = 1000 股）；若顯示零股就照數字。看不到就填 0。
+- buy_price：成本價／均價／買入價。看不到就填 0。
+- name：看得到就填，看不到填空字串。
+- 只輸出實際看得到的持倉，不要捏造。畫面沒有任何持倉時輸出 []。"""
+
+
+@app.route('/api/parse-holdings-image', methods=['POST'])
+def parse_holdings_image_api():
+    """用 Claude 視覺解析持倉截圖，回傳結構化持倉清單供前端預覽。"""
+    import anthropic
+    import base64 as _b64
+    import re as _re
+
+    body     = request.get_json(force=True) or {}
+    data_url = (body.get('image') or '').strip()
+    api_key  = (body.get('api_key') or '').strip() or _agent_api_key()
+
+    if not api_key:
+        return jsonify({'error': '尚未設定 Claude API Key，請先到 AI Agent 頁設定金鑰'}), 400
+    if not data_url:
+        return jsonify({'error': '沒有收到圖片'}), 400
+
+    # 解析 data URL：data:image/png;base64,xxxx
+    m = _re.match(r'data:(image/[a-zA-Z+]+);base64,(.+)$', data_url, _re.DOTALL)
+    if m:
+        media_type, b64data = m.group(1), m.group(2)
+    else:
+        media_type, b64data = 'image/png', data_url
+    media_type = media_type.lower()
+    if media_type == 'image/jpg':
+        media_type = 'image/jpeg'
+    if media_type not in ('image/png', 'image/jpeg', 'image/gif', 'image/webp'):
+        media_type = 'image/png'
+
+    # 大小保護：Claude 單張圖上限約 5MB（base64 後）
+    if len(b64data) > 7_000_000:
+        return jsonify({'error': '圖片太大，請壓縮或裁切後再上傳（建議 < 5MB）'}), 400
+
+    try:
+        # 驗證 base64 可解碼
+        _b64.b64decode(b64data, validate=True)
+    except Exception:
+        return jsonify({'error': '圖片資料無效，請重新上傳'}), 400
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-opus-4-8',
+            max_tokens=2048,
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'image', 'source': {
+                        'type': 'base64', 'media_type': media_type, 'data': b64data}},
+                    {'type': 'text', 'text': _PARSE_HOLDINGS_PROMPT},
+                ],
+            }],
+        )
+        raw = ''.join(b.text for b in resp.content if getattr(b, 'type', '') == 'text').strip()
+    except anthropic.AuthenticationError:
+        return jsonify({'error': 'Claude API Key 無效，請重新確認'}), 400
+    except Exception as e:
+        return jsonify({'error': f'AI 解析失敗：{e}'}), 500
+
+    # 從回覆中擷取 JSON 陣列
+    arr_match = _re.search(r'\[.*\]', raw, _re.DOTALL)
+    if not arr_match:
+        return jsonify({'error': '無法從截圖辨識出持倉，請換一張更清楚的圖', 'raw': raw[:300]}), 422
+    try:
+        parsed = json.loads(arr_match.group(0))
+    except Exception:
+        return jsonify({'error': '解析結果格式異常，請重試', 'raw': raw[:300]}), 422
+
+    holdings = []
+    for item in parsed if isinstance(parsed, list) else []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get('code', '')).strip().upper().replace('.TW', '').replace('.TWO', '')
+        if not code:
+            continue
+        market = str(item.get('market', '')).strip().upper()
+        if market not in ('TW', 'US'):
+            market = 'TW' if code.isdigit() else 'US'
+        holdings.append({
+            'code':      code,
+            'name':      str(item.get('name', '')).strip()[:40],
+            'shares':    safe_int(item.get('shares', 0)),
+            'buy_price': safe_float(item.get('buy_price', 0)),
+            'market':    market,
+        })
+
+    return jsonify({'holdings': holdings, 'count': len(holdings)})
 
 
 # ═══════════════════════════════════════════════════════════════════════════

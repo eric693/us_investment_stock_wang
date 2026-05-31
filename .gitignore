@@ -8,3 +8,4 @@ __pycache__/
 monitor_config.json
 strategies.json
 agent_config.json
+portfolio_data.json
