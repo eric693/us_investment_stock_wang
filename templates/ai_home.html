@@ -200,6 +200,16 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
 .send:hover { opacity: .85; } .send:disabled { opacity: .35; cursor: default; }
 .send svg { width: 17px; height: 17px; fill: #fff; }
+.attach { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 9px; width: 40px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; color: var(--text-mid); }
+.attach:hover { border-color: var(--accent); color: var(--accent); }
+.attach svg { width: 18px; height: 18px; }
+.img-preview { display: flex; align-items: center; gap: 8px; padding: 8px 16px 0;
+  font-size: 0.72rem; color: var(--text-mid); }
+.img-preview img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--card-bd); }
+.img-remove { color: #ff6b6b; cursor: pointer; margin-left: 4px; }
+.img-remove:hover { text-decoration: underline; }
+.bubble img.uploaded { max-width: 220px; border-radius: 8px; margin-top: 6px; border: 1px solid var(--card-bd); display: block; }
 
 .nokey-banner { background: #3a2410; border: 1px solid #6b4a10; color: #e8c84a;
   font-size: 0.74rem; padding: 8px 14px; margin: 10px 16px 0; border-radius: 7px; display: none; }
@@ -281,8 +291,18 @@ body { margin: 0; background: var(--bg); color: var(--text); }
       </div>
     </div>
 
+    <div id="imgPreview" class="img-preview" style="display:none">
+      <img id="imgThumb" alt="預覽">
+      <span id="imgName"></span>
+      <span class="img-remove" onclick="clearImage()">移除</span>
+    </div>
     <div class="chat-input">
-      <textarea id="chatInput" rows="1" placeholder="例如：幫我找低價剛起漲的 AI 伺服器概念股…"
+      <input type="file" id="imgInput" accept="image/*" style="display:none" onchange="onImagePick(event)">
+      <button class="attach" id="attachBtn" onclick="document.getElementById('imgInput').click()" title="上傳K線圖/截圖">
+        <svg viewBox="0 0 24 24"><path d="M16.5 6.5l-7 7a2.5 2.5 0 003.54 3.54l7-7a4.5 4.5 0 00-6.36-6.36l-7 7a6.5 6.5 0 009.2 9.2l6.3-6.3"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <textarea id="chatInput" rows="1" placeholder="輸入需求，或上傳K線圖讓 AI 判讀…"
                 onkeydown="onKey(event)" oninput="autoGrow(this)"></textarea>
       <button class="send" id="sendBtn" onclick="send()">
         <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
@@ -304,6 +324,39 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 let messages = [];
 let streaming = false;
 let scopeHint = '';
+let pendingImage = null;   // {data: base64, mediaType}
+
+// ── Image upload ──────────────────────────────────────────────────
+function onImagePick(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      // 縮放到最大寬 1200px，降低 payload 與符合 vision 建議
+      const maxW = 1200;
+      const scale = Math.min(1, maxW / img.width);
+      const cw = Math.round(img.width * scale), ch = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = cw; canvas.height = ch;
+      canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      pendingImage = { mediaType: 'image/jpeg', data: dataUrl.split(',')[1] };
+      document.getElementById('imgThumb').src = dataUrl;
+      document.getElementById('imgName').textContent = file.name;
+      document.getElementById('imgPreview').style.display = 'flex';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+}
+
+function clearImage() {
+  pendingImage = null;
+  document.getElementById('imgPreview').style.display = 'none';
+}
 
 window.onload = () => {
   loadMarket();
@@ -474,11 +527,32 @@ async function send() {
   if (streaming) return;
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !pendingImage) return;
+
+  // 建立 user 訊息：有圖片時用 content blocks
+  let content;
+  if (pendingImage) {
+    content = [];
+    if (text) content.push({ type: 'text', text });
+    content.push({ type: 'image', source: {
+      type: 'base64', media_type: pendingImage.mediaType, data: pendingImage.data } });
+  } else {
+    content = text;
+  }
+
   input.value = ''; input.style.height = 'auto';
 
-  addMsg('user').textContent = text;
-  messages.push({ role: 'user', content: text });
+  const ub = addMsg('user');
+  ub.textContent = text || '（圖片）';
+  if (pendingImage) {
+    const im = document.createElement('img');
+    im.className = 'uploaded';
+    im.src = `data:${pendingImage.mediaType};base64,${pendingImage.data}`;
+    ub.appendChild(im);
+  }
+  clearImage();
+
+  messages.push({ role: 'user', content });
   if (messages.length > 16) messages = messages.slice(-16);
 
   streaming = true;
