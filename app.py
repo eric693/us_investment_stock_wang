@@ -175,22 +175,62 @@ def _server_scan_loop():
 
 threading.Thread(target=_server_scan_loop, daemon=True).start()
 
-# ── TTL Cache ─────────────────────────────────────────────────────────
+# ── TTL Cache（L1 記憶體 + L2 SQLite 跨 worker 共用）─────────────────────
+# gunicorn 多 worker 各有自己的記憶體，L2 讓昂貴查詢只需被某一個 worker 抓一次。
+# 所有 L2 操作都包在 try/except，任何問題都會自動退回「純記憶體」＝原本行為。
+import sqlite3 as _sqlite3
 _CACHE = {}
 _cache_lock = threading.Lock()
+_CACHE_DB = os.path.join(os.path.dirname(__file__), 'cache.sqlite')
+
+def _cache_db_init():
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, exp REAL)')
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+_cache_db_init()
 
 def _cache_get(key):
     e = _CACHE.get(key)
-    return e['v'] if e and time.time() < e['t'] else None
+    if e and time.time() < e['t']:
+        return e['v']
+    # L2：SQLite（跨 worker 共用）
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        row  = conn.execute('SELECT v, exp FROM cache WHERE k=?', (key,)).fetchone()
+        conn.close()
+        if row and time.time() < row[1]:
+            val = json.loads(row[0])
+            _CACHE[key] = {'v': val, 't': row[1]}   # 回填 L1
+            return val
+    except Exception:
+        pass
+    return None
 
 def _cache_set(key, val, ttl=300):
-    now = time.time()
+    now = time.time(); exp = now + ttl
     with _cache_lock:
-        _CACHE[key] = {'v': val, 't': now + ttl}
+        _CACHE[key] = {'v': val, 't': exp}
         # 順手清掉過期項目，避免長跑的 gunicorn 下無限增長
         if len(_CACHE) > 50:
             for k in [k for k, e in _CACHE.items() if e['t'] <= now]:
                 _CACHE.pop(k, None)
+    # L2：只寫可乾淨序列化的值；不可序列化就僅留 L1（等同原行為）
+    try:
+        payload = json.dumps(val, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        conn.execute('INSERT OR REPLACE INTO cache (k, v, exp) VALUES (?, ?, ?)', (key, payload, exp))
+        if now % 20 < 1:   # 偶爾清掉過期列
+            conn.execute('DELETE FROM cache WHERE exp < ?', (now,))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
 
 # ── Helpers ───────────────────────────────────────────────────────
 def safe_float(v, default=0.0):

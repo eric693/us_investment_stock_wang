@@ -9,3 +9,6 @@ monitor_config.json
 strategies.json
 agent_config.json
 portfolio_data.json
+cache.sqlite
+cache.sqlite-wal
+cache.sqlite-shm
