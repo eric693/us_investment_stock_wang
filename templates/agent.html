@@ -635,7 +635,10 @@ async function loadConfig() {
   const r = await fetch('/api/agent/config');
   const c = await r.json();
   document.getElementById('enabledToggle').checked = c.enabled;
-  document.getElementById('lineTokenInput').value  = c.line_token || '';
+  // line_token 後端已遮罩(***xxxx);顯示為提示、輸入留空,留空送出代表沿用原值
+  const lt = document.getElementById('lineTokenInput');
+  lt.value = '';
+  if (c.line_token) lt.placeholder = c.line_token;
   document.getElementById('lineUserInput').value   = c.line_user_id || '';
   document.getElementById('priceMin').value        = c.scan_price_min || 10;
   document.getElementById('priceMax').value        = c.scan_price_max || 200;
@@ -651,9 +654,9 @@ async function loadConfig() {
 
 async function saveConfig() {
   const key = document.getElementById('claudeKeyInput').value.trim();
+  const lineTok = document.getElementById('lineTokenInput').value.trim();
   const body = {
     enabled:       document.getElementById('enabledToggle').checked,
-    line_token:    document.getElementById('lineTokenInput').value.trim(),
     line_user_id:  document.getElementById('lineUserInput').value.trim(),
     scan_price_min: +document.getElementById('priceMin').value,
     scan_price_max: +document.getElementById('priceMax').value,
@@ -661,6 +664,8 @@ async function saveConfig() {
     scan_universe:  document.getElementById('scanUniverse').value,
   };
   if (key && !key.startsWith('***')) body.claude_api_key = key;
+  // 只有輸入了新的(非遮罩)token 才送出;留空 = 沿用伺服器既有 token
+  if (lineTok && !lineTok.startsWith('***')) body.line_token = lineTok;
   await fetch('/api/agent/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   updateStatusBar(body.enabled, null);
 }

@@ -5257,20 +5257,26 @@ def agent_config_api():
     if request.method == 'GET':
         cfg = _load_agent_cfg()
         safe = dict(cfg)
+        # 機密欄位一律遮罩，避免任何人讀取設定就拿到金鑰／推播 token
         if safe.get('claude_api_key'):
             safe['claude_api_key'] = '***' + safe['claude_api_key'][-4:]
+        if safe.get('line_token'):
+            safe['line_token'] = '***' + safe['line_token'][-4:]
         return jsonify(safe)
 
     body = request.get_json(force=True)
     cfg  = _load_agent_cfg()
 
-    for field in ['enabled', 'line_token', 'line_user_id',
+    for field in ['enabled', 'line_user_id',
                   'scan_price_min', 'scan_price_max', 'scan_min_score', 'scan_universe']:
         if field in body:
             cfg[field] = body[field]
 
-    if body.get('claude_api_key') and not body['claude_api_key'].startswith('***'):
-        cfg['claude_api_key'] = body['claude_api_key']
+    # 機密欄位：只有收到「非遮罩」的新值才覆寫，避免把已存的金鑰／token 洗成 ***
+    for secret in ['claude_api_key', 'line_token']:
+        val = body.get(secret)
+        if val and not str(val).startswith('***'):
+            cfg[secret] = val
 
     _save_agent_cfg(cfg)
     return jsonify({'ok': True})
