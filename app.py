@@ -32,6 +32,17 @@ def _try_become_scheduler() -> bool:
 
 _IS_SCHEDULER = _try_become_scheduler()
 
+# ── 去除 emoji（使用者偏好無 emoji；作為 system prompt 之外的保底）──────────
+import re as _re
+_EMOJI_RE = _re.compile(
+    '[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF'
+    '\U0001F1E6-\U0001F1FF\U0000FE00-\U0000FE0F\U00002190-\U000021FF\U00002300-\U000023FF]',
+    flags=_re.UNICODE)
+def _strip_emoji(text: str) -> str:
+    if not text:
+        return text
+    return _EMOJI_RE.sub('', text)
+
 # ── Taiwan stock Chinese name cache ───────────────────────────────────
 _tw_name_cache: dict[str, str] = {}
 _tw_name_lock  = threading.Lock()
@@ -4514,7 +4525,7 @@ def predict_chat():
                 messages=send_msgs,
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': text})}\n\n"
+                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
             yield "data: [DONE]\n\n"
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'error': 'API Key 無效，請重新確認'})}\n\n"
@@ -4847,6 +4858,7 @@ def _agent_notify(cfg: dict, title: str, body: str):
     """Send LINE notification and log it."""
     token   = cfg.get('line_token', '')
     user_id = cfg.get('line_user_id', '')
+    body    = _strip_emoji(body)
     msg     = f'{title}\n{body}'
 
     if token and user_id:
@@ -5115,7 +5127,7 @@ def agent_analyze_api(code):
                 messages=[{'role': 'user', 'content': prompt}],
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': text})}\n\n"
+                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
             yield 'data: [DONE]\n\n'
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -5146,7 +5158,7 @@ def agent_chat_api():
                 messages=msgs,
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': text})}\n\n"
+                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
             yield 'data: [DONE]\n\n'
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'error': 'API Key 無效'})}\n\n"
@@ -5962,11 +5974,11 @@ def ai_chat():
                     messages=convo,
                 )
 
-                # 串流輸出本輪的文字內容
+                # 串流輸出本輪的文字內容（去除 emoji 以符合使用者偏好）
                 text_blocks = [b for b in resp.content if b.type == 'text']
                 for tb in text_blocks:
                     if tb.text:
-                        yield f"data: {json.dumps({'text': tb.text})}\n\n"
+                        yield f"data: {json.dumps({'text': _strip_emoji(tb.text)})}\n\n"
 
                 if resp.stop_reason != 'tool_use':
                     break
