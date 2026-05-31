@@ -754,8 +754,8 @@ async function sendMessage() {
   } else {
     content = text;
   }
-  messages.push({ role: 'user', content });
-  const imgTurnIdx = img ? messages.length - 1 : -1;
+  const userMsg = { role: 'user', content };
+  messages.push(userMsg);
 
   // Keep last 10 turns only
   if (messages.length > 20) messages = messages.slice(-20);
@@ -779,10 +779,9 @@ async function sendMessage() {
 
     const fullText = await processStream(resp, bubble, text);
     messages.push({ role: 'assistant', content: fullText });
-    // 回覆完成後，把歷史中的大張圖片換成文字標記，避免之後每次請求重傳 base64
-    if (imgTurnIdx >= 0 && messages[imgTurnIdx]) {
-      messages[imgTurnIdx] = { role: 'user', content: (text || '請分析這張截圖') + '\n[已上傳一張截圖]' };
-    }
+    // 回覆完成後，把該則的大張圖片換成文字標記，避免之後每次請求重傳 base64
+    // （用物件參照，不受 slice 重新索引影響）
+    if (img) userMsg.content = (text || '請分析這張截圖') + '\n[已上傳一張截圖]';
   } catch(e) {
     bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
   } finally {

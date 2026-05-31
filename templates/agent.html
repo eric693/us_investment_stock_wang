@@ -1048,8 +1048,8 @@ async function chatSend() {
   } else {
     content = text;
   }
-  chatMessages.push({ role: 'user', content });
-  const imgTurnIdx = img ? chatMessages.length - 1 : -1;
+  const userMsg = { role: 'user', content };
+  chatMessages.push(userMsg);
   appendChatMsg('user', text || '（請分析這張截圖）', img ? img.dataUrl : null);
 
   const bubble = appendChatMsg('assistant', '');
@@ -1081,10 +1081,8 @@ async function chatSend() {
       }
     }
     chatMessages.push({ role: 'assistant', content: full });
-    // 回覆後把歷史中的大張圖片換成文字標記，避免之後每次請求重傳 base64
-    if (imgTurnIdx >= 0 && chatMessages[imgTurnIdx]) {
-      chatMessages[imgTurnIdx] = { role: 'user', content: (text || '請分析這張截圖') + '\n[已上傳一張截圖]' };
-    }
+    // 回覆後把該則的大張圖片換成文字標記（用物件參照，不受 slice 影響）
+    if (img) userMsg.content = (text || '請分析這張截圖') + '\n[已上傳一張截圖]';
     if (chatMessages.length > 20) chatMessages = chatMessages.slice(-20);
   } catch(e) {
     bubble.textContent = '錯誤：' + e.message;
