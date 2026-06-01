@@ -571,6 +571,12 @@ select.scan-input { width: 120px; }
         <button class="form-add-btn" onclick="addHolding()">新增</button>
       </div>
 
+      <!-- 損益彙總（未實現＋已實現＋報酬率）-->
+      <div id="pnlSummary" style="display:none;gap:18px;flex-wrap:wrap;margin:10px 0;font-size:.82rem;">
+        <span>未實現損益：<b id="sumUnrealized">--</b></span>
+        <span>已實現損益：<b id="sumRealizedAgent">--</b></span>
+      </div>
+
       <div id="holdingsLoading" style="color:var(--text-dim);font-size:.8rem;padding:8px 0">載入中...</div>
       <table class="holdings-table" id="holdingsTable" style="display:none">
         <thead>
@@ -579,13 +585,47 @@ select.scan-input { width: 120px; }
             <th>買入價</th>
             <th>持股</th>
             <th>現價</th>
-            <th>損益</th>
+            <th>損益（報酬率）</th>
             <th>起漲得分</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="holdingsTbody"></tbody>
       </table>
+
+      <!-- 已實現損益帳本 -->
+      <table class="holdings-table" id="realizedTable" style="display:none;margin-top:14px">
+        <thead>
+          <tr>
+            <th>賣出日</th>
+            <th>股票</th>
+            <th>賣出股數</th>
+            <th>成本→賣出</th>
+            <th>實現損益（報酬率）</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="realizedTbody"></tbody>
+      </table>
+
+      <!-- 賣出 / 獲利了結 彈窗 -->
+      <div id="sellOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;align-items:center;justify-content:center;">
+        <div style="background:var(--card,#0d1726);border:1px solid #1d2c40;border-radius:12px;padding:22px;width:min(420px,92vw);">
+          <div style="font-weight:800;font-size:1rem;margin-bottom:10px;">賣出 / 獲利了結</div>
+          <input type="hidden" id="sellCode">
+          <div id="sellInfo" style="font-size:.82rem;color:var(--text-dim);margin-bottom:12px;"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="number" class="form-input" id="sellShares" placeholder="賣出股數（全賣留空）" oninput="updateSellPreview()">
+            <input type="number" class="form-input" id="sellPrice"  placeholder="賣出價格" oninput="updateSellPreview()">
+          </div>
+          <input type="text" class="form-input" id="sellNote" placeholder="備註（選填）" style="margin-top:8px;width:100%">
+          <div id="sellPreview" style="font-size:.86rem;margin:10px 0;min-height:18px;"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="del-btn" onclick="document.getElementById('sellOverlay').style.display='none'">取消</button>
+            <button class="form-add-btn" onclick="confirmSell()">確認賣出並記帳</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Per-stock recommendation box -->
       <div class="rec-box" id="recBox">
@@ -773,13 +813,24 @@ async function loadHoldings() {
   if (!holdings.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h3>尚無持倉</h3>在上方輸入您持有的股票代碼與買入資訊</td></tr>';
     document.getElementById('holdingsTable').style.display = 'table';
+    document.getElementById('sumUnrealized').textContent = '--';
+    loadSells();   // 持倉清空也要顯示已實現帳本
     return;
   }
 
+  _holdingMap = {};
+  let totalCost = 0, totalVal = 0;
   for (const h of holdings) {
     const pnl     = h.pnl_pct || 0;
     const pnlCls  = pnl > 0 ? 'pnl-red' : (pnl < 0 ? 'pnl-green' : 'pnl-zero');
     const pnlSign = pnl > 0 ? '+' : '';
+    const cur     = parseFloat(h.current_price) || 0;
+    const buy     = parseFloat(h.buy_price) || 0;
+    const sh      = parseFloat(h.shares) || 0;
+    const pnlAmt  = (cur && buy) ? (cur - buy) * sh : 0;
+    if (cur && buy) { totalCost += buy * sh; totalVal += cur * sh; }
+    _holdingMap[h.code] = { name: h.name || h.code, shares: sh, buy_price: buy, current_price: cur };
+    const amtTxt = (cur && buy) ? `${pnlAmt>=0?'+':''}${Math.round(pnlAmt).toLocaleString()} 元 ` : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>
@@ -789,7 +840,7 @@ async function loadHoldings() {
       <td>${h.buy_price || '-'}</td>
       <td>${(h.shares || 0).toLocaleString()}</td>
       <td style="font-weight:700">${h.current_price || '-'}</td>
-      <td class="${pnlCls}">${pnlSign}${pnl.toFixed(2)}%</td>
+      <td class="${pnlCls}">${amtTxt}(${pnlSign}${pnl.toFixed(2)}%)</td>
       <td>
         <div class="score-bar" id="score-${h.code}">
           ${[1,2,3,4,5].map(i => `<div class="score-dot"></div>`).join('')}
@@ -797,11 +848,105 @@ async function loadHoldings() {
       </td>
       <td style="display:flex;gap:6px">
         <button class="analyze-row-btn" onclick="analyzeHolding('${h.code}')">AI 分析</button>
+        <button class="analyze-row-btn" onclick="openSell('${h.code}')">賣出</button>
         <button class="del-btn" onclick="deleteHolding('${h.code}')">删</button>
       </td>`;
     tbody.appendChild(tr);
   }
   document.getElementById('holdingsTable').style.display = 'table';
+
+  // 未實現損益彙總（金額＋報酬率）
+  const uPnl = totalVal - totalCost;
+  const uPct = totalCost > 0 ? uPnl / totalCost * 100 : 0;
+  const uCls = uPnl >= 0 ? 'pnl-red' : 'pnl-green';
+  document.getElementById('pnlSummary').style.display = 'flex';
+  document.getElementById('sumUnrealized').innerHTML = totalCost > 0
+    ? `<span class="${uCls}">${uPnl>=0?'+':''}${Math.round(uPnl).toLocaleString()} 元（${uPct>=0?'+':''}${uPct.toFixed(2)}%）</span>`
+    : '--';
+  loadSells();
+}
+
+// ── 賣出 / 獲利了結 ────────────────────────────────────────
+let _holdingMap = {};
+function openSell(code) {
+  const h = _holdingMap[code];
+  if (!h) return;
+  document.getElementById('sellCode').value = code;
+  document.getElementById('sellInfo').innerHTML =
+    `${code} ${h.name}　持有 <b>${h.shares.toLocaleString()}</b> 股　成本均價 <b>${h.buy_price}</b>`;
+  document.getElementById('sellShares').value = h.shares;          // 預設全賣
+  document.getElementById('sellPrice').value  = h.current_price || '';
+  document.getElementById('sellNote').value   = '';
+  updateSellPreview();
+  document.getElementById('sellOverlay').style.display = 'flex';
+}
+
+function updateSellPreview() {
+  const h = _holdingMap[document.getElementById('sellCode').value];
+  const sh = parseFloat(document.getElementById('sellShares').value) || 0;
+  const px = parseFloat(document.getElementById('sellPrice').value) || 0;
+  const box = document.getElementById('sellPreview');
+  if (!h || !sh || !px) { box.textContent = ''; return; }
+  const pnl = (px - h.buy_price) * sh;
+  const pct = (px - h.buy_price) / h.buy_price * 100;
+  const cls = pnl >= 0 ? 'pnl-red' : 'pnl-green';
+  box.innerHTML = `預估實現損益：<span class="${cls}" style="font-weight:700">${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()} 元（${pct>=0?'+':''}${pct.toFixed(2)}%）</span>`;
+}
+
+async function confirmSell() {
+  const code = document.getElementById('sellCode').value;
+  const shares = parseFloat(document.getElementById('sellShares').value);
+  const price  = parseFloat(document.getElementById('sellPrice').value);
+  const note   = document.getElementById('sellNote').value.trim();
+  if (!price || price <= 0) { alert('請輸入有效賣出價格'); return; }
+  if (!shares || shares <= 0) { alert('請輸入有效賣出股數'); return; }
+  const r = await fetch('/api/agent/sell', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ code, shares, sell_price: price, note }),
+  });
+  const res = await r.json();
+  if (!r.ok) { alert(res.error || '賣出失敗'); return; }
+  document.getElementById('sellOverlay').style.display = 'none';
+  await loadHoldings();   // 會一併刷新已實現帳本
+}
+
+async function loadSells() {
+  let data;
+  try {
+    const r = await fetch('/api/agent/sells');
+    if (!r.ok) return;
+    data = await r.json();
+  } catch (e) { return; }
+  const sumEl = document.getElementById('sumRealizedAgent');
+  const table = document.getElementById('realizedTable');
+  const tbody = document.getElementById('realizedTbody');
+  if (!data.count) {
+    sumEl.textContent = '--';
+    table.style.display = 'none';
+    return;
+  }
+  const cls = data.total_pnl >= 0 ? 'pnl-red' : 'pnl-green';
+  sumEl.innerHTML = `<span class="${cls}">${data.total_pnl>=0?'+':''}${Math.round(data.total_pnl).toLocaleString()} 元（${data.total_pct>=0?'+':''}${data.total_pct}%）</span>　共 ${data.count} 筆`;
+  tbody.innerHTML = '';
+  for (const s of data.sells) {
+    const c = s.realized_pnl >= 0 ? 'pnl-red' : 'pnl-green';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:.72rem;color:var(--text-dim)">${s.date || '--'}</td>
+      <td>${s.code}</td>
+      <td>${(s.shares||0).toLocaleString()}</td>
+      <td>${s.buy_price} → ${s.sell_price}</td>
+      <td class="${c}">${s.realized_pnl>=0?'+':''}${Math.round(s.realized_pnl).toLocaleString()} 元（${s.realized_pct>=0?'+':''}${s.realized_pct}%）</td>
+      <td><button class="del-btn" onclick="deleteSell('${s.id}')">删</button></td>`;
+    tbody.appendChild(tr);
+  }
+  table.style.display = 'table';
+}
+
+async function deleteSell(id) {
+  if (!confirm('刪除這筆已實現損益紀錄？（僅修正誤記，不會還原持倉）')) return;
+  await fetch(`/api/agent/sells?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await loadSells();
 }
 
 async function addHolding() {

@@ -247,6 +247,7 @@
       <div class="sum-card"><div class="sum-label">總成本</div><div class="sum-val" id="sumTotalCost">--</div></div>
       <div class="sum-card"><div class="sum-label">未實現損益</div><div class="sum-val" id="sumPnL">--</div></div>
       <div class="sum-card"><div class="sum-label">報酬率</div><div class="sum-val" id="sumRetPct">--</div></div>
+      <div class="sum-card"><div class="sum-label">已實現損益</div><div class="sum-val" id="sumRealized">--</div></div>
       <div class="sum-card"><div class="sum-label">持倉標的數</div><div class="sum-val" id="sumCount">--</div></div>
     </div>
 
@@ -272,6 +273,31 @@
           <tbody id="portTbody">
             <tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:30px;">尚無持倉紀錄</td></tr>
           </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 已實現損益帳本 -->
+    <div class="card" id="realizedCard" style="display:none">
+      <div class="card-title"><span class="icon"></span>已實現損益帳本
+        <span id="realizedTotal" style="font-size:0.82rem;font-weight:700;margin-left:10px;"></span>
+      </div>
+      <div class="port-table-wrap">
+        <table class="port-table">
+          <thead>
+            <tr>
+              <th>賣出日</th>
+              <th>股票</th>
+              <th>賣出股數</th>
+              <th>成本均價</th>
+              <th>賣出價</th>
+              <th>實現損益 $</th>
+              <th>實現 %</th>
+              <th>備註</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="realizedTbody"></tbody>
         </table>
       </div>
     </div>
@@ -387,6 +413,36 @@
       <input class="inp" id="holdingNote" placeholder="例如：定期定額" style="width:100%">
     </div>
     <button class="btn btn-primary" onclick="saveHolding()" style="width:100%">儲存持倉</button>
+  </div>
+</div>
+
+<!-- ══ Modal: 賣出 / 獲利了結 ══ -->
+<div class="modal-overlay" id="sellModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('sellModal')"></button>
+    <div class="modal-title">賣出 / 獲利了結</div>
+    <input type="hidden" id="sellTicker" value="">
+    <div id="sellInfo" style="font-size:0.84rem;color:var(--text-dim);margin-bottom:12px;"></div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">賣出股數（全賣留空亦可）</label>
+        <input class="inp" id="sellShares" type="number" min="0" step="1" style="width:100%">
+      </div>
+      <div class="form-row">
+        <label class="form-label">賣出價格</label>
+        <input class="inp" id="sellPrice" type="number" min="0" step="0.01" style="width:100%">
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">賣出日期</label>
+      <input class="inp" id="sellDate" type="date" style="width:100%">
+    </div>
+    <div class="form-row">
+      <label class="form-label">備註（選填）</label>
+      <input class="inp" id="sellNote" placeholder="例如：突破壓力分批停利" style="width:100%">
+    </div>
+    <div id="sellPreview" style="font-size:0.86rem;margin:6px 0 12px;min-height:18px;"></div>
+    <button class="btn btn-primary" onclick="confirmSell()" style="width:100%">確認賣出並記帳</button>
   </div>
 </div>
 
@@ -724,6 +780,118 @@ async function deleteHolding(idx) {
   showToast('已刪除', '');
 }
 
+// ── 賣出 / 獲利了結 ─────────────────────────────
+function openSellModal(idx) {
+  const d = getData();
+  const h = d.holdings[idx];
+  if (!h) return;
+  const p = _portPrices[h.ticker];
+  const cur = (p && p.price) ? p.price : '';
+  document.getElementById('sellTicker').value = h.ticker;
+  document.getElementById('sellInfo').innerHTML =
+    `${esc(h.ticker)}　持有 <b>${fmtNum(h.shares)}</b> 股　成本均價 <b>${fmt(h.costPrice)}</b>`;
+  document.getElementById('sellShares').value = h.shares;   // 預設全賣
+  document.getElementById('sellShares').max = h.shares;
+  document.getElementById('sellPrice').value = cur;
+  document.getElementById('sellDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('sellNote').value = '';
+  document.getElementById('sellShares')._cost = h.costPrice;
+  updateSellPreview();
+  openModal('sellModal');
+}
+
+function updateSellPreview() {
+  const cost  = parseFloat(document.getElementById('sellShares')._cost) || 0;
+  const sh    = parseFloat(document.getElementById('sellShares').value) || 0;
+  const price = parseFloat(document.getElementById('sellPrice').value) || 0;
+  const box   = document.getElementById('sellPreview');
+  if (!sh || !price || !cost) { box.textContent = ''; return; }
+  const pnl = (price - cost) * sh;
+  const pct = (price - cost) / cost * 100;
+  const cls = pnl >= 0 ? 'red' : 'green';   // 台股慣例：賺紅賠綠
+  box.innerHTML = `預估實現損益：<span class="${cls}" style="font-weight:700">${pnl>=0?'+':''}${fmtK(pnl)}（${pct>=0?'+':''}${pct.toFixed(2)}%）</span>`;
+}
+['sellShares','sellPrice'].forEach(id =>
+  document.addEventListener('input', e => { if (e.target.id===id) updateSellPreview(); }));
+
+async function confirmSell() {
+  const code   = document.getElementById('sellTicker').value;
+  const shares = parseFloat(document.getElementById('sellShares').value);
+  const price  = parseFloat(document.getElementById('sellPrice').value);
+  const date   = document.getElementById('sellDate').value;
+  const note   = document.getElementById('sellNote').value.trim();
+  if (!price || price <= 0) { showToast('請輸入有效賣出價格', 'red'); return; }
+  if (!shares || shares <= 0) { showToast('請輸入有效賣出股數', 'red'); return; }
+  try {
+    const r = await fetch('/api/agent/sell', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code, shares, sell_price: price, date, note }),
+    });
+    const res = await r.json();
+    if (!r.ok) { showToast(res.error || '賣出失敗', 'red'); return; }
+    showToast(`已記帳：實現 ${res.realized_pnl>=0?'+':''}${fmtK(res.realized_pnl)}（${res.realized_pct>=0?'+':''}${res.realized_pct}%）`, 'green');
+  } catch (e) { showToast('賣出失敗，請稍後再試', 'red'); return; }
+  closeModal('sellModal');
+  await loadSharedHoldings();
+  renderPortfolio();
+  await loadSells();
+}
+
+async function loadSells() {
+  try {
+    const r = await fetch('/api/agent/sells');
+    if (!r.ok) return;
+    renderSells(await r.json());
+  } catch (e) { /* 離線：略過 */ }
+}
+
+function renderSells(data) {
+  const sells = (data && data.sells) || [];
+  const card  = document.getElementById('realizedCard');
+  const sumEl = document.getElementById('sumRealized');
+  // 總覽卡片
+  if (data && data.count) {
+    const cls = data.total_pnl >= 0 ? 'red' : 'green';
+    sumEl.innerHTML = `<span class="${cls}">${data.total_pnl>=0?'+':''}${fmtK(data.total_pnl)}`
+      + `<span style="font-size:0.7rem;margin-left:4px;">(${data.total_pct>=0?'+':''}${data.total_pct}%)</span></span>`;
+  } else {
+    sumEl.textContent = '--';
+  }
+  if (!sells.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const tot = data.total_pnl;
+  const tcls = tot >= 0 ? 'red' : 'green';
+  document.getElementById('realizedTotal').innerHTML =
+    `累計 <span class="${tcls}">${tot>=0?'+':''}${fmtK(tot)}（${data.total_pct>=0?'+':''}${data.total_pct}%）</span>　共 ${data.count} 筆`;
+  const tb = document.getElementById('realizedTbody');
+  tb.innerHTML = '';
+  sells.forEach(s => {
+    const cls = s.realized_pnl >= 0 ? 'red' : 'green';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--text-dim);font-size:0.76rem;">${esc(s.date||'--')}</td>
+      <td><div class="port-sym" onclick="goAnalyze('${esc(s.code)}')">${esc(s.code)}</div></td>
+      <td>${fmtNum(s.shares)}</td>
+      <td>${fmt(s.buy_price)}</td>
+      <td>${fmt(s.sell_price)}</td>
+      <td><span class="${cls}">${s.realized_pnl>=0?'+':''}${fmtK(s.realized_pnl)}</span></td>
+      <td><span class="${cls}">${s.realized_pct>=0?'+':''}${s.realized_pct}%</span></td>
+      <td style="color:var(--text-dim);font-size:0.76rem;">${esc(s.note||'')}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteSell('${esc(s.id)}')">刪除</button></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function deleteSell(id) {
+  if (!confirm('刪除這筆已實現損益紀錄？（僅修正誤記，不會還原持倉股數）')) return;
+  try {
+    await fetch(`/api/agent/sells?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch (e) { showToast('刪除失敗', 'red'); return; }
+  await loadSells();
+  showToast('已刪除紀錄', '');
+}
+
 function renderPortfolio() {
   const d = getData();
   const holdings = d.holdings || [];
@@ -786,6 +954,7 @@ function renderPortfolio() {
       <td style="color:var(--text-dim);font-size:0.76rem;">${h.buyDate || '--'}</td>
       <td>
         <div style="display:flex;gap:4px">
+          <button class="btn btn-primary btn-sm" onclick="openSellModal(${i})">賣出</button>
           <button class="btn btn-ghost btn-sm" onclick="openAddHoldingModal(${i})">編輯</button>
           <button class="btn btn-danger btn-sm" onclick="deleteHolding(${i})">刪除</button>
         </div>
@@ -875,6 +1044,7 @@ function renderCharts(holdings) {
 }
 
 async function refreshPortfolioPrices() {
+  loadSells();   // 已實現損益帳本獨立載入：就算持倉已全賣光也要顯示
   if (!(getData().holdings || []).length) return;
   document.getElementById('portUpdateTime').textContent = '更新中…';
   await loadSharedHoldings();   // 一次取得持倉＋報價
