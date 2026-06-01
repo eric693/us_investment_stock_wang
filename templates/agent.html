@@ -778,7 +778,7 @@ async function loadHoldings() {
 
   for (const h of holdings) {
     const pnl     = h.pnl_pct || 0;
-    const pnlCls  = pnl > 0 ? 'pnl-green' : (pnl < 0 ? 'pnl-red' : 'pnl-zero');
+    const pnlCls  = pnl > 0 ? 'pnl-red' : (pnl < 0 ? 'pnl-green' : 'pnl-zero');
     const pnlSign = pnl > 0 ? '+' : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `

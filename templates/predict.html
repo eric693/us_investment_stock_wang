@@ -674,12 +674,12 @@ function renderMetrics(d) {
     ['當沖比', d.day_trade_ratio !== null ? `${d.day_trade_ratio}%` : '未取得', dtrCls],
     ['量能結構', d.vol_structure ? d.vol_structure.split('（')[0] : 'N/A', d.vol_structure?.includes('健康') ? 'green' : 'yellow'],
     ['KD', `K${d.k} / D${d.d}`, d.k < 30 ? 'green' : (d.k > 70 ? 'yellow' : '')],
-    ['MACD OSC', `${d.osc}`, d.osc > 0 ? 'green' : 'red'],
+    ['MACD OSC', `${d.osc}`, d.osc > 0 ? 'red' : 'green'],
   ];
 
   if (d.inst) {
     const total = d.inst.total_net;
-    rows.push(['三大法人', `${total > 0 ? '+' : ''}${total?.toLocaleString()}張`, total > 0 ? 'green' : 'red']);
+    rows.push(['三大法人', `${total > 0 ? '+' : ''}${total?.toLocaleString()}張`, total > 0 ? 'red' : 'green']);
   }
 
   cont.innerHTML = rows.map(([label, val, cls]) => `

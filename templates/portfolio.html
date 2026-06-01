@@ -521,7 +521,7 @@ function renderGroups() {
       row.className = 'gticker-row';
       const cached = _groupTickerPrices[ticker];
       const pctHtml = (cached && cached.pct != null)
-        ? `<span class="gticker-pct ${cached.pct>=0?'green':'red'}">${cached.pct>=0?'+':''}${cached.pct.toFixed(2)}%</span>`
+        ? `<span class="gticker-pct ${cached.pct>=0?'red':'green'}">${cached.pct>=0?'+':''}${cached.pct.toFixed(2)}%</span>`
         : `<span class="gticker-pct" style="color:var(--text-dim)">--</span>`;
       row.innerHTML = `
         <span class="gticker-sym">${esc(ticker)}</span>
@@ -758,15 +758,15 @@ function renderPortfolio() {
     // p 為 undefined＝仍在抓取（載入中）；已抓但無價＝顯示「—（查無報價）」
     const priceHtml = currentPrice != null
       ? `<span>${fmt(currentPrice)}</span>` + (p.pct != null
-          ? `<span style="font-size:0.7rem;color:${p.pct>=0?'var(--green)':'var(--red)'};margin-left:4px;">${p.pct>=0?'+':''}${p.pct?.toFixed(2)}%</span>` : '')
+          ? `<span style="font-size:0.7rem;color:${p.pct>=0?'var(--red)':'var(--green)'};margin-left:4px;">${p.pct>=0?'+':''}${p.pct?.toFixed(2)}%</span>` : '')
       : (p ? `<span style="color:var(--text-dim)" title="查無即時報價，可能停牌或下市">—</span>`
            : `<span class="price-loading">載入中…</span>`);
 
     const pnlHtml = pnl != null
-      ? `<span class="${pnl>=0?'green':'red'}">${pnl>=0?'+':''}${fmtK(pnl)}</span>`
+      ? `<span class="${pnl>=0?'red':'green'}">${pnl>=0?'+':''}${fmtK(pnl)}</span>`
       : '<span style="color:var(--text-dim)">--</span>';
     const pctHtml = pnlPct != null
-      ? `<span class="${pnlPct>=0?'green':'red'}">${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span>`
+      ? `<span class="${pnlPct>=0?'red':'green'}">${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span>`
       : '<span style="color:var(--text-dim)">--</span>';
     const valHtml = val != null ? fmtK(val) : '<span style="color:var(--text-dim)">--</span>';
 
@@ -800,7 +800,7 @@ function renderPortfolio() {
   tr.className = 'total-row';
   tr.innerHTML = `
     <td colspan="6" style="text-align:right;color:var(--text-dim);font-size:0.76rem;">合計</td>
-    <td><span class="${totalPct>=0?'green':'red'}">${totalPct!=null?(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%':'--'}</span></td>
+    <td><span class="${totalPct>=0?'red':'green'}">${totalPct!=null?(totalPct>=0?'+':'')+totalPct.toFixed(2)+'%':'--'}</span></td>
     <td>${totalVal>0?fmtK(totalVal):'--'}</td>
     <td colspan="2"></td>`;
   tbody.appendChild(tr);
@@ -812,12 +812,12 @@ function renderPortfolio() {
   if (totalPnL != null) {
     const el = document.getElementById('sumPnL');
     el.textContent = (totalPnL >= 0 ? '+' : '') + fmtK(totalPnL);
-    el.className = 'sum-val ' + (totalPnL >= 0 ? 'green' : 'red');
+    el.className = 'sum-val ' + (totalPnL >= 0 ? 'red' : 'green');
   }
   if (totalPct != null) {
     const el = document.getElementById('sumRetPct');
     el.textContent = (totalPct >= 0 ? '+' : '') + totalPct.toFixed(2) + '%';
-    el.className = 'sum-val ' + (totalPct >= 0 ? 'green' : 'red');
+    el.className = 'sum-val ' + (totalPct >= 0 ? 'red' : 'green');
   }
 
   renderCharts(holdings);
@@ -858,7 +858,7 @@ function renderCharts(holdings) {
   }, { displayModeBar: false, responsive: true });
 
   // Bar
-  const barColors = pcts.map(p => p >= 0 ? '#00d68f' : '#e84646');
+  const barColors = pcts.map(p => p >= 0 ? '#e84646' : '#00d68f');
   Plotly.newPlot('barChart', [{
     type: 'bar', x: labels, y: pcts,
     marker: { color: barColors },
