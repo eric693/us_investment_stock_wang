@@ -749,10 +749,11 @@ async function saveHolding() {
   const orig = document.getElementById('editHoldingIdx').value;   // 編輯時的原始代碼
   try {
     // 寫進與「持倉管理」共用的同一份持倉
+    // 新增（非編輯）時帶 merge：同代碼加碼會累加股數並算加權平均成本，不覆寫舊紀錄
     await fetch('/api/agent/holdings', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ code: ticker, buy_price: cost, shares, date, note, group }),
+      body: JSON.stringify({ code: ticker, buy_price: cost, shares, date, note, group, merge: !orig }),
     });
     // 編輯時若代碼被改，刪掉舊代碼那筆
     if (orig && orig !== ticker) {

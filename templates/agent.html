@@ -955,10 +955,11 @@ async function addHolding() {
   const shares= parseInt(document.getElementById('h-shares').value);
   const date  = document.getElementById('h-date').value;
   if (!code || !price) { alert('請填入代碼與買入價格'); return; }
+  // 加碼合併：同代碼會累加股數並算加權平均成本，不覆寫舊紀錄
   await fetch('/api/agent/holdings', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ code, buy_price: price, shares: shares || 0, date }),
+    body: JSON.stringify({ code, buy_price: price, shares: shares || 0, date, merge: true }),
   });
   document.getElementById('h-code').value = '';
   document.getElementById('h-buyprice').value = '';

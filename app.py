@@ -6090,11 +6090,26 @@ def agent_holdings_api():
         existing = [h for h in cfg.get('holdings', []) if h.get('code') != code]
         # 以既有紀錄為底合併，避免某一邊編輯時把另一邊設定的欄位（如群組）洗掉
         record = dict(prev)
+        new_price = safe_float(body.get('buy_price', prev.get('buy_price', 0)))
+        new_shares = safe_int(body.get('shares', prev.get('shares', 0)))
+        new_date   = body.get('date') or prev.get('date') or pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+        # merge=true（單筆加碼）：同代碼已存在時累加股數並算加權平均成本，不覆寫舊紀錄。
+        # 編輯持倉與截圖匯入不帶 merge（沿用覆寫，匯入為券商當前快照、合併會重複計算）。
+        if body.get('merge') and prev:
+            old_shares = safe_int(prev.get('shares', 0))
+            old_price  = safe_float(prev.get('buy_price', 0))
+            add_shares = safe_int(body.get('shares', 0))
+            add_price  = safe_float(body.get('buy_price', 0))
+            total = old_shares + add_shares
+            if total > 0 and add_shares > 0 and old_shares > 0 and old_price > 0 and add_price > 0:
+                new_shares = total
+                new_price  = round((old_price * old_shares + add_price * add_shares) / total, 4)
+                new_date   = prev.get('date') or new_date   # 保留原始建倉日作為成本基準
         record.update({
             'code':      code,
-            'buy_price': safe_float(body.get('buy_price', prev.get('buy_price', 0))),
-            'shares':    safe_int(body.get('shares', prev.get('shares', 0))),
-            'date':      body.get('date') or prev.get('date') or pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d'),
+            'buy_price': new_price,
+            'shares':    new_shares,
+            'date':      new_date,
         })
         # 只在請求有帶這些欄位時才覆寫，沒帶就沿用既有值
         for field in ('note', 'group', 'name'):
