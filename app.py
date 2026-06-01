@@ -283,7 +283,7 @@ def _run_server_scan():
             price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
             if price <= 0:
                 continue
-            name = info.get('shortName', info.get('longName', ticker))
+            name = tw_cn_name(ticker, info.get('shortName', info.get('longName', ticker)))
             result = (_aggressive_signal(stock, ticker, price, name)
                       if profile == 'aggressive'
                       else _steady_signal(stock, ticker, price, name))
@@ -1322,7 +1322,7 @@ def get_stock(ticker):
 
         result = {
             'ticker':       ticker,
-            'name':         info.get('longName', info.get('shortName', ticker)),
+            'name':         tw_cn_name(ticker, info.get('longName', info.get('shortName', ticker))),
             'sector':       info.get('sector', ''),
             'industry':     info.get('industry', ''),
             'country':      info.get('country', ''),
@@ -2053,7 +2053,7 @@ def get_tw_stock(ticker):
         result = {
             'ticker':        ticker,
             'displayTicker': tw_display(ticker),
-            'name':          info.get('longName', info.get('shortName', ticker)),
+            'name':          tw_cn_name(ticker, info.get('longName', info.get('shortName', ticker))),
             'sector':        info.get('sector', ''),
             'industry':      info.get('industry', ''),
             'country':       info.get('country', 'Taiwan'),
@@ -4304,7 +4304,7 @@ def _run_server_scan_with_exit():
                     pd.Timestamp.now(tz='Asia/Taipei') -
                     pd.Timestamp(last_t, tz='Asia/Taipei')).total_seconds() > 14400
                 if cooldown_ok and line_token and line_user_id:
-                    name = info.get('shortName', ticker)
+                    name = tw_cn_name(ticker, info.get('shortName', ticker))
                     msg  = f'【{name}】{alert_text}\n現價: {price}\n時間: {now_str}'
                     _push_line_msg(line_token, line_user_id, msg)
                     with _monitor_lock:
@@ -5314,8 +5314,10 @@ def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
         buy_p  = holding.get('buy_price', 0)
         shares = holding.get('shares', 0)
         pnl    = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
+        pnl_amt = round((safe_float(price) - safe_float(buy_p)) * safe_float(shares), 0)
         lots   = safe_float(shares) / 1000
-        lines.append(f"持倉資訊：買入價 {buy_p} 元 / {shares} 股（約 {lots:.1f} 張）/ 未實現損益 {pnl:+.2f}%")
+        lines.append(f"持倉資訊：買入價 {buy_p} 元 / {shares} 股（約 {lots:.1f} 張）/ "
+                     f"未實現損益 {pnl_amt:+,.0f} 元（報酬率 {pnl:+.2f}%）")
         lines.append(_position_size_directive(shares))
 
     lines.append(f"月線方向：{data.get('ma20_trend', 'N/A')}（扣抵估價 {data.get('ma20_deduct_price', 'N/A')}）")
