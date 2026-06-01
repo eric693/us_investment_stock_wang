@@ -217,8 +217,13 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .attach:hover { border-color: var(--accent); color: var(--accent); }
 .attach svg { width: 18px; height: 18px; }
 .img-preview { display: flex; align-items: center; gap: 8px; padding: 8px 16px 0;
-  font-size: 0.72rem; color: var(--text-mid); }
+  font-size: 0.72rem; color: var(--text-mid); flex-wrap: wrap; }
 .img-preview img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--card-bd); }
+.img-chip { position: relative; }
+.img-chip .x { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px;
+  line-height: 14px; text-align: center; font-size: 11px; border-radius: 50%;
+  background: #ff6b6b; color: #fff; cursor: pointer; border: 1px solid var(--bg, #0a1120); }
+.img-count { margin-left: 4px; }
 .img-remove { color: #ff6b6b; cursor: pointer; margin-left: 4px; }
 .img-remove:hover { text-decoration: underline; }
 .bubble img.uploaded { max-width: 220px; border-radius: 8px; margin-top: 6px; border: 1px solid var(--card-bd); display: block; }
@@ -310,18 +315,14 @@ body { margin: 0; background: var(--bg); color: var(--text); }
       </div>
     </div>
 
-    <div id="imgPreview" class="img-preview" style="display:none">
-      <img id="imgThumb" alt="預覽">
-      <span id="imgName"></span>
-      <span class="img-remove" onclick="clearImage()">移除</span>
-    </div>
+    <div id="imgPreview" class="img-preview" style="display:none"></div>
     <div class="chat-input">
-      <input type="file" id="imgInput" accept="image/*" style="display:none" onchange="onImagePick(event)">
-      <button class="attach" id="attachBtn" onclick="document.getElementById('imgInput').click()" title="上傳K線圖/截圖">
+      <input type="file" id="imgInput" accept="image/*" multiple style="display:none" onchange="onImagePick(event)">
+      <button class="attach" id="attachBtn" onclick="document.getElementById('imgInput').click()" title="上傳K線圖/截圖（可一次多張，按送出才分析）">
         <svg viewBox="0 0 24 24"><path d="M16.5 6.5l-7 7a2.5 2.5 0 003.54 3.54l7-7a4.5 4.5 0 00-6.36-6.36l-7 7a6.5 6.5 0 009.2 9.2l6.3-6.3"
           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
-      <textarea id="chatInput" rows="1" placeholder="輸入需求，或上傳K線圖讓 AI 判讀…"
+      <textarea id="chatInput" rows="1" placeholder="輸入需求，或上傳/貼上多張K線圖，全部給完再按送出…"
                 onkeydown="onKey(event)" oninput="autoGrow(this)"></textarea>
       <button class="send" id="sendBtn" onclick="send()">
         <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
@@ -343,11 +344,16 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 let messages = [];
 let streaming = false;
 let scopeHint = '';
-let pendingImage = null;   // {data: base64, mediaType}
+let pendingImages = [];    // [{data: base64, mediaType, thumb}]
+const MAX_IMAGES = 8;      // 一則訊息最多帶幾張圖
 
-// ── Image upload ──────────────────────────────────────────────────
+// ── Image upload（支援一次多張，先暫存、按送出才打包成一則訊息）──────────
 function processImageFile(file) {
   if (!file || !file.type.startsWith('image/')) return;
+  if (pendingImages.length >= MAX_IMAGES) {
+    alert('一次最多 ' + MAX_IMAGES + ' 張圖片');
+    return;
+  }
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
@@ -360,46 +366,57 @@ function processImageFile(file) {
       canvas.width = cw; canvas.height = ch;
       canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      pendingImage = { mediaType: 'image/jpeg', data: dataUrl.split(',')[1] };
-      document.getElementById('imgThumb').src = dataUrl;
-      document.getElementById('imgName').textContent = file.name || '貼上的截圖';
-      document.getElementById('imgPreview').style.display = 'flex';
+      pendingImages.push({ mediaType: 'image/jpeg', data: dataUrl.split(',')[1], thumb: dataUrl });
+      renderImgPreview();
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
 }
+function renderImgPreview() {
+  const box = document.getElementById('imgPreview');
+  if (!pendingImages.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = pendingImages.map((im, i) =>
+    `<span class="img-chip"><img src="${im.thumb}" alt="預覽"><span class="x" onclick="removeImage(${i})">×</span></span>`
+  ).join('') +
+    `<span class="img-count">${pendingImages.length} 張圖</span>` +
+    `<span class="img-remove" onclick="clearImage()">全部移除</span>`;
+}
 function onImagePick(e) {
-  const file = e.target.files[0];
-  if (file) processImageFile(file);
+  Array.from(e.target.files || []).forEach(processImageFile);
   e.target.value = '';
 }
-// Ctrl+V 貼上截圖
+// Ctrl+V 貼上截圖（可連續貼多張）
 window.addEventListener('paste', (e) => {
   const items = (e.clipboardData || window.clipboardData)?.items || [];
+  let used = false;
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
       const f = it.getAsFile();
-      if (f) { processImageFile(f); e.preventDefault(); }
-      return;
+      if (f) { processImageFile(f); used = true; }
     }
   }
+  if (used) e.preventDefault();
 });
-// 拖曳圖片到輸入區
+// 拖曳圖片到輸入區（可一次拖多張）
 (function initAiDnd() {
   const area = document.querySelector('.chat-input');
   if (!area) return;
   ['dragover','dragenter'].forEach(ev => area.addEventListener(ev, e => e.preventDefault()));
   area.addEventListener('drop', e => {
     e.preventDefault();
-    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-    if (f) processImageFile(f);
+    Array.from(e.dataTransfer?.files || []).forEach(processImageFile);
   });
 })();
 
+function removeImage(i) {
+  pendingImages.splice(i, 1);
+  renderImgPreview();
+}
 function clearImage() {
-  pendingImage = null;
-  document.getElementById('imgPreview').style.display = 'none';
+  pendingImages = [];
+  renderImgPreview();
 }
 
 window.onload = () => {
@@ -606,15 +623,16 @@ async function send() {
   if (streaming) return;
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
-  if (!text && !pendingImage) return;
+  const imgs = pendingImages.slice();
+  if (!text && !imgs.length) return;
 
-  // 建立 user 訊息：有圖片時用 content blocks
+  // 建立 user 訊息：有圖片時用 content blocks（一則訊息打包所有圖，只送出一次）
   let content;
-  if (pendingImage) {
+  if (imgs.length) {
     content = [];
     if (text) content.push({ type: 'text', text });
-    content.push({ type: 'image', source: {
-      type: 'base64', media_type: pendingImage.mediaType, data: pendingImage.data } });
+    imgs.forEach(im => content.push({ type: 'image', source: {
+      type: 'base64', media_type: im.mediaType, data: im.data } }));
   } else {
     content = text;
   }
@@ -622,13 +640,13 @@ async function send() {
   input.value = ''; input.style.height = 'auto';
 
   const ub = addMsg('user');
-  ub.textContent = text || '（圖片）';
-  if (pendingImage) {
-    const im = document.createElement('img');
-    im.className = 'uploaded';
-    im.src = `data:${pendingImage.mediaType};base64,${pendingImage.data}`;
-    ub.appendChild(im);
-  }
+  ub.textContent = text || (imgs.length > 1 ? `（${imgs.length} 張圖片）` : '（圖片）');
+  imgs.forEach(im => {
+    const el = document.createElement('img');
+    el.className = 'uploaded';
+    el.src = `data:${im.mediaType};base64,${im.data}`;
+    ub.appendChild(el);
+  });
   clearImage();
 
   messages.push({ role: 'user', content });
