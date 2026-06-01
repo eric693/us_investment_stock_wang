@@ -435,15 +435,9 @@
     </div>
 
     <!-- 已附加截圖預覽 -->
-    <div id="imgPreviewBar" style="display:none;padding:10px 20px 0;">
-      <div style="display:inline-flex;align-items:center;gap:10px;background:#0a1020;border:1px solid var(--card-bd);border-radius:8px;padding:6px 10px;">
-        <img id="imgPreviewThumb" alt="" style="height:42px;max-width:80px;object-fit:cover;border-radius:4px;border:1px solid var(--card-bd);">
-        <span style="font-size:0.74rem;color:var(--text-dim);">已附加截圖，將連同訊息給 AI 分析</span>
-        <button onclick="clearPendingImage()" title="移除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.95rem;line-height:1;">✕</button>
-      </div>
-    </div>
+    <div id="imgPreviewBar" style="display:none;padding:10px 20px 0;gap:8px;flex-wrap:wrap;align-items:center;"></div>
     <div class="chat-input-area">
-      <input type="file" id="chatImgInput" accept="image/*" style="display:none" onchange="onChatImgPick(event)">
+      <input type="file" id="chatImgInput" accept="image/*" multiple style="display:none" onchange="onChatImgPick(event)">
       <button class="send-btn" id="attachBtn" onclick="document.getElementById('chatImgInput').click()" title="上傳截圖" style="background:#13233a;">
         <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 11l2.5 3 3.5-4.5L19 18H5l3.5-7z"/></svg>
       </button>
@@ -541,7 +535,8 @@ function addMessage(role, content, streaming = false, imgUrl = null) {
     bubble.dataset.streaming = '1';
   } else {
     let html = '';
-    if (imgUrl) html += `<img src="${imgUrl}" style="max-width:220px;max-height:220px;border-radius:8px;border:1px solid var(--card-bd);display:block;margin-bottom:6px;">`;
+    const urls = Array.isArray(imgUrl) ? imgUrl : (imgUrl ? [imgUrl] : []);
+    urls.forEach(u => { html += `<img src="${u}" style="max-width:220px;max-height:220px;border-radius:8px;border:1px solid var(--card-bd);display:inline-block;margin:0 6px 6px 0;">`; });
     html += renderMarkdown(content);
     bubble.innerHTML = html;
   }
@@ -554,20 +549,37 @@ function addMessage(role, content, streaming = false, imgUrl = null) {
 }
 
 // ── 截圖上傳／貼上 ──────────────────────────────────────────────────────────
-let _pendingImage = null;   // { dataUrl, media_type }
+let _pendingImages = [];   // [{ dataUrl, media_type }]
+const PREDICT_MAX_IMAGES = 8;
 
 function onChatImgPick(e) {
-  const f = e.target.files && e.target.files[0];
-  if (f) handleChatImage(f);
+  Array.from(e.target.files || []).forEach(handleChatImage);
   e.target.value = '';
 }
 function handleChatImage(file) {
   if (!file.type.startsWith('image/')) { alert('請選擇圖片檔'); return; }
+  if (_pendingImages.length >= PREDICT_MAX_IMAGES) { alert('一次最多 ' + PREDICT_MAX_IMAGES + ' 張圖片'); return; }
   _downscaleToDataUrl(file, 1568, (dataUrl) => {
-    _pendingImage = { dataUrl, media_type: 'image/jpeg' };
-    document.getElementById('imgPreviewThumb').src = dataUrl;
-    document.getElementById('imgPreviewBar').style.display = 'block';
+    _pendingImages.push({ dataUrl, media_type: 'image/jpeg' });
+    renderPendingPreview();
   });
+}
+function renderPendingPreview() {
+  const box = document.getElementById('imgPreviewBar');
+  if (!_pendingImages.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = _pendingImages.map((im, i) =>
+    `<span style="position:relative;display:inline-block;">
+       <img src="${im.dataUrl}" alt="" style="height:42px;max-width:80px;object-fit:cover;border-radius:4px;border:1px solid var(--card-bd);display:block;">
+       <span onclick="removePendingImage(${i})" title="移除" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;line-height:14px;text-align:center;font-size:11px;border-radius:50%;background:var(--red);color:#fff;cursor:pointer;">×</span>
+     </span>`
+  ).join('') +
+    `<span style="font-size:0.74rem;color:var(--text-dim);">${_pendingImages.length} 張圖，將連同訊息給 AI 分析</span>` +
+    `<button onclick="clearPendingImage()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.74rem;">全部移除</button>`;
+}
+function removePendingImage(i) {
+  _pendingImages.splice(i, 1);
+  renderPendingPreview();
 }
 // 縮到長邊 maxEdge（Claude vision 內部上限約 1568px），輸出 jpeg，大幅降低 payload
 function _downscaleToDataUrl(file, maxEdge, cb) {
@@ -588,30 +600,29 @@ function _downscaleToDataUrl(file, maxEdge, cb) {
   reader.readAsDataURL(file);
 }
 function clearPendingImage() {
-  _pendingImage = null;
-  document.getElementById('imgPreviewBar').style.display = 'none';
-  document.getElementById('imgPreviewThumb').src = '';
+  _pendingImages = [];
+  renderPendingPreview();
 }
-// Ctrl+V 貼上截圖
+// Ctrl+V 貼上截圖（可連續貼多張）
 window.addEventListener('paste', (e) => {
   const items = (e.clipboardData || window.clipboardData)?.items || [];
+  let used = false;
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
       const f = it.getAsFile();
-      if (f) { handleChatImage(f); e.preventDefault(); }
-      return;
+      if (f) { handleChatImage(f); used = true; }
     }
   }
+  if (used) e.preventDefault();
 });
-// 拖曳圖片到輸入區
+// 拖曳圖片到輸入區（可一次拖多張）
 (function initChatDnd() {
   const area = document.querySelector('.chat-input-area');
   if (!area) return;
   ['dragover','dragenter'].forEach(ev => area.addEventListener(ev, e => { e.preventDefault(); }));
   area.addEventListener('drop', e => {
     e.preventDefault();
-    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-    if (f) handleChatImage(f);
+    Array.from(e.dataTransfer?.files || []).forEach(handleChatImage);
   });
 })();
 
@@ -729,7 +740,7 @@ async function sendMessage() {
   if (isStreaming) return;
   const input = document.getElementById('chatInput');
   const text  = input.value.trim();
-  if (!text && !_pendingImage) return;
+  if (!text && !_pendingImages.length) return;
 
   const key = getApiKey();
   if (!key) { alert('請先輸入 Claude API Key'); return; }
@@ -738,19 +749,17 @@ async function sendMessage() {
   input.style.height = 'auto';
   hideWelcome();
 
-  const img = _pendingImage;
+  const imgs = _pendingImages.slice();
   clearPendingImage();
 
-  // 顯示在對話框（含縮圖）
-  addMessage('user', text || '（請分析這張截圖）', false, img ? img.dataUrl : null);
+  // 顯示在對話框（含縮圖，可多張）
+  addMessage('user', text || `（請分析${imgs.length > 1 ? '這 ' + imgs.length + ' 張' : '這張'}截圖）`, false, imgs.map(im => im.dataUrl));
 
-  // 送給 Claude：有圖就用 content 陣列（圖片 + 文字）
+  // 送給 Claude：有圖就用 content 陣列（多張圖片 + 文字）
   let content;
-  if (img) {
-    content = [
-      { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.dataUrl.split(',')[1] } },
-      { type: 'text',  text: text || '請分析這張截圖（可能是走勢圖或持倉），給出你的判斷。' },
-    ];
+  if (imgs.length) {
+    content = imgs.map(im => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.dataUrl.split(',')[1] } }));
+    content.push({ type: 'text', text: text || `請分析這${imgs.length > 1 ? imgs.length + ' 張' : '張'}截圖（可能是走勢圖或持倉），給出你的判斷。` });
   } else {
     content = text;
   }

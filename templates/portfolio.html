@@ -225,7 +225,7 @@
       <div class="import-actions">
         <button class="btn btn-primary btn-sm" id="importBtn" onclick="document.getElementById('holdingImgInput').click()">上傳截圖</button>
         <span class="import-paste">或直接 Ctrl+V 貼上截圖、把圖拖進來也行</span>
-        <input type="file" id="holdingImgInput" accept="image/*" style="display:none" onchange="onHoldingImgPick(event)">
+        <input type="file" id="holdingImgInput" accept="image/*" multiple style="display:none" onchange="onHoldingImgPick(event)">
       </div>
       <div class="import-status" id="importStatus"></div>
       <div class="import-preview" id="importPreview" style="display:none">
@@ -1186,8 +1186,7 @@ function _importStatus(msg, color) {
   el.style.color = color || 'var(--text-dim)';
 }
 function onHoldingImgPick(e) {
-  const f = e.target.files && e.target.files[0];
-  if (f) handleHoldingImage(f);
+  if (e.target.files && e.target.files.length) handleHoldingImages(e.target.files);
   e.target.value = '';
 }
 // 縮到長邊 1568px（Claude vision 內部上限），輸出 jpeg，降低 payload 與解析時間
@@ -1210,31 +1209,41 @@ function _fileToDataUrl(file) {
     reader.readAsDataURL(file);
   });
 }
-async function handleHoldingImage(file) {
-  if (!file.type.startsWith('image/')) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
+// 一次可解析多張截圖（例如券商分頁），結果依代碼去重後合併到匯入清單
+async function handleHoldingImages(files) {
+  const imgs = Array.from(files || []).filter(f => f.type.startsWith('image/'));
+  if (!imgs.length) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
   const btn = document.getElementById('importBtn');
   btn.disabled = true;
-  _importStatus('AI 解析截圖中，請稍候…');
   document.getElementById('importPreview').style.display = 'none';
+  const collected = [];
   try {
-    const dataUrl = await _fileToDataUrl(file);
-    const r = await fetch('/api/parse-holdings-image', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ image: dataUrl }),
-    });
-    const j = await r.json();
-    if (!r.ok) { _importStatus(j.error || '解析失敗', 'var(--red)'); return; }
-    if (!j.holdings || !j.holdings.length) { _importStatus('沒有從截圖讀到任何持倉，換一張更清楚的圖試試', 'var(--red)'); return; }
-    _importRows = j.holdings;
+    for (let n = 0; n < imgs.length; n++) {
+      _importStatus(`AI 解析截圖中… ${n + 1}/${imgs.length}`);
+      const dataUrl = await _fileToDataUrl(imgs[n]);
+      const r = await fetch('/api/parse-holdings-image', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ image: dataUrl }),
+      });
+      const j = await r.json();
+      if (r.ok && j.holdings && j.holdings.length) collected.push(...j.holdings);
+    }
+    if (!collected.length) { _importStatus('沒有從截圖讀到任何持倉，換清楚一點的圖試試', 'var(--red)'); return; }
+    // 多張截圖依代碼去重（後出現的覆蓋先前），合併進匯入清單
+    const map = {};
+    collected.forEach(h => { const c = (h.code || '').trim().toUpperCase(); if (c) map[c] = h; });
+    _importRows = Object.values(map);
     renderImportPreview();
-    _importStatus(`AI 讀到 ${j.holdings.length} 檔持倉，請核對後匯入`, 'var(--green)');
+    _importStatus(`AI 從 ${imgs.length} 張截圖讀到 ${_importRows.length} 檔持倉，請核對後匯入`, 'var(--green)');
   } catch (err) {
     _importStatus('上傳失敗：' + err, 'var(--red)');
   } finally {
     btn.disabled = false;
   }
 }
+// 相容舊呼叫：單張仍可用
+function handleHoldingImage(file) { return handleHoldingImages([file]); }
 function renderImportPreview() {
   const tb = document.getElementById('importTbody');
   tb.innerHTML = _importRows.map((h, i) => `
@@ -1284,13 +1293,14 @@ window.addEventListener('paste', (e) => {
   const sec = document.getElementById('tab-portfolio');
   if (!sec || !sec.classList.contains('active')) return;
   const items = (e.clipboardData || window.clipboardData)?.items || [];
+  const files = [];
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
       const f = it.getAsFile();
-      if (f) { handleHoldingImage(f); e.preventDefault(); }
-      return;
+      if (f) files.push(f);
     }
   }
+  if (files.length) { handleHoldingImages(files); e.preventDefault(); }
 });
 (function initImportDnd() {
   const bar = document.querySelector('#tab-portfolio .import-bar');
@@ -1302,8 +1312,7 @@ window.addEventListener('paste', (e) => {
     e.preventDefault(); bar.style.borderColor = '';
   }));
   bar.addEventListener('drop', e => {
-    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-    if (f) handleHoldingImage(f);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length) handleHoldingImages(e.dataTransfer.files);
   });
 })();
 

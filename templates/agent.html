@@ -547,7 +547,7 @@ select.scan-input { width: 120px; }
         <div class="import-actions">
           <button class="import-btn" id="importBtn" onclick="document.getElementById('holdingImgInput').click()">上傳截圖</button>
           <span class="import-paste">或直接 Ctrl+V 貼上截圖、把圖拖進來也行</span>
-          <input type="file" id="holdingImgInput" accept="image/*" style="display:none" onchange="onHoldingImgPick(event)">
+          <input type="file" id="holdingImgInput" accept="image/*" multiple style="display:none" onchange="onHoldingImgPick(event)">
         </div>
         <div class="import-status" id="importStatus"></div>
         <div class="import-preview" id="importPreview" style="display:none">
@@ -692,15 +692,9 @@ select.scan-input { width: 120px; }
             例如：「幫我分析 2330 明天的操作策略」、「目前哪類族群比較有機會？」
           </div>
         </div>
-        <div id="chatImgPreview" style="display:none;margin-top:10px;">
-          <div style="display:inline-flex;align-items:center;gap:10px;background:#0a1020;border:1px solid var(--card-bd);border-radius:8px;padding:6px 10px;">
-            <img id="chatImgThumb" alt="" style="height:42px;max-width:80px;object-fit:cover;border-radius:4px;border:1px solid var(--card-bd);">
-            <span style="font-size:0.74rem;color:var(--text-dim);">已附加截圖</span>
-            <button onclick="clearAgentChatImage()" title="移除" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.95rem;line-height:1;">✕</button>
-          </div>
-        </div>
+        <div id="chatImgPreview" style="display:none;margin-top:10px;gap:8px;flex-wrap:wrap;align-items:center;"></div>
         <div class="chat-input-row">
-          <input type="file" id="chatImgInput" accept="image/*" style="display:none" onchange="onAgentChatImgPick(event)">
+          <input type="file" id="chatImgInput" accept="image/*" multiple style="display:none" onchange="onAgentChatImgPick(event)">
           <button class="chat-send-btn" id="chatAttachBtn" title="上傳截圖" style="background:#13233a;"
                   onclick="document.getElementById('chatImgInput').click()">
             <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 11l2.5 3 3.5-4.5L19 18H5l3.5-7z"/></svg>
@@ -1127,35 +1121,52 @@ function chatKey(e) {
 }
 
 // ── AI 對話：截圖上傳／貼上 ──────────────────────────────────────────────────
-let _agentChatImage = null;   // { dataUrl, media_type }
+let _agentChatImages = [];    // [{ dataUrl, media_type }]
+const AGENT_MAX_IMAGES = 8;
 function onAgentChatImgPick(e) {
-  const f = e.target.files && e.target.files[0];
-  if (f) handleAgentChatImage(f);
+  Array.from(e.target.files || []).forEach(handleAgentChatImage);
   e.target.value = '';
 }
 function handleAgentChatImage(file) {
   if (!file.type.startsWith('image/')) { alert('請選擇圖片檔'); return; }
+  if (_agentChatImages.length >= AGENT_MAX_IMAGES) { alert('一次最多 ' + AGENT_MAX_IMAGES + ' 張圖片'); return; }
   _downscaleToDataUrl(file, 1568, (dataUrl) => {
-    _agentChatImage = { dataUrl, media_type: 'image/jpeg' };
-    document.getElementById('chatImgThumb').src = dataUrl;
-    document.getElementById('chatImgPreview').style.display = 'block';
+    _agentChatImages.push({ dataUrl, media_type: 'image/jpeg' });
+    renderAgentChatPreview();
   });
 }
+function renderAgentChatPreview() {
+  const box = document.getElementById('chatImgPreview');
+  if (!_agentChatImages.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = _agentChatImages.map((im, i) =>
+    `<span style="position:relative;display:inline-block;">
+       <img src="${im.dataUrl}" alt="" style="height:42px;max-width:80px;object-fit:cover;border-radius:4px;border:1px solid var(--card-bd);display:block;">
+       <span onclick="removeAgentChatImage(${i})" title="移除" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;line-height:14px;text-align:center;font-size:11px;border-radius:50%;background:var(--red);color:#fff;cursor:pointer;">×</span>
+     </span>`
+  ).join('') +
+    `<span style="font-size:0.74rem;color:var(--text-dim);">${_agentChatImages.length} 張圖</span>` +
+    `<button onclick="clearAgentChatImage()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.74rem;">全部移除</button>`;
+}
+function removeAgentChatImage(i) {
+  _agentChatImages.splice(i, 1);
+  renderAgentChatPreview();
+}
 function clearAgentChatImage() {
-  _agentChatImage = null;
-  document.getElementById('chatImgPreview').style.display = 'none';
-  document.getElementById('chatImgThumb').src = '';
+  _agentChatImages = [];
+  renderAgentChatPreview();
 }
 window.addEventListener('paste', (e) => {
   if (!document.getElementById('tab-chat')?.classList.contains('active')) return;
   const items = (e.clipboardData || window.clipboardData)?.items || [];
+  let used = false;
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
       const f = it.getAsFile();
-      if (f) { handleAgentChatImage(f); e.preventDefault(); }
-      return;
+      if (f) { handleAgentChatImage(f); used = true; }
     }
   }
+  if (used) e.preventDefault();
 });
 (function initAgentChatDnd() {
   const row = document.querySelector('#tab-chat .chat-input-row');
@@ -1163,8 +1174,7 @@ window.addEventListener('paste', (e) => {
   ['dragover','dragenter'].forEach(ev => row.addEventListener(ev, e => e.preventDefault()));
   row.addEventListener('drop', e => {
     e.preventDefault();
-    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-    if (f) handleAgentChatImage(f);
+    Array.from(e.dataTransfer?.files || []).forEach(handleAgentChatImage);
   });
 })();
 
@@ -1172,7 +1182,7 @@ async function chatSend() {
   if (isChatStreaming) return;
   const input = document.getElementById('chatInput');
   const text  = input.value.trim();
-  if (!text && !_agentChatImage) return;
+  if (!text && !_agentChatImages.length) return;
 
   input.value = '';
   isChatStreaming = true;
@@ -1182,21 +1192,19 @@ async function chatSend() {
   const empty = document.querySelector('#tab-chat .empty-state');
   if (empty) empty.remove();
 
-  const img = _agentChatImage;
+  const imgs = _agentChatImages.slice();
   clearAgentChatImage();
 
   let content;
-  if (img) {
-    content = [
-      { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.dataUrl.split(',')[1] } },
-      { type: 'text',  text: text || '請分析這張截圖（可能是走勢圖或持倉），給出你的判斷。' },
-    ];
+  if (imgs.length) {
+    content = imgs.map(im => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.dataUrl.split(',')[1] } }));
+    content.push({ type: 'text', text: text || `請分析這${imgs.length > 1 ? imgs.length + ' 張' : '張'}截圖（可能是走勢圖或持倉），給出你的判斷。` });
   } else {
     content = text;
   }
   const userMsg = { role: 'user', content };
   chatMessages.push(userMsg);
-  appendChatMsg('user', text || '（請分析這張截圖）', img ? img.dataUrl : null);
+  appendChatMsg('user', text || `（請分析${imgs.length > 1 ? '這 ' + imgs.length + ' 張' : '這張'}截圖）`, imgs.map(im => im.dataUrl));
 
   const bubble = appendChatMsg('assistant', '');
   bubble.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
@@ -1238,7 +1246,7 @@ async function chatSend() {
   }
 }
 
-function appendChatMsg(role, text, imgUrl) {
+function appendChatMsg(role, text, imgUrls) {
   const wrap = document.getElementById('chatMsgs');
   const div  = document.createElement('div');
   div.className = 'chat-msg ' + role;
@@ -1247,12 +1255,14 @@ function appendChatMsg(role, text, imgUrl) {
   av.textContent = role === 'assistant' ? 'AI' : 'U';
   const bub = document.createElement('div');
   bub.className = 'chat-bubble';
-  if (imgUrl) {
+  // imgUrls 可為單一字串或字串陣列
+  const urls = Array.isArray(imgUrls) ? imgUrls : (imgUrls ? [imgUrls] : []);
+  urls.forEach(u => {
     const im = document.createElement('img');
-    im.src = imgUrl;
-    im.style.cssText = 'max-width:200px;max-height:200px;border-radius:8px;border:1px solid var(--card-bd);display:block;margin-bottom:6px;';
+    im.src = u;
+    im.style.cssText = 'max-width:200px;max-height:200px;border-radius:8px;border:1px solid var(--card-bd);display:inline-block;margin:0 6px 6px 0;';
     bub.appendChild(im);
-  }
+  });
   bub.appendChild(document.createTextNode(text));
   div.appendChild(av);
   div.appendChild(bub);
@@ -1312,8 +1322,7 @@ function _importStatus(msg, color) {
 }
 
 function onHoldingImgPick(e) {
-  const f = e.target.files && e.target.files[0];
-  if (f) handleHoldingImage(f);
+  if (e.target.files && e.target.files.length) handleHoldingImages(e.target.files);
   e.target.value = '';
 }
 
@@ -1339,32 +1348,42 @@ function _fileToDataUrl(file) {
   return new Promise((res) => _downscaleToDataUrl(file, 1568, res));
 }
 
-async function handleHoldingImage(file) {
-  if (!file.type.startsWith('image/')) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
+// 一次可解析多張截圖（例如券商分頁），結果依代碼去重後合併到匯入清單
+async function handleHoldingImages(files) {
+  const imgs = Array.from(files || []).filter(f => f.type.startsWith('image/'));
+  if (!imgs.length) { _importStatus('請選擇圖片檔', 'var(--red)'); return; }
   const btn = document.getElementById('importBtn');
   btn.disabled = true;
-  _importStatus('AI 解析截圖中，請稍候…');
   document.getElementById('importPreview').style.display = 'none';
+  const apiKey = (document.getElementById('claudeKeyInput')?.value || '').trim();
+  const collected = [];
   try {
-    const dataUrl = await _fileToDataUrl(file);
-    const apiKey  = (document.getElementById('claudeKeyInput')?.value || '').trim();
-    const r = await fetch('/api/parse-holdings-image', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ image: dataUrl, api_key: apiKey }),
-    });
-    const j = await r.json();
-    if (!r.ok) { _importStatus(j.error || '解析失敗', 'var(--red)'); return; }
-    if (!j.holdings || !j.holdings.length) { _importStatus('沒有從截圖讀到任何持倉，換一張更清楚的圖試試', 'var(--red)'); return; }
-    _importRows = j.holdings;
+    for (let n = 0; n < imgs.length; n++) {
+      _importStatus(`AI 解析截圖中… ${n + 1}/${imgs.length}`);
+      const dataUrl = await _fileToDataUrl(imgs[n]);
+      const r = await fetch('/api/parse-holdings-image', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ image: dataUrl, api_key: apiKey }),
+      });
+      const j = await r.json();
+      if (r.ok && j.holdings && j.holdings.length) collected.push(...j.holdings);
+    }
+    if (!collected.length) { _importStatus('沒有從截圖讀到任何持倉，換清楚一點的圖試試', 'var(--red)'); return; }
+    // 多張截圖依代碼去重（後出現的覆蓋先前），合併進匯入清單
+    const map = {};
+    collected.forEach(h => { const c = (h.code || '').trim().toUpperCase(); if (c) map[c] = h; });
+    _importRows = Object.values(map);
     renderImportPreview();
-    _importStatus(`AI 讀到 ${j.holdings.length} 檔持倉，請核對後匯入`, 'var(--green)');
+    _importStatus(`AI 從 ${imgs.length} 張截圖讀到 ${_importRows.length} 檔持倉，請核對後匯入`, 'var(--green)');
   } catch (err) {
     _importStatus('上傳失敗：' + err, 'var(--red)');
   } finally {
     btn.disabled = false;
   }
 }
+// 相容舊呼叫：單張仍可用
+function handleHoldingImage(file) { return handleHoldingImages([file]); }
 
 function renderImportPreview() {
   const tb = document.getElementById('importTbody');
@@ -1417,13 +1436,14 @@ function cancelImport() {
 window.addEventListener('paste', (e) => {
   if (!document.getElementById('tab-holdings')?.classList.contains('active')) return;
   const items = (e.clipboardData || window.clipboardData)?.items || [];
+  const files = [];
   for (const it of items) {
     if (it.type && it.type.startsWith('image/')) {
       const f = it.getAsFile();
-      if (f) { handleHoldingImage(f); e.preventDefault(); }
-      return;
+      if (f) files.push(f);
     }
   }
+  if (files.length) { handleHoldingImages(files); e.preventDefault(); }
 });
 (function initImportDnd() {
   const bar = document.querySelector('#tab-holdings .import-bar');
@@ -1435,8 +1455,7 @@ window.addEventListener('paste', (e) => {
     e.preventDefault(); bar.style.borderColor = '';
   }));
   bar.addEventListener('drop', e => {
-    const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-    if (f) handleHoldingImage(f);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length) handleHoldingImages(e.dataTransfer.files);
   });
 })();
 </script>
