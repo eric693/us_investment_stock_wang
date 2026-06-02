@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>策略工作台</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.wb-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.wb-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.wb-nav .brand span { color: var(--gold); }
+.wb-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.wb-nav a:hover { color: var(--text); background: #0d1628; }
+.wb-nav a.active { color: #fff; background: var(--accent); }
+.wb-nav a.home { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+
+.wb-wrap { max-width: 1060px; margin: 0 auto; padding: 22px 20px; }
+.wb-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.wb-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 20px; line-height: 1.6; }
+
+.wb-card { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 18px; margin-bottom: 18px; }
+.wb-card h2 { font-size: 0.98rem; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.wb-step { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 0.78rem; font-weight: 900; align-items: center; justify-content: center; }
+.wb-card h2 .sub { font-size: 0.72rem; color: var(--text-dim); font-weight: 500; }
+
+.wb-tabs { display: flex; gap: 6px; margin: 6px 0 16px; }
+.wb-tab { padding: 8px 16px; border-radius: 7px; font-size: 0.82rem; font-weight: 800; cursor: pointer;
+  background: #0a1120; border: 1px solid var(--card-bd); color: var(--text-mid); }
+.wb-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.wb-group { margin-bottom: 12px; }
+.wb-group .gname { font-size: 0.72rem; color: var(--gold); font-weight: 800; margin-bottom: 6px; }
+.wb-sigs { display: flex; gap: 8px; flex-wrap: wrap; }
+.wb-chk { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; background: #0a1120;
+  border: 1px solid var(--card-bd); border-radius: 7px; padding: 7px 11px; cursor: pointer; }
+.wb-chk input { cursor: pointer; }
+.wb-chk.on { border-color: var(--accent); background: #0d1e40; }
+
+.wb-grid { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+.wb-field { display: flex; flex-direction: column; gap: 5px; }
+.wb-field label { font-size: 0.68rem; color: var(--text-dim); font-weight: 700; }
+.wb-input, .wb-select { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 7px;
+  color: var(--text); padding: 9px 12px; font-size: 0.84rem; outline: none; width: 150px; }
+.wb-input:focus, .wb-select:focus { border-color: var(--accent); }
+
+.wb-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 10px 22px; font-size: 0.85rem; font-weight: 800; cursor: pointer; }
+.wb-btn.gold { background: linear-gradient(135deg, #c79a3a, #e0b84d); color: #1a1300; }
+.wb-btn.ghost { background: #13233a; }
+.wb-btn:hover { opacity: .9; } .wb-btn:disabled { opacity: .4; cursor: default; }
+.wb-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.wb-msg { font-size: 0.78rem; color: var(--gold); }
+
+table.wb-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.wb-tbl th { text-align: right; padding: 9px 10px; font-size: 0.68rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--card-bd); white-space: nowrap; }
+.wb-tbl th:first-child, .wb-tbl th.l { text-align: left; }
+.wb-tbl td { padding: 9px 10px; text-align: right; border-bottom: 1px solid #0d1628; white-space: nowrap; }
+.wb-tbl td:first-child, .wb-tbl td.l { text-align: left; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; } .muted { color: var(--text-dim); }
+.wb-hint { font-size: 0.74rem; color: var(--text-dim); line-height: 1.6; margin-top: 10px; }
+.wb-plan { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.8; }
+.wb-plan.dim { color: var(--text-dim); }
+
+.wb-aibox { background: #0a1120; border: 1px dashed #c79a3a66; border-radius: 9px; padding: 14px; margin-top: 12px; }
+.wb-aibox .ttl { font-size: 0.85rem; font-weight: 800; color: var(--gold); margin-bottom: 6px; }
+.wb-stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.wb-stat { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 9px; padding: 10px 14px; min-width: 130px; }
+.wb-stat .lbl { font-size: 0.64rem; color: var(--text-dim); font-weight: 700; }
+.wb-stat .val { font-size: 1.1rem; font-weight: 900; margin-top: 3px; }
+.wb-toggle { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+
+@media (max-width: 640px) {
+  .wb-wrap { padding: 16px 12px; }
+  table.wb-tbl { display: block; overflow-x: auto; }
+  .wb-input, .wb-select { width: 130px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="wb-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/goal">目標操盤</a>
+  <a href="/workbench" class="active">策略工作台</a>
+</nav>
+
+<div class="wb-wrap">
+  <h1 class="wb-title">策略工作台</h1>
+  <div class="wb-sub">
+    一條龍：① 選股（自己挑指標，或讓 AI 挑最佳策略）→ ② 設定買賣策略 → ③ 回測過去歷史報酬。
+    選股用的指標和回測的進場訊號是同一套，挑到的股票可直接帶去回測。
+  </div>
+
+  <!-- 步驟 1：選股 -->
+  <div class="wb-card">
+    <h2><span class="wb-step">1</span> 選股 <span class="sub">挑進場指標 → 掃描股池，找出今天觸發的股票</span></h2>
+    <div class="wb-tabs">
+      <div class="wb-tab active" id="tabManual" onclick="switchMode('manual')">自己挑指標</div>
+      <div class="wb-tab" id="tabAi" onclick="switchMode('ai')">AI 幫我挑策略</div>
+    </div>
+
+    <!-- AI 推薦區 -->
+    <div id="aiPane" style="display:none">
+      <div class="wb-row" style="margin-top:0">
+        <button class="wb-btn gold" id="aiBtn" onclick="aiPick()">請 AI 挑一組最佳策略</button>
+        <span class="wb-msg" id="aiMsg"></span>
+      </div>
+      <div id="aiResult"></div>
+    </div>
+
+    <!-- 指標選擇 -->
+    <div id="sigCatalog" style="margin-top:6px"><div class="wb-plan dim">載入指標中…</div></div>
+
+    <div class="wb-grid" style="margin-top:14px">
+      <div class="wb-field"><label>股池範圍</label>
+        <select class="wb-select" id="universe"></select>
+      </div>
+      <div class="wb-field"><label>最低股價</label><input class="wb-input" id="priceMin" type="number" placeholder="10"></div>
+      <div class="wb-field"><label>最高股價</label><input class="wb-input" id="priceMax" type="number" placeholder="500"></div>
+      <button class="wb-btn" id="scanBtn" onclick="runScan()">開始掃描</button>
+      <span class="wb-msg" id="scanMsg"></span>
+    </div>
+
+    <div id="scanResult" style="margin-top:14px"></div>
+  </div>
+
+  <!-- 步驟 2：買賣策略 -->
+  <div class="wb-card">
+    <h2><span class="wb-step">2</span> 買賣策略 <span class="sub">設定進場後何時出場（停損停利／移動停利／跌破均線／固定持有）</span></h2>
+    <div class="wb-grid">
+      <div class="wb-field"><label>出場（買賣）策略</label>
+        <select class="wb-select" id="exitSel" style="width:240px"></select>
+      </div>
+      <div class="wb-field"><label>回測期間</label>
+        <select class="wb-select" id="period">
+          <option value="1y">近 1 年</option>
+          <option value="3y" selected>近 3 年</option>
+          <option value="5y">近 5 年</option>
+        </select>
+      </div>
+    </div>
+    <div class="wb-hint">「停損10% / 停利10%」= 漲 10% 出場、跌 10% 停損；「跌破 MA5」= 收盤跌破 5 日均線就賣。</div>
+  </div>
+
+  <!-- 步驟 3：回測 -->
+  <div class="wb-card">
+    <h2><span class="wb-step">3</span> 回測 <span class="sub">用上面挑到的股票＋進場指標＋買賣策略，算過去歷史報酬</span></h2>
+    <div class="wb-row" style="margin-top:0">
+      <button class="wb-btn gold" id="btBtn" onclick="runBacktest()">回測勾選的股票</button>
+      <button class="wb-btn ghost" id="adviceBtn" onclick="getAdvice()" disabled>請 AI 解讀結果</button>
+      <span class="wb-msg" id="btMsg"></span>
+    </div>
+    <div class="wb-hint">回測會逐檔下載歷史資料，約數秒～半分鐘（依股票數量）。最多回測 25 檔。</div>
+    <div id="btResult" style="margin-top:14px"><div class="wb-plan dim">尚未回測。</div></div>
+    <div id="adviceResult" style="margin-top:12px"></div>
+  </div>
+
+  <!-- 每日自動掃描 -->
+  <div class="wb-card">
+    <h2><span class="wb-step" style="background:#c79a3a;color:#1a1300">★</span> 每日自動掃描 <span class="sub">把目前策略存起來，每天收盤自動掃一次並發 LINE 報告</span></h2>
+    <div class="wb-row" style="margin-top:0">
+      <label class="wb-toggle"><input type="checkbox" id="autoEnabled"> 啟用每日收盤自動掃描（需在 AI Agent 頁設定好 LINE 推播）</label>
+    </div>
+    <div class="wb-row">
+      <button class="wb-btn" id="saveAutoBtn" onclick="saveAuto()">儲存目前策略為每日掃描</button>
+      <span class="wb-msg" id="autoMsg"></span>
+    </div>
+    <div class="wb-hint" id="autoStatus"></div>
+  </div>
+</div>
+
+<script>
+const fmt = n => (n === null || n === undefined) ? '-' : Number(n).toLocaleString('zh-TW');
+const cls = v => v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted');
+const sign = v => v > 0 ? '+' : '';
+
+let CATALOG = { signal_groups: [], exits: [], universes: [] };
+let mode = 'manual';
+let selectedSignals = new Set();
+let lastScan = [];          // 掃描命中清單
+let lastBacktest = null;    // 回測結果
+
+function switchMode(m) {
+  mode = m;
+  document.getElementById('tabManual').classList.toggle('active', m === 'manual');
+  document.getElementById('tabAi').classList.toggle('active', m === 'ai');
+  document.getElementById('aiPane').style.display = m === 'ai' ? 'block' : 'none';
+}
+
+async function loadCatalog() {
+  CATALOG = await (await fetch('/api/workbench/catalog')).json();
+  // 指標目錄
+  const box = document.getElementById('sigCatalog');
+  box.innerHTML = CATALOG.signal_groups.map(g => `
+    <div class="wb-group">
+      <div class="gname">${g.name}</div>
+      <div class="wb-sigs">
+        ${g.signals.map(s => `
+          <label class="wb-chk" id="chk-${s.code}">
+            <input type="checkbox" value="${s.code}" onchange="toggleSig('${s.code}', this.checked)">
+            ${s.label}
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+  // 出場策略
+  const ex = document.getElementById('exitSel');
+  ex.innerHTML = CATALOG.exits.map((e, i) =>
+    `<option value="${i}">${e.name}</option>`).join('');
+  // 股池
+  const uni = document.getElementById('universe');
+  uni.innerHTML = CATALOG.universes.map(u =>
+    `<option value="${u.key}" ${u.key === 'top100' ? 'selected' : ''}>${u.label}</option>`).join('');
+}
+
+function toggleSig(code, on) {
+  if (on) selectedSignals.add(code); else selectedSignals.delete(code);
+  const el = document.getElementById('chk-' + code);
+  if (el) el.classList.toggle('on', on);
+}
+
+function setSignals(codes) {
+  selectedSignals = new Set(codes);
+  document.querySelectorAll('#sigCatalog input[type=checkbox]').forEach(cb => {
+    cb.checked = selectedSignals.has(cb.value);
+    document.getElementById('chk-' + cb.value)?.classList.toggle('on', cb.checked);
+  });
+}
+
+function currentExit() {
+  const i = Number(document.getElementById('exitSel').value || 0);
+  return CATALOG.exits[i] || null;
+}
+
+// ── AI 挑策略 ──────────────────────────────────────────────────────────────
+async function aiPick() {
+  const btn = document.getElementById('aiBtn');
+  btn.disabled = true; document.getElementById('aiMsg').textContent = 'AI 思考中…';
+  try {
+    const r = await (await fetch('/api/workbench/ai_strategy', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: '{}' })).json();
+    if (r.error) { document.getElementById('aiMsg').textContent = '失敗：' + r.error; return; }
+    document.getElementById('aiMsg').textContent = '';
+    // 套用 AI 選的指標
+    setSignals(r.signal_codes || []);
+    // 套用出場策略
+    if (r.exit) {
+      const idx = CATALOG.exits.findIndex(e => e.name === r.exit.name);
+      if (idx >= 0) document.getElementById('exitSel').value = idx;
+    }
+    document.getElementById('aiResult').innerHTML = `
+      <div class="wb-aibox">
+        <div class="ttl">AI 策略：${r.strategy_name || r.signal_name}</div>
+        <div class="wb-plan">進場指標：${r.signal_name}
+出場策略：${r.exit ? r.exit.name : '（未指定）'}
+
+${(r.reason || '').replace(/</g,'&lt;')}</div>
+        <div class="wb-hint">已自動勾好指標與出場策略，按下方「開始掃描」即可選股。</div>
+      </div>`;
+  } catch(e) { document.getElementById('aiMsg').textContent = '失敗：' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+// ── 掃描選股 ───────────────────────────────────────────────────────────────
+async function runScan() {
+  if (!selectedSignals.size) { document.getElementById('scanMsg').textContent = '請先勾選至少一個指標'; return; }
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true; document.getElementById('scanMsg').textContent = '掃描中…（約 10-40 秒）';
+  try {
+    const payload = {
+      signals: [...selectedSignals],
+      universe: document.getElementById('universe').value,
+      price_min: Number(document.getElementById('priceMin').value) || 0,
+      price_max: Number(document.getElementById('priceMax').value) || 0,
+    };
+    const r = await (await fetch('/api/workbench/scan', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+    if (r.error) { document.getElementById('scanMsg').textContent = '失敗：' + r.error; return; }
+    lastScan = r.results || [];
+    document.getElementById('scanMsg').textContent = `命中 ${r.matched} 檔（${r.signal_name}）`;
+    renderScan();
+  } catch(e) { document.getElementById('scanMsg').textContent = '失敗：' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+function renderScan() {
+  const el = document.getElementById('scanResult');
+  if (!lastScan.length) { el.innerHTML = '<div class="wb-plan dim">今天沒有符合這組指標的股票，可換指標或放寬股價。</div>'; return; }
+  el.innerHTML = `
+    <div class="wb-row" style="margin-top:0">
+      <button class="wb-btn ghost" onclick="selectAll(true)">全選</button>
+      <button class="wb-btn ghost" onclick="selectAll(false)">全不選</button>
+      <span class="wb-hint" style="margin:0">勾選要帶去回測的股票（預設全勾）</span>
+    </div>
+    <table class="wb-tbl" style="margin-top:10px">
+      <thead><tr><th class="l"><input type="checkbox" id="chkAll" checked onchange="selectAll(this.checked)"></th>
+        <th class="l">標的</th><th>現價</th><th>當日漲跌</th><th>觸發日</th></tr></thead>
+      <tbody>${lastScan.map((s, i) => `<tr>
+        <td class="l"><input type="checkbox" class="pick" value="${s.code}" checked></td>
+        <td class="l">${s.name}（${s.code}）</td>
+        <td>${s.price}</td>
+        <td class="${cls(s.changePct)}">${sign(s.changePct)}${s.changePct}%</td>
+        <td class="muted">${s.signal_date || '-'}</td></tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function selectAll(on) {
+  document.querySelectorAll('#scanResult .pick').forEach(cb => cb.checked = on);
+  const all = document.getElementById('chkAll'); if (all) all.checked = on;
+}
+
+function pickedCodes() {
+  return [...document.querySelectorAll('#scanResult .pick:checked')].map(cb => cb.value);
+}
+
+// ── 回測 ───────────────────────────────────────────────────────────────────
+async function runBacktest() {
+  const codes = pickedCodes();
+  if (!codes.length) { document.getElementById('btMsg').textContent = '請先掃描並勾選股票'; return; }
+  if (!selectedSignals.size) { document.getElementById('btMsg').textContent = '缺少進場指標'; return; }
+  const exit = currentExit();
+  if (!exit) { document.getElementById('btMsg').textContent = '請選擇買賣策略'; return; }
+
+  const btn = document.getElementById('btBtn');
+  btn.disabled = true; document.getElementById('btMsg').textContent = `回測 ${codes.length} 檔中…`;
+  document.getElementById('adviceBtn').disabled = true;
+  document.getElementById('adviceResult').innerHTML = '';
+  try {
+    const payload = { codes, signals: [...selectedSignals], exit,
+                      period: document.getElementById('period').value };
+    const r = await (await fetch('/api/workbench/backtest', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+    if (r.error) { document.getElementById('btMsg').textContent = '失敗：' + r.error; return; }
+    lastBacktest = r;
+    document.getElementById('btMsg').textContent = '回測完成';
+    renderBacktest(r);
+    document.getElementById('adviceBtn').disabled = false;
+  } catch(e) { document.getElementById('btMsg').textContent = '失敗：' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+function renderBacktest(r) {
+  const el = document.getElementById('btResult');
+  const s = r.summary || {};
+  const head = s.count ? `
+    <div class="wb-stats">
+      <div class="wb-stat"><div class="lbl">回測檔數</div><div class="val">${s.count}</div></div>
+      <div class="wb-stat"><div class="lbl">平均總報酬</div><div class="val ${cls(s.avg_total)}">${sign(s.avg_total)}${s.avg_total}%</div></div>
+      <div class="wb-stat"><div class="lbl">平均勝率</div><div class="val">${s.avg_win}%</div></div>
+      <div class="wb-stat"><div class="lbl">贏過買進持有</div><div class="val">${s.beat_bh}/${s.count}</div></div>
+      <div class="wb-stat"><div class="lbl">買進持有平均</div><div class="val ${cls(s.avg_bh)}">${sign(s.avg_bh)}${s.avg_bh}%</div></div>
+    </div>` : '';
+  const rows = (r.per_stock || []).map(p => `<tr>
+    <td class="l">${p.name}（${p.code}）</td>
+    <td>${p.n_signals}</td><td>${p.trades}</td>
+    <td>${p.win_rate}%</td>
+    <td class="${cls(p.total_ret)}">${sign(p.total_ret)}${p.total_ret}%</td>
+    <td class="${cls(p.avg_ret)}">${sign(p.avg_ret)}${p.avg_ret}%</td>
+    <td>${p.avg_hold}天</td>
+    <td class="${cls(p.buy_hold_ret)}">${sign(p.buy_hold_ret)}${p.buy_hold_ret}%</td></tr>`).join('');
+  el.innerHTML = head + `
+    <div class="wb-hint">進場：${r.entry_name}　出場：${r.exit_name}　期間：${r.period}</div>
+    <table class="wb-tbl" style="margin-top:8px">
+      <thead><tr><th class="l">標的</th><th>訊號次數</th><th>交易數</th><th>勝率</th>
+        <th>複利總報酬</th><th>平均每筆</th><th>平均持有</th><th>買進持有</th></tr></thead>
+      <tbody>${rows || '<tr><td class="l muted" colspan="8">無有效回測結果</td></tr>'}</tbody>
+    </table>`;
+}
+
+async function getAdvice() {
+  if (!lastBacktest) return;
+  const btn = document.getElementById('adviceBtn');
+  btn.disabled = true; document.getElementById('adviceResult').innerHTML = '<div class="wb-plan dim">AI 解讀中…</div>';
+  const s = lastBacktest.summary || {};
+  const top = (lastBacktest.per_stock || []).slice(0, 6).map(p => ({
+    strategy: lastBacktest.exit_name, total_ret: p.total_ret, win_rate: p.win_rate, trades: p.trades,
+  }));
+  const payload = {
+    mode: 'optimize',
+    name: lastBacktest.entry_name, code: '一籃股票',
+    period: lastBacktest.period, buy_hold_ret: s.avg_bh,
+    best: { entry: lastBacktest.entry_name, strategy: lastBacktest.exit_name,
+            total_ret: s.avg_total, win_rate: s.avg_win, trades: s.total_trades },
+    top,
+  };
+  try {
+    const r = await (await fetch('/api/backtest/advice', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+    document.getElementById('adviceResult').innerHTML = r.advice
+      ? `<div class="wb-aibox"><div class="ttl">AI 解讀</div><div class="wb-plan">${r.advice.replace(/</g,'&lt;')}</div></div>`
+      : `<div class="wb-plan dim">失敗：${r.error || ''}</div>`;
+  } catch(e) { document.getElementById('adviceResult').innerHTML = '<div class="wb-plan dim">失敗：' + e.message + '</div>'; }
+  finally { btn.disabled = false; }
+}
+
+// ── 每日自動掃描 ───────────────────────────────────────────────────────────
+async function loadAuto() {
+  try {
+    const w = await (await fetch('/api/workbench/config')).json();
+    document.getElementById('autoEnabled').checked = !!w.enabled;
+    let txt = '';
+    if (w.last_run) {
+      const m = w.last_result && w.last_result.matched ? w.last_result.matched.length : 0;
+      txt = `上次自動掃描：${w.last_run}，命中 ${m} 檔。`;
+    }
+    if (w.strategy_name) txt = `目前儲存的策略：${w.strategy_name}。 ` + txt;
+    document.getElementById('autoStatus').textContent = txt;
+  } catch(e) {}
+}
+
+async function saveAuto() {
+  if (!selectedSignals.size) { document.getElementById('autoMsg').textContent = '請先勾選指標'; return; }
+  const btn = document.getElementById('saveAutoBtn');
+  btn.disabled = true; document.getElementById('autoMsg').textContent = '儲存中…';
+  const exit = currentExit();
+  const payload = {
+    enabled: document.getElementById('autoEnabled').checked,
+    signals: [...selectedSignals],
+    exit,
+    universe: document.getElementById('universe').value,
+    price_min: Number(document.getElementById('priceMin').value) || 0,
+    price_max: Number(document.getElementById('priceMax').value) || 0,
+    strategy_name: (document.querySelector('#aiResult .ttl')?.textContent || '').replace('AI 策略：', '')
+                   || '自訂策略',
+  };
+  try {
+    const r = await (await fetch('/api/workbench/config', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+    document.getElementById('autoMsg').textContent = r.ok ? '已儲存' : ('失敗：' + (r.error||''));
+    loadAuto();
+  } catch(e) { document.getElementById('autoMsg').textContent = '失敗：' + e.message; }
+  finally { btn.disabled = false; setTimeout(()=>document.getElementById('autoMsg').textContent='', 3000); }
+}
+
+loadCatalog().then(loadAuto);
+</script>
+</body>
+</html>

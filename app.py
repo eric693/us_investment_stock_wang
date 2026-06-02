@@ -2851,12 +2851,76 @@ def calc_atr(high, low, close, period=14):
     return tr.rolling(period).mean()
 
 
-# ── TWSE 三大法人快取 ──────────────────────────────────────────────────
-_tw_inst_cache: dict = {}
+# ── FinMind 逐檔籌碼來源（本機被 TWSE 封鎖時的替代資料源）──────────────────
+#   TWSE openapi/www 從本機 IP 連不到（同中文名問題），改用 FinMind 逐檔取。
+#   免費匿名查詢需帶 data_id、且有限流，故採「每檔分開快取」，個股/持倉頁可正常顯示籌碼。
+_finmind_token_cache = {'v': None, 'loaded': False}
+
+def _finmind_token() -> str:
+    """FinMind token：優先環境變數，其次設定檔（register 等級可拉高逐檔查詢額度）。"""
+    t = os.environ.get('FINMIND_TOKEN')
+    if t:
+        return t.strip()
+    if not _finmind_token_cache['loaded']:
+        try:
+            _finmind_token_cache['v'] = (_load_agent_cfg().get('finmind_token') or '').strip()
+        except Exception:
+            _finmind_token_cache['v'] = ''
+        _finmind_token_cache['loaded'] = True
+    return _finmind_token_cache['v'] or ''
+
+
+def _finmind_fetch(dataset: str, data_id: str, days: int = 14) -> list:
+    """向 FinMind 取單一股票近 N 日某資料集，回 list（失敗回 []）。"""
+    import urllib.request, datetime
+    end   = datetime.date.today()
+    start = end - datetime.timedelta(days=days)
+    url = (f'https://api.finmindtrade.com/api/v4/data?dataset={dataset}'
+           f'&data_id={data_id}&start_date={start}&end_date={end}')
+    tok = _finmind_token()
+    if tok:
+        url += f'&token={tok}'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        d = json.loads(urllib.request.urlopen(req, timeout=20).read())
+        return d.get('data', []) or []
+    except Exception as e:
+        print(f'[FinMind] {dataset} {data_id} error: {e}')
+        return []
+
+
+def _inst_net_by_category(rows_one_day: list) -> dict:
+    """把 FinMind 某日某股的各類投資人 buy/sell 彙總成外資/投信/自營/合計。"""
+    buy  = {}
+    sell = {}
+    for r in rows_one_day:
+        nm = r.get('name', '')
+        buy[nm]  = buy.get(nm, 0)  + safe_float(r.get('buy', 0))
+        sell[nm] = sell.get(nm, 0) + safe_float(r.get('sell', 0))
+    net = lambda nm: buy.get(nm, 0) - sell.get(nm, 0)
+    foreign = net('Foreign_Investor') + net('Foreign_Dealer_Self')
+    trust   = net('Investment_Trust')
+    dealer  = net('Dealer_self') + net('Dealer_Hedging')
+    return {
+        'foreign_net': foreign, 'trust_net': trust, 'dealer_net': dealer,
+        'total_net':   foreign + trust + dealer,
+        'foreign_buy':  buy.get('Foreign_Investor', 0) + buy.get('Foreign_Dealer_Self', 0),
+        'foreign_sell': sell.get('Foreign_Investor', 0) + sell.get('Foreign_Dealer_Self', 0),
+        'trust_buy':  buy.get('Investment_Trust', 0),
+        'trust_sell': sell.get('Investment_Trust', 0),
+    }
+
+
+# ── TWSE 三大法人快取（改用 FinMind 逐檔）──────────────────────────────────
+_tw_inst_cache: dict = {}        # code -> (ts, dict|None)
+_tw_inst_hist_code_cache: dict = {}   # code -> (ts, dict|None)
+_tw_margin_code_cache: dict = {}      # code -> (ts, dict|None)
+_tw_lending_code_cache: dict = {}     # code -> (ts, dict|None) 借券賣出餘額
+_tw_daytrade_code_cache: dict = {}    # code -> (ts, dict|None) 當沖量
 _tw_inst_lock  = threading.Lock()
 
 def _load_tw_inst():
-    """抓 TWSE 今日三大法人資料，快取 1 小時"""
+    """（已停用：TWSE 從本機被封鎖，改走 FinMind 逐檔 _get_tw_inst）"""
     import urllib.request, datetime
     try:
         today = datetime.date.today().strftime('%Y%m%d')
@@ -2887,12 +2951,21 @@ def _load_tw_inst():
         return {}
 
 def _get_tw_inst(code: str):
+    """回傳單一股票最近交易日的三大法人買賣超（FinMind 逐檔，每檔快取 1 小時）。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
     with _tw_inst_lock:
-        ts = _tw_inst_cache.get('ts', 0)
-        data = _tw_inst_cache.get('data', {})
-    if time.time() - ts > 3600 or not data:
-        data = _load_tw_inst()
-    return data.get(code)
+        ent = _tw_inst_cache.get(code)
+    if ent and now - ent[0] < 3600:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockInstitutionalInvestorsBuySell', code, days=14)
+    res = None
+    if rows:
+        last = max(r.get('date', '') for r in rows)
+        res = _inst_net_by_category([r for r in rows if r.get('date') == last])
+    with _tw_inst_lock:
+        _tw_inst_cache[code] = (now, res)
+    return res
 
 
 # ── TWSE 三大法人「多日」歷史快取（供連N日買超）────────────────────────
@@ -2952,13 +3025,29 @@ def _load_tw_inst_history(days: int = 6):
     return result
 
 def _get_tw_inst_hist(code: str):
-    """回傳單一股票的多日法人序列 dict（最新在前），找不到回 None。"""
+    """回傳單一股票近 N 日法人買賣超序列（最新在前），FinMind 逐檔，每檔快取 4 小時。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
     with _tw_inst_hist_lock:
-        ts   = _tw_inst_hist_cache.get('ts', 0)
-        data = _tw_inst_hist_cache.get('data', {})
-    if time.time() - ts > 14400 or not data:
-        data = _load_tw_inst_history()
-    return data.get(code)
+        ent = _tw_inst_hist_code_cache.get(code)
+    if ent and now - ent[0] < 14400:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockInstitutionalInvestorsBuySell', code, days=16)
+    res = None
+    if rows:
+        by_date = {}
+        for r in rows:
+            by_date.setdefault(r.get('date', ''), []).append(r)
+        res = {'foreign': [], 'trust': [], 'dealer': [], 'total': []}
+        for d in sorted(by_date, reverse=True):   # 最新在前
+            agg = _inst_net_by_category(by_date[d])
+            res['foreign'].append(agg['foreign_net'])
+            res['trust'].append(agg['trust_net'])
+            res['dealer'].append(agg['dealer_net'])
+            res['total'].append(agg['total_net'])
+    with _tw_inst_hist_lock:
+        _tw_inst_hist_code_cache[code] = (now, res)
+    return res
 
 
 # ── TWSE 融資融券快取 ──────────────────────────────────────────────────
@@ -2996,13 +3085,71 @@ def _load_tw_margin():
         return {}
 
 def _get_tw_margin(code: str):
-    """回傳單一股票融資融券資料（dict），找不到則 None"""
+    """回傳單一股票最近交易日融資融券（FinMind 逐檔，每檔快取 1 小時），找不到回 None。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
     with _tw_margin_lock:
-        ts = _tw_margin_cache.get('ts', 0)
-        data = _tw_margin_cache.get('data', {})
-    if time.time() - ts > 3600 or not data:
-        data = _load_tw_margin()
-    return data.get(code)
+        ent = _tw_margin_code_cache.get(code)
+    if ent and now - ent[0] < 3600:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockMarginPurchaseShortSale', code, days=12)
+    res = None
+    if rows:
+        last = max(rows, key=lambda r: r.get('date', ''))
+        res = {
+            'margin_today': safe_float(last.get('MarginPurchaseTodayBalance', 0)),
+            'margin_prev':  safe_float(last.get('MarginPurchaseYesterdayBalance', 0)),
+            'short_today':  safe_float(last.get('ShortSaleTodayBalance', 0)),
+            'short_prev':   safe_float(last.get('ShortSaleYesterdayBalance', 0)),
+            'margin_buy':   safe_float(last.get('MarginPurchaseBuy', 0)),
+            'margin_sell':  safe_float(last.get('MarginPurchaseSell', 0)),
+            'short_buy':    safe_float(last.get('ShortSaleBuy', 0)),
+            'short_sell':   safe_float(last.get('ShortSaleSell', 0)),
+        }
+    with _tw_margin_lock:
+        _tw_margin_code_cache[code] = (now, res)
+    return res
+
+
+def _get_tw_lending(code: str):
+    """借券賣出餘額（FinMind TaiwanDailyShortSaleBalances 的 SBL，逐檔快取 1 小時）。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_lending_code_cache.get(code)
+    if ent and now - ent[0] < 3600:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanDailyShortSaleBalances', code, days=12)
+    res = None
+    if rows:
+        last = max(rows, key=lambda r: r.get('date', ''))
+        res = {
+            'lending_balance': safe_float(last.get('SBLShortSalesCurrentDayBalance', 0)),
+            'lending_sell':    safe_float(last.get('SBLShortSalesShortSales', 0)),
+        }
+    with _tw_margin_lock:
+        _tw_lending_code_cache[code] = (now, res)
+    return res
+
+
+def _get_tw_daytrade(code: str):
+    """當沖量（FinMind TaiwanStockDayTrading，回最近有量的一日 {date, volume}，逐檔快取 1 小時）。
+    當沖比由呼叫端用『當沖量 / 該日總量』算（總量取自價量歷史）。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_daytrade_code_cache.get(code)
+    if ent and now - ent[0] < 3600:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockDayTrading', code, days=12)
+    res = None
+    valid = [r for r in rows if safe_float(r.get('Volume', 0)) > 0]
+    if valid:
+        last = max(valid, key=lambda r: r.get('date', ''))
+        res = {'date': last.get('date', ''), 'volume': safe_float(last.get('Volume', 0))}
+    with _tw_margin_lock:
+        _tw_daytrade_code_cache[code] = (now, res)
+    return res
 
 
 def _eval_condition(hist, info, cond, extra=None):
@@ -4643,40 +4790,25 @@ def _fetch_predict_data(code: str) -> dict:
         else:
             result['margin'] = None
 
-        # ── 借券賣出餘額（近 5 日趨勢）──────────────────────
+        # ── 借券賣出餘額（FinMind，TWSE 本機被封鎖）──────────
         try:
-            today_str = datetime.date.today().strftime('%Y%m%d')
-            url = f'https://www.twse.com.tw/rwd/zh/shortselling/TWT93U?date={today_str}&response=json'
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
-            short_data = {}
-            if raw.get('stat') == 'OK':
-                for row in raw.get('data', []):
-                    if str(row[0]).strip() == code:
-                        short_data = {
-                            'lending_balance': safe_float(str(row[6]).replace(',','')),
-                            'lending_sell':    safe_float(str(row[4]).replace(',','')),
-                        }
-                        break
-            result['lending'] = short_data if short_data else None
+            result['lending'] = _get_tw_lending(code)
         except Exception:
             result['lending'] = None
 
-        # ── 當沖比 ────────────────────────────────────────────
+        # ── 當沖比（FinMind 當沖量 / 該日總量）────────────────
         try:
-            today_str = datetime.date.today().strftime('%Y%m%d')
-            url = f'https://www.twse.com.tw/rwd/zh/dayTrading/TWTB4U?date={today_str}&response=json'
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            dt = _get_tw_daytrade(code)
             day_trade_ratio = None
-            if raw.get('stat') == 'OK':
-                for row in raw.get('data', []):
-                    if str(row[0]).strip() == code:
-                        total_vol    = safe_float(str(row[2]).replace(',',''))
-                        daytrade_vol = safe_float(str(row[4]).replace(',',''))
-                        if total_vol > 0:
-                            day_trade_ratio = round(daytrade_vol / total_vol * 100, 1)
-                        break
+            if dt and dt.get('volume', 0) > 0:
+                # 取當沖那一日的總成交量（對不到日期則退回最新一日）
+                try:
+                    volmap = {i.strftime('%Y-%m-%d'): float(v) for i, v in vol.items()}
+                    total_vol = volmap.get(dt['date'], float(vol.iloc[-1]))
+                except Exception:
+                    total_vol = float(vol.iloc[-1])
+                if total_vol > 0:
+                    day_trade_ratio = round(dt['volume'] / total_vol * 100, 1)
             result['day_trade_ratio'] = day_trade_ratio
         except Exception:
             result['day_trade_ratio'] = None
@@ -5116,6 +5248,17 @@ def _default_agent_cfg() -> dict:
             'last_review':   '',     # 最近一次目標檢討日期
             'last_status':   None,   # 最近一次達標試算快照
         },
+        'workbench': {               # 策略工作台：存 AI 策略供每日收盤自動掃描
+            'enabled':       False,
+            'strategy_name': '',
+            'signals':       [],     # 進場訊號代碼清單
+            'exit':          {},     # 出場策略 dict
+            'universe':      'top100',
+            'price_min':     0,
+            'price_max':     0,      # 0 視為不限
+            'last_run':      '',     # 最近一次自動掃描日期
+            'last_result':   None,   # 最近一次掃描＋回測結果快照
+        },
         'last_scan': '',
         'last_morning': '',
         'last_close': '',
@@ -5379,10 +5522,24 @@ def _get_tw_universe(size: str = 'top100') -> list:
                 stocks.append((code, vol, price))
         stocks.sort(key=lambda x: -x[1])
         limit = 200 if size == 'top200' else (50 if size == 'top50' else 100)
-        return [s[0] for s in stocks[:limit]]
+        codes = [s[0] for s in stocks[:limit]]
+        if codes:
+            return codes
+        return _fallback_tw_universe(size)
     except Exception as e:
-        print(f'[Agent] universe error: {e}')
-        return []
+        print(f'[Agent] universe error: {e}（改用內建精選股池）')
+        return _fallback_tw_universe(size)
+
+
+def _fallback_tw_universe(size: str = 'top100') -> list:
+    """TWSE openapi 取不到時（本機 IP 常被擋）改用篩選器的精選股池清單。"""
+    codes = []
+    for lst in TW_SCREENER_UNIVERSE.values():
+        for c in lst:
+            if c not in codes:
+                codes.append(c)
+    limit = 200 if size == 'top200' else (50 if size == 'top50' else 100)
+    return codes[:limit]
 
 
 def _run_agent_scan(cfg: dict) -> list:
@@ -5744,6 +5901,75 @@ def _goal_status(cfg: dict) -> dict:
     return {'goal': goal, 'portfolio': snap, 'metrics': metrics}
 
 
+_GOAL_CHAT_SYSTEM_PROMPT = """你是使用者的「目標導向操盤」討論夥伴與教練。使用者會在這裡跟你討論他的持股、買賣決策與達標進度，並回饋他實際做了哪些買賣，你要陪他一起檢討對錯、一起進步。
+
+每則對話開頭會附上【目前狀況】，裡面有：使用者的目標與達標進度、目前持倉（含未實現損益）、已實現買賣帳本（他過去真的買進賣出的紀錄與賺賠）、以及最近一次 AI 產生的明日買賣計畫。請務必根據這些真實資料回答，不要說「我看不到你的持股」——你看得到，就寫在【目前狀況】裡。
+
+你的任務：
+1. 當使用者問「我這檔該不該賣／加碼」時，結合他的成本、損益、達標需要的年化報酬給明確建議（買進／加碼／續抱／減碼／賣出），不要模糊。
+2. 當使用者回饋「我昨天賣了X」「我買了Y」時，誠實檢討這個決策事後看對不對：賣得太早還是剛好、買在相對高還是低，並說出下次可以怎麼修正。語氣直接但不責備，重點是一起變強。
+3. 隨時把建議扣回「達標」這個總目標：落後計畫曲線時可略積極、領先時可保守落袋。
+4. 持倉中的 ETF（代碼多以 00 開頭）以中長期角度（淨值溢折價、配息、總經）判斷，不要因短線技術指標就叫賣。
+
+回應使用繁體中文，語氣直接務實，全程不要使用任何 emoji 或表情符號。"""
+
+
+def _goal_chat_context(cfg: dict) -> str:
+    """組『目前狀況』脈絡：目標進度＋持倉＋已實現買賣帳本＋最近計畫，餵給目標頁 AI 討論。"""
+    status  = _goal_status(cfg)
+    goal    = status['goal']
+    snap    = status['portfolio']
+    metrics = status['metrics']
+    lines = ['【目前狀況（系統即時提供，請據此回答）】']
+
+    if metrics.get('valid'):
+        lines.append(
+            f"目標：在 {goal.get('target_date')} 前把資產累積到 {metrics['target_amount']:,.0f} 元"
+            f"（起始 {metrics['start_capital']:,.0f} 元，起算日 {goal.get('start_date')}）。")
+        lines.append(
+            f"目前總資產 {metrics['current_value']:,.0f} 元（持股市值 {snap['market_value']:,.0f} ＋ 現金 "
+            f"{safe_float(goal.get('cash', 0)):,.0f}），完成度 {metrics['progress_pct']}%，剩 {metrics['years_left']} 年。")
+        gap = metrics['gap']
+        lines.append(
+            f"達標需要年化報酬 {metrics['req_cagr']}%，從現在到期限還需年化 {metrics['req_cagr_now']}%；"
+            f"目前{'領先' if gap >= 0 else '落後'}計畫曲線 {abs(gap):,.0f} 元。")
+    else:
+        lines.append('（目標參數尚未完整設定，僅就持倉與買賣紀錄討論。）')
+    lines.append(f"可投入現金：{safe_float(goal.get('cash', 0)):,.0f} 元；風險偏好：{goal.get('risk', 'balanced')}。")
+
+    lines.append('\n--- 目前持倉（未實現損益）---')
+    if snap['rows']:
+        for r in snap['rows']:
+            rz = _realized_summary_for(cfg, r['code'])
+            extra = f"；此檔過去已實現 {rz['pnl']:+,.0f} 元（{rz['pct']:+.1f}%，{rz['count']} 筆）" if rz else ''
+            lines.append(
+                f"{r['name']}（{r['code']}）{r['shares']:g} 股，成本 {r['buy_price']} 現價 {r['price']}，"
+                f"市值 {r['value']:,.0f}，未實現 {r['pnl_pct']:+.1f}%{extra}")
+    else:
+        lines.append('（目前無持倉）')
+
+    sells = sorted(cfg.get('sells', []), key=lambda s: s.get('date', ''), reverse=True)
+    lines.append('\n--- 已實現買賣帳本（使用者真的賣出的紀錄）---')
+    if sells:
+        total = round(sum(safe_float(s.get('realized_pnl', 0)) for s in sells), 0)
+        for s in sells[:12]:
+            note = f"，備註：{s['note']}" if s.get('note') else ''
+            lines.append(
+                f"{s.get('date')} 賣出 {s.get('name')}（{s.get('code')}）{safe_float(s.get('shares',0)):g} 股，"
+                f"買 {s.get('buy_price')} → 賣 {s.get('sell_price')}，實現 {safe_float(s.get('realized_pnl',0)):+,.0f} 元"
+                f"（{safe_float(s.get('realized_pct',0)):+.1f}%）{note}")
+        lines.append(f"累計已實現損益：{total:+,.0f} 元。")
+    else:
+        lines.append('（目前帳本沒有任何賣出紀錄。提醒：賣出請走 AI Agent 頁的「賣出記帳」，刪除持倉不會留下買賣紀錄，AI 就無法幫你檢討買賣對錯。）')
+
+    plan = (goal.get('last_plan') or '').strip()
+    if plan:
+        lines.append(f"\n--- 最近一次 AI 明日買賣計畫（{goal.get('last_review','')}）---")
+        lines.append(plan[:1200])
+
+    return '\n'.join(lines)
+
+
 def _run_goal_review(cfg: dict, client) -> dict:
     """目標導向每日檢討：算進度→看持倉賣訊→掃買進候選→Claude 產生明日買賣清單→推 LINE。"""
     goal = cfg.get('goal', {}) or {}
@@ -5988,6 +6214,16 @@ def _agent_loop():
                 except Exception as e:
                     print(f'[Agent] goal review error: {e}')
 
+            # 策略工作台每日收盤自動掃描（盤後，每日一次）
+            elif (now.hour >= 15
+                  and cfg.get('workbench', {}).get('enabled')
+                  and cfg.get('workbench', {}).get('signals')
+                  and cfg.get('workbench', {}).get('last_run', '') != today):
+                try:
+                    _run_workbench_daily(_load_agent_cfg(), client)
+                except Exception as e:
+                    print(f'[Agent] workbench scan error: {e}')
+
         except Exception as e:
             print(f'[Agent] loop error: {e}')
 
@@ -6014,6 +6250,8 @@ def agent_config_api():
             safe['claude_api_key'] = '***' + safe['claude_api_key'][-4:]
         if safe.get('line_token'):
             safe['line_token'] = '***' + safe['line_token'][-4:]
+        if safe.get('finmind_token'):
+            safe['finmind_token'] = '***' + safe['finmind_token'][-4:]
         return jsonify(safe)
 
     body = request.get_json(force=True)
@@ -6025,10 +6263,12 @@ def agent_config_api():
             cfg[field] = body[field]
 
     # 機密欄位：只有收到「非遮罩」的新值才覆寫，避免把已存的金鑰／token 洗成 ***
-    for secret in ['claude_api_key', 'line_token']:
+    for secret in ['claude_api_key', 'line_token', 'finmind_token']:
         val = body.get(secret)
         if val and not str(val).startswith('***'):
             cfg[secret] = val
+            if secret == 'finmind_token':
+                _finmind_token_cache['loaded'] = False   # 讓快取重新讀取新 token
 
     _save_agent_cfg(cfg)
     return jsonify({'ok': True})
@@ -6264,12 +6504,16 @@ def agent_analyze_api(code):
 def agent_chat_api():
     import anthropic
     from flask import Response, stream_with_context
+    cfg     = _load_agent_cfg()
     body    = request.get_json(force=True)
-    api_key = body.get('api_key', '') or _load_agent_cfg().get('claude_api_key', '')
+    api_key = body.get('api_key', '') or _agent_api_key(cfg)
     msgs    = body.get('messages', [])
 
     if not api_key:
         return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    # 把目前持倉＋已實現買賣帳本帶給 AI，讓對話看得到部位、能討論買賣（不再「偵測不到持股」）
+    system = _AGENT_SYSTEM_PROMPT + '\n\n' + _goal_chat_context(cfg)
 
     def generate():
         try:
@@ -6277,7 +6521,7 @@ def agent_chat_api():
             with client.messages.stream(
                 model='claude-opus-4-8',
                 max_tokens=1000,
-                system=_AGENT_SYSTEM_PROMPT,
+                system=system,
                 messages=msgs,
             ) as stream:
                 for text in stream.text_stream:
@@ -6342,6 +6586,42 @@ def agent_goal_status_api():
             pass
     status['review_status'] = rs
     return jsonify(status)
+
+
+@app.route('/api/agent/goal/chat', methods=['POST'])
+def agent_goal_chat_api():
+    """目標頁 AI 討論：自動把目標進度＋持倉＋已實現買賣帳本帶給 AI，讓它看得到部位、能檢討買賣。"""
+    import anthropic
+    from flask import Response, stream_with_context
+    cfg     = _load_agent_cfg()
+    body    = request.get_json(force=True) or {}
+    api_key = body.get('api_key', '') or _agent_api_key(cfg)
+    msgs    = body.get('messages', [])
+
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key'}), 400
+
+    system = _GOAL_CHAT_SYSTEM_PROMPT + '\n\n' + _goal_chat_context(cfg)
+
+    def generate():
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            with client.messages.stream(
+                model='claude-opus-4-8',
+                max_tokens=1200,
+                system=system,
+                messages=msgs,
+            ) as stream:
+                for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
+            yield 'data: [DONE]\n\n'
+        except anthropic.AuthenticationError:
+            yield f"data: {json.dumps({'error': 'API Key 無效'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 @app.route('/api/market/overnight')
@@ -6943,6 +7223,8 @@ def _exit_strategy_grid():
         grid.append({'name': f'固定持有{label}', 'type': 'fixed', 'hold': d})
     for tr in [0.08, 0.10, 0.15]:
         grid.append({'name': f'移動停利{int(tr*100)}%', 'type': 'trailing', 'trail': tr})
+    for ma in [5, 10, 20]:
+        grid.append({'name': f'跌破 MA{ma} 出場', 'type': 'ma_break', 'ma': ma})
     return grid
 
 
@@ -6955,6 +7237,10 @@ def _simulate_trades(hist, entry_mask, exit_cfg, max_hold=252):
     trades = []
     etype  = exit_cfg['type']
     hold_limit = exit_cfg.get('hold', max_hold)
+    # 跌破均線出場：先算好整段 MA 序列，收盤跌破即在當根收盤價出場
+    ma_arr = None
+    if etype == 'ma_break':
+        ma_arr = hist['Close'].rolling(int(exit_cfg.get('ma', 5)), min_periods=1).mean().values
 
     i = 0
     while i < n - 1:
@@ -6982,6 +7268,9 @@ def _simulate_trades(hist, entry_mask, exit_cfg, max_hold=252):
             elif etype == 'trailing':
                 if low[j] <= peak * (1 - exit_cfg['trail']):
                     exit_price = peak * (1 - exit_cfg['trail']); exit_idx = j; break
+            elif etype == 'ma_break':
+                if close[j] < ma_arr[j]:
+                    exit_price = close[j]; exit_idx = j; break
             # fixed：不中途出場，等持有期滿
         if exit_price is None:
             exit_idx   = min(i + hold_limit, n - 1)
@@ -7110,6 +7399,136 @@ def _optimize_backtest(ticker, period='3y', min_trades=4):
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  策略工作台：用「回測進場訊號」當選股條件（選股 ≡ 回測同一套指標）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _scan_entry_signals(signal_codes, universe_key='top100',
+                        price_min=0, price_max=99999, period='2y') -> list:
+    """對股池每檔，檢查所選進場訊號是否在『最新一根 K 棒』同時觸發（AND）。
+    觸發 = 今天選出這檔。與回測進場訊號完全同源，選出來可直接拿去回測。"""
+    codes = _normalize_signal(signal_codes)
+    universe = _get_tw_universe(universe_key)
+    tickers  = list(dict.fromkeys(tw_normalize(c) for c in universe))
+
+    def _check(t):
+        try:
+            hist, code, name = _bt_load_history(t, period)
+            if hist is None or len(hist) < 30:
+                return None
+            price = float(hist['Close'].iloc[-1])
+            if not (price_min <= price <= price_max):
+                return None
+            mask = _compute_entry_mask(hist, codes)
+            if not (len(mask) and bool(mask[-1])):
+                return None
+            prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else price
+            change = round((price / prev - 1) * 100, 2) if prev else 0
+            return {
+                'code': code, 'name': name, 'price': round(price, 2),
+                'changePct': change,
+                'signal_date': hist.index[-1].strftime('%Y-%m-%d'),
+            }
+        except Exception:
+            return None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(_check, t): t for t in tickers}
+        for f in as_completed(futs):
+            try:
+                r = f.result()
+                if r:
+                    results.append(r)
+            except Exception:
+                pass
+    results.sort(key=lambda x: x.get('changePct', 0), reverse=True)
+    return results
+
+
+def _workbench_batch_backtest(codes, signal_codes, exit_cfg, period='3y') -> dict:
+    """對一籃股票用『同一進場訊號 + 同一買賣策略』逐檔回測，回每檔績效＋整籃彙總。"""
+    sig = _normalize_signal(signal_codes)
+    per_stock = []
+
+    def _one(code):
+        hist, c, name = _bt_load_history(code, period)
+        if hist is None:
+            return None
+        mask   = _compute_entry_mask(hist, sig)
+        trades = _simulate_trades(hist, mask, exit_cfg)
+        summ   = _summarize(trades)
+        bh = round((hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100, 1)
+        summ.update({'code': c, 'name': name, 'n_signals': int(mask.sum()),
+                     'buy_hold_ret': bh})
+        return summ
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for r in ex.map(_one, codes):
+            if r:
+                per_stock.append(r)
+
+    per_stock.sort(key=lambda x: x['total_ret'], reverse=True)
+    n = len(per_stock)
+    agg = {}
+    if n:
+        agg = {
+            'count':      n,
+            'avg_total':  round(sum(s['total_ret'] for s in per_stock) / n, 1),
+            'avg_win':    round(sum(s['win_rate']  for s in per_stock) / n, 1),
+            'avg_bh':     round(sum(s['buy_hold_ret'] for s in per_stock) / n, 1),
+            'total_trades': sum(s['trades'] for s in per_stock),
+            'beat_bh':    sum(1 for s in per_stock if s['total_ret'] > s['buy_hold_ret']),
+        }
+    return {
+        'entry':    sig if len(sig) > 1 else sig[0],
+        'entry_name': _signal_label(sig),
+        'exit_name':  exit_cfg.get('name', exit_cfg.get('type', '')),
+        'period':   period,
+        'per_stock': per_stock,
+        'summary':  agg,
+    }
+
+
+def _run_workbench_daily(cfg, client=None) -> dict:
+    """每日收盤：用使用者存的工作台策略掃描股池＋回測前幾檔，推 LINE 報告。"""
+    wb = cfg.get('workbench', {}) or {}
+    if not wb.get('enabled') or not wb.get('signals'):
+        return {}
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+    pmax  = safe_float(wb.get('price_max', 0)) or 99999
+    matched = _scan_entry_signals(
+        wb['signals'], wb.get('universe', 'top100'),
+        safe_float(wb.get('price_min', 0)), pmax)
+    top_codes = [m['code'] for m in matched[:10]]
+    exit_cfg  = wb.get('exit') or _exit_strategy_grid()[0]
+    bt = _workbench_batch_backtest(top_codes, wb['signals'], exit_cfg) if top_codes else {}
+
+    name = wb.get('strategy_name') or _signal_label(_normalize_signal(wb['signals']))
+    lines = [f'[{today}] 策略工作台掃描', f'策略：{name}',
+             f'出場：{exit_cfg.get("name", "")}', '']
+    if matched:
+        lines.append(f'今日觸發 {len(matched)} 檔，前幾名：')
+        for m in matched[:8]:
+            lines.append(f"{m['name']}（{m['code']}） {m['price']} 元（{m['changePct']:+.1f}%）")
+        s = bt.get('summary') or {}
+        if s:
+            lines.append('')
+            lines.append(f"前 {s['count']} 檔歷史回測：平均總報酬 {s['avg_total']}%、"
+                         f"平均勝率 {s['avg_win']}%、{s['beat_bh']}/{s['count']} 檔贏過買進持有。")
+    else:
+        lines.append('今日無符合此策略的標的。')
+
+    cfg = _load_agent_cfg()
+    wb = cfg.get('workbench', {}) or {}
+    wb['last_run'] = today
+    wb['last_result'] = {'date': today, 'matched': matched[:20], 'backtest': bt}
+    cfg['workbench'] = wb
+    _save_agent_cfg(cfg)
+    _agent_notify(cfg, '策略工作台掃描', '\n'.join(lines))
+    return wb['last_result']
+
+
 def _tool_backtest(code, signal='kd_gc', period='3y'):
     """回測工具：回傳最優出場策略與排名（精簡給 AI）。"""
     r = _run_backtest(code, signal, period)
@@ -7205,7 +7624,8 @@ def _run_daily_optimizer(cfg, client):
                                'name': m['name'], 'price': m['price']} for m in top],
         })
 
-    ranked.sort(key=lambda x: x['avg_backtest_ret'], reverse=True)
+    # 先有選到標的的策略才排前面，再比回測平均報酬；全空窗時不會硬挑一個假最佳
+    ranked.sort(key=lambda x: (x['match_count'] > 0, x['avg_backtest_ret']), reverse=True)
     summary = _optimizer_ai_summary(client, ranked)
 
     cfg = _load_agent_cfg()
@@ -7213,12 +7633,19 @@ def _run_daily_optimizer(cfg, client):
     cfg['last_optimize']  = today
     _save_agent_cfg(cfg)
 
-    best = ranked[0] if ranked else None
+    # 只有真的選到標的的策略才能當「最佳」；否則視為訊號空窗
+    best = next((r for r in ranked if r['match_count'] > 0), None)
     body_lines = [f'[{today}] 每日最佳策略優化', '']
     if best:
         picks = '、'.join(f"{p['name']}({p['code']})" for p in best['top_picks']) or '無'
-        body_lines.append(f"今日最佳策略：{best['name']}（回測平均 {best['avg_backtest_ret']}%）")
-        body_lines.append(f"候選：{picks}")
+        body_lines.append(f"今日最佳策略：{best['name']}")
+        body_lines.append(f"進場訊號：{best['entry_signal']}")
+        body_lines.append(f"符合 {best['match_count']} 檔，回測平均報酬 {best['avg_backtest_ret']}%")
+        body_lines.append(f"候選標的：{picks}")
+        body_lines.append('')
+    else:
+        body_lines.append('今日五大策略皆無標的通過篩選（訊號空窗），建議空手觀望，'
+                          '不在此時硬挑「最佳策略」。')
         body_lines.append('')
     body_lines.append(summary[:400])
     _agent_notify(cfg, '每日策略優化', '\n'.join(body_lines))
@@ -7455,6 +7882,136 @@ def backtest_advice():
         return jsonify({'error': 'API Key 無效'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  策略工作台（選股 → 買賣策略 → 回測 一條龍）
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route('/workbench')
+def workbench_page():
+    return render_template('workbench.html')
+
+
+@app.route('/api/workbench/catalog')
+def workbench_catalog():
+    """進場指標分組（同回測訊號）＋出場策略選項＋股池選項，供前端建表。"""
+    return jsonify({
+        'signal_groups': SIGNAL_GROUPS_PUBLIC,
+        'exits':         _exit_strategy_grid(),
+        'universes':     [
+            {'key': 'top50',  'label': '成交量前 50 大'},
+            {'key': 'top100', 'label': '成交量前 100 大'},
+            {'key': 'top200', 'label': '成交量前 200 大'},
+        ],
+    })
+
+
+@app.route('/api/workbench/scan', methods=['POST'])
+def workbench_scan():
+    """以選定的進場訊號掃描股池，回傳今天觸發的股票（= 選股）。"""
+    body     = request.get_json(force=True) or {}
+    signals  = body.get('signals', [])
+    if not signals:
+        return jsonify({'error': '請至少選一個進場指標'}), 400
+    universe = body.get('universe', 'top100')
+    pmin     = safe_float(body.get('price_min', 0))
+    pmax     = safe_float(body.get('price_max', 99999)) or 99999
+    try:
+        results = _scan_entry_signals(signals, universe, pmin, pmax)
+        return jsonify({'results': results, 'matched': len(results),
+                        'signal_name': _signal_label(_normalize_signal(signals))})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'掃描錯誤：{str(e)[:80]}'}), 500
+
+
+@app.route('/api/workbench/ai_strategy', methods=['POST'])
+def workbench_ai_strategy():
+    """AI 從進場指標目錄挑一組策略（含建議出場），列出指標與理由給使用者確認。"""
+    import anthropic
+    cfg     = _load_agent_cfg()
+    body    = request.get_json(force=True) or {}
+    api_key = (body.get('api_key', '') or '').strip() or _agent_api_key(cfg)
+    if not api_key:
+        return jsonify({'error': '未設定 Claude API Key，請至 AI Agent 頁面設定'}), 400
+
+    catalog = '\n'.join(
+        f"- {code}：{label}"
+        for _g, items in _SIGNAL_DEFS for code, label, _fn in items)
+    exits = '\n'.join(f"- {e['name']}" for e in _exit_strategy_grid())
+    prompt = (
+        '你是台股策略設計師。請從下面的「可用進場指標」挑出 2 到 4 個能互相搭配、邏輯一致的指標，'
+        '組成一個起漲選股策略，並從「可用出場策略」挑一個最搭的買賣出場規則。\n\n'
+        f'可用進場指標（代碼：說明）：\n{catalog}\n\n'
+        f'可用出場策略：\n{exits}\n\n'
+        '只能從上面清單挑，不可自創。請只回傳 JSON，格式：\n'
+        '{"signal_codes": ["代碼1","代碼2"], "exit_name": "完整出場策略名稱", '
+        '"strategy_name": "策略短名", "reason": "為何這樣組（繁體中文，2-3 句，不要 emoji）"}'
+    )
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-opus-4-8', max_tokens=600,
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        text = resp.content[0].text.strip()
+        m = _re.search(r'\{.*\}', text, _re.S)
+        data = json.loads(m.group(0)) if m else {}
+        codes = _normalize_signal(data.get('signal_codes', []))
+        exit_name = data.get('exit_name', '')
+        exit_cfg = next((e for e in _exit_strategy_grid() if e['name'] == exit_name), None)
+        return jsonify({
+            'signal_codes': codes,
+            'signal_name':  _signal_label(codes),
+            'exit':         exit_cfg,
+            'strategy_name': data.get('strategy_name', ''),
+            'reason':       _strip_emoji(data.get('reason', '')),
+        })
+    except anthropic.AuthenticationError:
+        return jsonify({'error': 'API Key 無效'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/workbench/backtest', methods=['POST'])
+def workbench_backtest():
+    """對選股命中的一籃股票，用同一進場訊號＋同一買賣策略批次回測。"""
+    body    = request.get_json(force=True) or {}
+    codes   = [str(c).strip().upper().replace('.TW', '').replace('.TWO', '')
+               for c in body.get('codes', []) if str(c).strip()]
+    signals = body.get('signals', [])
+    exit_cfg = body.get('exit') or {}
+    period  = body.get('period', '3y')
+    if not codes:
+        return jsonify({'error': '沒有要回測的股票'}), 400
+    if not signals:
+        return jsonify({'error': '缺少進場指標'}), 400
+    if not exit_cfg.get('type'):
+        return jsonify({'error': '請選擇買賣（出場）策略'}), 400
+    codes = list(dict.fromkeys(codes))[:25]   # 上限保護
+    try:
+        return jsonify(_workbench_batch_backtest(codes, signals, exit_cfg, period))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'回測錯誤：{str(e)[:80]}'}), 500
+
+
+@app.route('/api/workbench/config', methods=['GET', 'POST'])
+def workbench_config_api():
+    """讀取/儲存工作台 AI 策略（供每日自動掃描使用）。"""
+    cfg = _load_agent_cfg()
+    if request.method == 'GET':
+        return jsonify(cfg.get('workbench', {}))
+    body = request.get_json(force=True) or {}
+    wb = cfg.get('workbench', {}) or {}
+    for k in ('enabled', 'signals', 'exit', 'universe', 'price_min', 'price_max',
+              'strategy_name'):
+        if k in body:
+            wb[k] = body[k]
+    cfg['workbench'] = wb
+    _save_agent_cfg(cfg)
+    return jsonify({'ok': True, 'workbench': wb})
 
 
 if __name__ == '__main__':

@@ -73,6 +73,26 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .gl-us .idx { color: var(--text-mid); }
 .gl-us .idx b { color: var(--text); font-weight: 700; }
 
+/* AI 討論 */
+.gc-msgs { display: flex; flex-direction: column; gap: 12px; max-height: 460px; overflow-y: auto;
+  padding: 4px 2px; margin-bottom: 12px; }
+.gc-msg { display: flex; gap: 9px; max-width: 92%; }
+.gc-msg.user { flex-direction: row-reverse; align-self: flex-end; }
+.gc-av { width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%; font-size: 0.66rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; }
+.gc-msg.assistant .gc-av { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+.gc-msg.user .gc-av { background: #1a2540; color: var(--text-mid); border: 1px solid var(--card-bd); }
+.gc-bubble { background: #0a1120; border: 1px solid var(--card-bd); border-radius: 10px; padding: 10px 13px;
+  font-size: 0.84rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.gc-msg.user .gc-bubble { background: #0d1e40; border-color: #1a3060; }
+.gc-input-row { display: flex; gap: 8px; }
+.gc-textarea { flex: 1; background: #0a1120; border: 1px solid var(--card-bd); border-radius: 8px;
+  color: var(--text); padding: 10px 12px; font-size: 0.84rem; resize: vertical; outline: none; font-family: inherit; }
+.gc-textarea:focus { border-color: var(--accent); }
+.gc-send { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0 20px;
+  font-size: 0.84rem; font-weight: 800; cursor: pointer; }
+.gc-send:hover { opacity: .9; } .gc-send:disabled { opacity: .4; cursor: default; }
+
 /* 手機版 */
 @media (max-width: 640px) {
   .gl-wrap { padding: 16px 12px; }
@@ -149,6 +169,23 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     </div>
     <div class="gl-hint">檢討在背景執行約 1-2 分鐘，完成後本頁與 LINE 都會收到計畫。可重新整理本頁查看最新計畫。</div>
     <div id="plan" style="margin-top:14px"><div class="gl-plan dim">尚無計畫。</div></div>
+  </div>
+
+  <!-- AI 討論 -->
+  <div class="gl-card">
+    <h2>AI 討論 <span class="sub">AI 會看到你的目標、持倉與買賣帳本，可回饋買賣對錯一起檢討</span></h2>
+    <div class="gl-hint" style="margin-top:0;margin-bottom:10px">
+      例如：「台積電我該續抱還是落袋？」「我昨天把 2330 賣了 990，這樣對嗎？」「以達標角度，這個月我該偏積極還是保守？」
+      回饋實際買賣請到 <a href="/agent" style="color:var(--accent)">AI Agent</a> 頁用「賣出記帳」，AI 才看得到並能檢討。
+    </div>
+    <div class="gc-msgs" id="gcMsgs">
+      <div class="gl-plan dim">嗨，我看得到你的目標進度、目前持倉與已實現買賣帳本。想討論哪一檔、或哪一筆買賣決策？</div>
+    </div>
+    <div class="gc-input-row">
+      <textarea class="gc-textarea" id="gcInput" rows="2"
+                placeholder="輸入問題，例如：我這檔該不該賣？昨天的賣出對嗎？" onkeydown="gcKey(event)"></textarea>
+      <button class="gc-send" id="gcSendBtn" onclick="gcSend()">送出</button>
+    </div>
   </div>
 </div>
 
@@ -293,6 +330,77 @@ async function loadUs() {
       `<span class="bias ${bc}">昨夜美股 → 台股 ${u.bias}</span>${idx}`;
     document.getElementById('usBanner').style.display = 'flex';
   } catch(e) {}
+}
+
+// ── AI 討論 ───────────────────────────────────────────────────────────────
+let gcMessages = [];
+let gcStreaming = false;
+
+function gcKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); gcSend(); } }
+
+function gcAppend(role, text) {
+  const wrap = document.getElementById('gcMsgs');
+  const empty = wrap.querySelector('.gl-plan.dim');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'gc-msg ' + role;
+  const av = document.createElement('div');
+  av.className = 'gc-av';
+  av.textContent = role === 'assistant' ? 'AI' : '我';
+  const bub = document.createElement('div');
+  bub.className = 'gc-bubble';
+  bub.textContent = text;
+  div.appendChild(av); div.appendChild(bub);
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  return bub;
+}
+
+async function gcSend() {
+  if (gcStreaming) return;
+  const input = document.getElementById('gcInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  gcStreaming = true;
+  document.getElementById('gcSendBtn').disabled = true;
+
+  gcMessages.push({ role: 'user', content: text });
+  gcAppend('user', text);
+  const bubble = gcAppend('assistant', '…');
+
+  try {
+    const resp = await fetch('/api/agent/goal/chat', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: gcMessages }),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    bubble.textContent = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value, {stream:true}).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const p = line.slice(6).trim();
+        if (p === '[DONE]') break;
+        try {
+          const o = JSON.parse(p);
+          if (o.error) { bubble.textContent = '錯誤：' + o.error; return; }
+          if (o.text) { full += o.text; bubble.textContent = full;
+            document.getElementById('gcMsgs').scrollTop = document.getElementById('gcMsgs').scrollHeight; }
+        } catch(_) {}
+      }
+    }
+    gcMessages.push({ role: 'assistant', content: full });
+    if (gcMessages.length > 20) gcMessages = gcMessages.slice(-20);
+  } catch(e) {
+    bubble.textContent = '錯誤：' + e.message;
+  } finally {
+    gcStreaming = false;
+    document.getElementById('gcSendBtn').disabled = false;
+  }
 }
 
 loadGoal();
