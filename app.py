@@ -8015,6 +8015,19 @@ def backtest_advice():
 # 工作台選股可加的「籌碼/量能篩選條件」（選股時套用，縮小範圍；不進回測）。
 # 只列免費 FinMind 取得到的；大戶持股級距、分點券商需 FinMind 付費 sponsor，暫不列。
 WORKBENCH_CONDITION_GROUPS = [
+    {'name': '趨勢／均線（狀態）', 'conditions': [
+        {'type': 'price_above_ma', 'label': '股價站上 N 日均線（站上即算，非剛突破）',
+         'params': [{'key': 'period', 'label': 'MA', 'default': 60}]},
+        {'type': 'ma_trending_up', 'label': 'N 日均線向上彎',
+         'params': [{'key': 'period', 'label': 'MA', 'default': 20}]},
+        {'type': 'ma_bull_alignment', 'label': '均線多頭排列（5>10>20>60）', 'params': []},
+        {'type': 'price_from_high_below', 'label': '距 52 週高點回檔 < N%',
+         'params': [{'key': 'threshold', 'label': '%', 'default': 20}]},
+        {'type': 'rsi_below', 'label': 'RSI 低於 N（超賣）',
+         'params': [{'key': 'threshold', 'label': 'RSI', 'default': 30}]},
+        {'type': 'kd_k_below', 'label': 'KD 的 K 值低於 N（低檔）',
+         'params': [{'key': 'threshold', 'label': 'K', 'default': 20}]},
+    ]},
     {'name': '量能', 'conditions': [
         {'type': 'volume_ratio_above', 'label': '爆量（量 > N 倍均量）',
          'params': [{'key': 'ratio', 'label': '倍數', 'default': 1.5}]},

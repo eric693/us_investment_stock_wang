@@ -128,16 +128,17 @@ table.wb-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     </div>
 
     <!-- 指標選擇 -->
-    <div style="font-size:0.74rem;color:var(--gold);font-weight:800;margin:4px 0 8px">技術進場訊號（可回測）</div>
+    <div style="font-size:0.74rem;color:var(--gold);font-weight:800;margin:4px 0 4px">技術進場訊號（可回測）</div>
+    <div class="wb-hint" style="margin:0 0 8px">這些是「觸發當天」的事件（例如剛黃金交叉、剛突破均線那一天），所以命中檔數通常很少，是正常的。想用「股價站上季線」「均線多頭」這類『狀態』選股，請用下方的篩選條件。</div>
     <div id="sigCatalog" style="margin-top:0"><div class="wb-plan dim">載入指標中…</div></div>
 
-    <!-- 籌碼/量能篩選條件 -->
+    <!-- 籌碼/量能/趨勢篩選條件 -->
     <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px">
-      <div style="font-size:0.74rem;color:var(--gold);font-weight:800">籌碼／量能篩選（選股加分項，不進回測）</div>
-      <button class="wb-btn ghost" style="padding:4px 12px;font-size:0.74rem" onclick="toggleConds()" id="condToggleBtn">展開條件</button>
+      <div style="font-size:0.74rem;color:var(--gold);font-weight:800">趨勢／籌碼／量能篩選（狀態選股，不進回測）</div>
+      <button class="wb-btn gold" style="padding:4px 12px;font-size:0.74rem" onclick="toggleConds()" id="condToggleBtn">展開條件</button>
     </div>
     <div id="condCatalog" style="display:none"><div class="wb-plan dim">載入條件中…</div></div>
-    <div class="wb-hint" style="margin-top:4px">大戶持股級距、分點券商（隔日沖大戶）需 FinMind 付費方案，暫未提供。</div>
+    <div class="wb-hint" style="margin-top:4px">「股價站上季線」「均線多頭」「外資連買」等都在這裡，可單獨選股（不必挑進場訊號）。大戶持股級距、分點券商（隔日沖大戶）需 FinMind 付費方案，暫未提供。</div>
 
     <div class="wb-grid" style="margin-top:14px">
       <div class="wb-field"><label>股池範圍</label>
