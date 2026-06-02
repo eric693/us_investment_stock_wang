@@ -41,6 +41,13 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   border: 1px solid var(--card-bd); border-radius: 7px; padding: 7px 11px; cursor: pointer; }
 .wb-chk input { cursor: pointer; }
 .wb-chk.on { border-color: var(--accent); background: #0d1e40; }
+.wb-cond { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; background: #0a1120;
+  border: 1px solid var(--card-bd); border-radius: 7px; padding: 7px 11px; }
+.wb-cond.on { border-color: #c79a3a; background: #1a1505; }
+.wb-cond input[type=checkbox] { cursor: pointer; }
+.wb-cond .pnum { width: 58px; background: #060c18; border: 1px solid var(--card-bd); border-radius: 5px;
+  color: var(--text); padding: 3px 6px; font-size: 0.76rem; outline: none; }
+.wb-cond .plbl { font-size: 0.68rem; color: var(--text-dim); }
 
 .wb-grid { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
 .wb-field { display: flex; flex-direction: column; gap: 5px; }
@@ -121,7 +128,16 @@ table.wb-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     </div>
 
     <!-- 指標選擇 -->
-    <div id="sigCatalog" style="margin-top:6px"><div class="wb-plan dim">載入指標中…</div></div>
+    <div style="font-size:0.74rem;color:var(--gold);font-weight:800;margin:4px 0 8px">技術進場訊號（可回測）</div>
+    <div id="sigCatalog" style="margin-top:0"><div class="wb-plan dim">載入指標中…</div></div>
+
+    <!-- 籌碼/量能篩選條件 -->
+    <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px">
+      <div style="font-size:0.74rem;color:var(--gold);font-weight:800">籌碼／量能篩選（選股加分項，不進回測）</div>
+      <button class="wb-btn ghost" style="padding:4px 12px;font-size:0.74rem" onclick="toggleConds()" id="condToggleBtn">展開條件</button>
+    </div>
+    <div id="condCatalog" style="display:none"><div class="wb-plan dim">載入條件中…</div></div>
+    <div class="wb-hint" style="margin-top:4px">大戶持股級距、分點券商（隔日沖大戶）需 FinMind 付費方案，暫未提供。</div>
 
     <div class="wb-grid" style="margin-top:14px">
       <div class="wb-field"><label>股池範圍</label>
@@ -186,9 +202,10 @@ const fmt = n => (n === null || n === undefined) ? '-' : Number(n).toLocaleStrin
 const cls = v => v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted');
 const sign = v => v > 0 ? '+' : '';
 
-let CATALOG = { signal_groups: [], exits: [], universes: [] };
+let CATALOG = { signal_groups: [], condition_groups: [], exits: [], universes: [] };
 let mode = 'manual';
 let selectedSignals = new Set();
+let selectedConds = new Set();   // 勾選的籌碼/量能條件 type
 let lastScan = [];          // 掃描命中清單
 let lastBacktest = null;    // 回測結果
 
@@ -214,6 +231,21 @@ async function loadCatalog() {
           </label>`).join('')}
       </div>
     </div>`).join('');
+  // 籌碼/量能條件目錄
+  const cbox = document.getElementById('condCatalog');
+  cbox.innerHTML = (CATALOG.condition_groups || []).map(g => `
+    <div class="wb-group">
+      <div class="gname">${g.name}</div>
+      <div class="wb-sigs">
+        ${g.conditions.map(c => `
+          <label class="wb-cond" id="cond-${c.type}">
+            <input type="checkbox" value="${c.type}" onchange="toggleCond('${c.type}', this.checked)">
+            <span>${c.label}</span>
+            ${(c.params||[]).map(p => `<span class="plbl">${p.label}</span>
+              <input class="pnum" type="number" id="cp-${c.type}-${p.key}" value="${p.default}">`).join('')}
+          </label>`).join('')}
+      </div>
+    </div>`).join('') || '<div class="wb-plan dim">無可用條件</div>';
   // 出場策略
   const ex = document.getElementById('exitSel');
   ex.innerHTML = CATALOG.exits.map((e, i) =>
@@ -228,6 +260,59 @@ function toggleSig(code, on) {
   if (on) selectedSignals.add(code); else selectedSignals.delete(code);
   const el = document.getElementById('chk-' + code);
   if (el) el.classList.toggle('on', on);
+}
+
+function toggleConds() {
+  const box = document.getElementById('condCatalog');
+  const show = box.style.display === 'none';
+  box.style.display = show ? 'block' : 'none';
+  document.getElementById('condToggleBtn').textContent = show ? '收合條件' : '展開條件';
+}
+
+function toggleCond(type, on) {
+  if (on) selectedConds.add(type); else selectedConds.delete(type);
+  document.getElementById('cond-' + type)?.classList.toggle('on', on);
+}
+
+// 找出條件的參數定義
+function condDef(type) {
+  for (const g of (CATALOG.condition_groups||[]))
+    for (const c of g.conditions) if (c.type === type) return c;
+  return null;
+}
+
+// 收集勾選的條件（含目前參數值）成後端格式
+function collectConditions() {
+  return [...selectedConds].map(type => {
+    const def = condDef(type);
+    const params = {};
+    (def?.params || []).forEach(p => {
+      const el = document.getElementById(`cp-${type}-${p.key}`);
+      params[p.key] = el ? Number(el.value) : p.default;
+    });
+    return { type, label: def?.label || type, params };
+  });
+}
+
+// 套用 AI 推薦的條件（勾選＋填參數）
+function setConditions(conds) {
+  selectedConds = new Set();
+  document.querySelectorAll('#condCatalog input[type=checkbox]').forEach(cb => { cb.checked = false; });
+  document.querySelectorAll('.wb-cond').forEach(el => el.classList.remove('on'));
+  (conds || []).forEach(c => {
+    selectedConds.add(c.type);
+    const cb = document.querySelector(`#condCatalog input[value="${c.type}"]`);
+    if (cb) cb.checked = true;
+    document.getElementById('cond-' + c.type)?.classList.add('on');
+    Object.entries(c.params || {}).forEach(([k, v]) => {
+      const el = document.getElementById(`cp-${c.type}-${k}`);
+      if (el) el.value = v;
+    });
+  });
+  if (conds && conds.length) {   // 有推薦條件就展開讓使用者看到
+    document.getElementById('condCatalog').style.display = 'block';
+    document.getElementById('condToggleBtn').textContent = '收合條件';
+  }
 }
 
 function setSignals(codes) {
@@ -252,21 +337,25 @@ async function aiPick() {
       headers: {'Content-Type':'application/json'}, body: '{}' })).json();
     if (r.error) { document.getElementById('aiMsg').textContent = '失敗：' + r.error; return; }
     document.getElementById('aiMsg').textContent = '';
-    // 套用 AI 選的指標
+    // 套用 AI 選的指標與籌碼/量能條件
     setSignals(r.signal_codes || []);
+    setConditions(r.conditions || []);
     // 套用出場策略
     if (r.exit) {
       const idx = CATALOG.exits.findIndex(e => e.name === r.exit.name);
       if (idx >= 0) document.getElementById('exitSel').value = idx;
     }
+    const condTxt = (r.conditions && r.conditions.length)
+      ? r.conditions.map(c => c.label).join('、') : '（無）';
     document.getElementById('aiResult').innerHTML = `
       <div class="wb-aibox">
         <div class="ttl">AI 策略：${r.strategy_name || r.signal_name}</div>
         <div class="wb-plan">進場指標：${r.signal_name}
+籌碼/量能篩選：${condTxt}
 出場策略：${r.exit ? r.exit.name : '（未指定）'}
 
 ${(r.reason || '').replace(/</g,'&lt;')}</div>
-        <div class="wb-hint">已自動勾好指標與出場策略，按下方「開始掃描」即可選股。</div>
+        <div class="wb-hint">已自動勾好指標、條件與出場策略，按下方「開始掃描」即可選股。</div>
       </div>`;
   } catch(e) { document.getElementById('aiMsg').textContent = '失敗：' + e.message; }
   finally { btn.disabled = false; }
@@ -274,12 +363,15 @@ ${(r.reason || '').replace(/</g,'&lt;')}</div>
 
 // ── 掃描選股 ───────────────────────────────────────────────────────────────
 async function runScan() {
-  if (!selectedSignals.size) { document.getElementById('scanMsg').textContent = '請先勾選至少一個指標'; return; }
+  const conds = collectConditions();
+  if (!selectedSignals.size && !conds.length) {
+    document.getElementById('scanMsg').textContent = '請先勾選至少一個指標或籌碼/量能條件'; return; }
   const btn = document.getElementById('scanBtn');
-  btn.disabled = true; document.getElementById('scanMsg').textContent = '掃描中…（約 10-40 秒）';
+  btn.disabled = true; document.getElementById('scanMsg').textContent = '掃描中…（含籌碼資料約 20-60 秒）';
   try {
     const payload = {
       signals: [...selectedSignals],
+      conditions: conds,
       universe: document.getElementById('universe').value,
       price_min: Number(document.getElementById('priceMin').value) || 0,
       price_max: Number(document.getElementById('priceMax').value) || 0,
@@ -420,13 +512,14 @@ async function loadAuto() {
 }
 
 async function saveAuto() {
-  if (!selectedSignals.size) { document.getElementById('autoMsg').textContent = '請先勾選指標'; return; }
+  if (!selectedSignals.size && !selectedConds.size) { document.getElementById('autoMsg').textContent = '請先勾選指標或條件'; return; }
   const btn = document.getElementById('saveAutoBtn');
   btn.disabled = true; document.getElementById('autoMsg').textContent = '儲存中…';
   const exit = currentExit();
   const payload = {
     enabled: document.getElementById('autoEnabled').checked,
     signals: [...selectedSignals],
+    conditions: collectConditions(),
     exit,
     universe: document.getElementById('universe').value,
     price_min: Number(document.getElementById('priceMin').value) || 0,

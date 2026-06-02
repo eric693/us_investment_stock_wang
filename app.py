@@ -3122,13 +3122,36 @@ def _get_tw_lending(code: str):
     rows = _finmind_fetch('TaiwanDailyShortSaleBalances', code, days=12)
     res = None
     if rows:
-        last = max(rows, key=lambda r: r.get('date', ''))
+        rows_sorted = sorted(rows, key=lambda r: r.get('date', ''))
+        last = rows_sorted[-1]
+        prev = rows_sorted[-2] if len(rows_sorted) > 1 else last
         res = {
-            'lending_balance': safe_float(last.get('SBLShortSalesCurrentDayBalance', 0)),
-            'lending_sell':    safe_float(last.get('SBLShortSalesShortSales', 0)),
+            'lending_balance':      safe_float(last.get('SBLShortSalesCurrentDayBalance', 0)),
+            'lending_balance_prev': safe_float(prev.get('SBLShortSalesCurrentDayBalance', 0)),
+            'lending_sell':         safe_float(last.get('SBLShortSalesShortSales', 0)),
         }
     with _tw_margin_lock:
         _tw_lending_code_cache[code] = (now, res)
+    return res
+
+
+_tw_holding_code_cache: dict = {}     # code -> (ts, dict|None) 外資持股比例
+
+def _get_tw_foreign_holding(code: str):
+    """外資持股比例（FinMind TaiwanStockShareholding，逐檔快取 4 小時）。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_holding_code_cache.get(code)
+    if ent and now - ent[0] < 14400:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockShareholding', code, days=20)
+    res = None
+    if rows:
+        last = max(rows, key=lambda r: r.get('date', ''))
+        res = {'foreign_ratio': safe_float(last.get('ForeignInvestmentSharesRatio', 0))}
+    with _tw_margin_lock:
+        _tw_holding_code_cache[code] = (now, res)
     return res
 
 
@@ -4159,6 +4182,63 @@ def _eval_condition(hist, info, cond, extra=None):
             elif ctype == 'margin_continuous_up':
                 return mt > mp > 0, f'融資連升 {mp:.0f}→{mt:.0f}張'
 
+        # ── 借券賣出餘額（台股限定）──────────────────────────────────────
+        elif ctype in ('lending_decrease', 'lending_increase'):
+            ld = (extra or {}).get('lending')
+            if ld is None:
+                return False, '非台股或無借券資料'
+            cur  = ld.get('lending_balance', 0)
+            prev = ld.get('lending_balance_prev', 0)
+            chg  = cur - prev
+            if ctype == 'lending_decrease':
+                return chg < 0, f'借券餘額 {prev:,.0f}→{cur:,.0f} 減{abs(chg):,.0f}（空方回補）'
+            return chg > 0, f'借券餘額 {prev:,.0f}→{cur:,.0f} 增{chg:+,.0f}（空方加碼）'
+
+        # ── 外資持股比例（台股限定）──────────────────────────────────────
+        elif ctype == 'foreign_holding_above':
+            fh = (extra or {}).get('holding')
+            if fh is None:
+                return False, '非台股或無外資持股資料'
+            thr = float(params.get('threshold', 10))
+            ratio = fh.get('foreign_ratio', 0)
+            return ratio >= thr, f'外資持股 {ratio:.1f}% ≥ {thr}%'
+
+        # ── 當沖比（台股限定）────────────────────────────────────────────
+        elif ctype == 'day_trade_ratio_above':
+            dt = (extra or {}).get('daytrade')
+            if dt is None:
+                return False, '非台股或無當沖資料'
+            thr = float(params.get('threshold', 50))
+            dvol = dt.get('volume', 0)
+            try:
+                volmap = {i.strftime('%Y-%m-%d'): float(v) for i, v in vol.items()}
+                tot = volmap.get(dt.get('date', ''), float(vol.iloc[-1]))
+            except Exception:
+                tot = safe_float(vol.iloc[-1])
+            ratio = dvol / tot * 100 if tot > 0 else 0
+            return ratio >= thr, f'當沖比 {ratio:.1f}% ≥ {thr}%'
+
+        # ── 5 日均量大於 N 張 ─────────────────────────────────────────────
+        elif ctype == 'vol5_avg_above':
+            thr_lots = float(params.get('threshold', 1000))   # 單位：張
+            avg5_lots = safe_float(vol.rolling(min(5, n), min_periods=1).mean().iloc[-1]) / 1000
+            return avg5_lots >= thr_lots, f'5日均量 {avg5_lots:,.0f} 張 ≥ {thr_lots:,.0f} 張'
+
+        # ── 成交量創 5 日新高 / 新低 ───────────────────────────────────────
+        elif ctype == 'volume_5d_high':
+            d = int(params.get('days', 5))
+            cur = safe_float(vol.iloc[-1])
+            hi  = safe_float(vol.iloc[-min(d, n):].max())
+            ok  = cur >= hi and cur > 0
+            return ok, f'量 {cur/1000:,.0f} 張{"創" if ok else "未創"}近{d}日新高'
+
+        elif ctype == 'volume_5d_low':
+            d = int(params.get('days', 5))
+            cur = safe_float(vol.iloc[-1])
+            lo  = safe_float(vol.iloc[-min(d, n):].min())
+            ok  = cur <= lo and cur > 0
+            return ok, f'量 {cur/1000:,.0f} 張{"創" if ok else "未創"}近{d}日新低'
+
     except Exception as e:
         return False, f'計算錯誤: {str(e)[:40]}'
 
@@ -4176,6 +4256,9 @@ _INST_TYPES    = {'inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_
                   'inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'}
 _INST_HIST_TYPES = {'inst_foreign_buy_ndays','inst_trust_buy_ndays','inst_3_buy_ndays',
                     'inst_net_sum_above','inst_foreign_sell_ndays'}
+_LENDING_TYPES   = {'lending_decrease','lending_increase'}
+_HOLDING_TYPES   = {'foreign_holding_above'}
+_DAYTRADE_TYPES  = {'day_trade_ratio_above'}
 
 def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
     """Scan a single ticker and return result dict or None."""
@@ -4221,6 +4304,15 @@ def _scan_ticker(ticker, conditions, is_tw, period='1y', interval='1d'):
             code = ticker.replace('.TW','').replace('.TWO','')
             ih = _get_tw_inst_hist(code)
             if ih: extra['inst_hist'] = ih
+        if ctypes & _LENDING_TYPES and is_tw:
+            ld = _get_tw_lending(ticker.replace('.TW','').replace('.TWO',''))
+            if ld: extra['lending'] = ld
+        if ctypes & _HOLDING_TYPES and is_tw:
+            fh = _get_tw_foreign_holding(ticker.replace('.TW','').replace('.TWO',''))
+            if fh: extra['holding'] = fh
+        if ctypes & _DAYTRADE_TYPES and is_tw:
+            dt = _get_tw_daytrade(ticker.replace('.TW','').replace('.TWO',''))
+            if dt: extra['daytrade'] = dt
 
         cond_results = []
         all_passed   = True
@@ -5252,6 +5344,7 @@ def _default_agent_cfg() -> dict:
             'enabled':       False,
             'strategy_name': '',
             'signals':       [],     # 進場訊號代碼清單
+            'conditions':    [],     # 籌碼/量能篩選條件 [{type, params}]
             'exit':          {},     # 出場策略 dict
             'universe':      'top100',
             'price_min':     0,
@@ -7403,11 +7496,32 @@ def _optimize_backtest(ticker, period='3y', min_trades=4):
 #  策略工作台：用「回測進場訊號」當選股條件（選股 ≡ 回測同一套指標）
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _wb_cond_extra(code, hist, conditions):
+    """為工作台籌碼/量能條件按需抓取 FinMind 資料（台股逐檔），回 extra dict。"""
+    ctypes = {c.get('type', '') for c in conditions}
+    extra  = {}
+    if ctypes & _MARGIN_TYPES:
+        mg = _get_tw_margin(code);          extra['margin']   = mg if mg else None
+    if ctypes & _INST_TYPES:
+        it = _get_tw_inst(code);            extra['inst']     = it if it else None
+    if ctypes & _INST_HIST_TYPES:
+        ih = _get_tw_inst_hist(code);       extra['inst_hist']= ih if ih else None
+    if ctypes & _LENDING_TYPES:
+        ld = _get_tw_lending(code);         extra['lending']  = ld if ld else None
+    if ctypes & _HOLDING_TYPES:
+        fh = _get_tw_foreign_holding(code); extra['holding']  = fh if fh else None
+    if ctypes & _DAYTRADE_TYPES:
+        dt = _get_tw_daytrade(code);        extra['daytrade'] = dt if dt else None
+    return extra
+
+
 def _scan_entry_signals(signal_codes, universe_key='top100',
-                        price_min=0, price_max=99999, period='2y') -> list:
-    """對股池每檔，檢查所選進場訊號是否在『最新一根 K 棒』同時觸發（AND）。
-    觸發 = 今天選出這檔。與回測進場訊號完全同源，選出來可直接拿去回測。"""
-    codes = _normalize_signal(signal_codes)
+                        price_min=0, price_max=99999, period='2y',
+                        conditions=None) -> list:
+    """對股池每檔，檢查進場訊號（最新K棒觸發）＋籌碼/量能篩選條件是否同時成立。
+    進場訊號與回測同源；籌碼/量能為選股篩選層（不進回測，只縮小範圍）。"""
+    codes = _normalize_signal(signal_codes) if signal_codes else []
+    conditions = conditions or []
     universe = _get_tw_universe(universe_key)
     tickers  = list(dict.fromkeys(tw_normalize(c) for c in universe))
 
@@ -7419,9 +7533,18 @@ def _scan_entry_signals(signal_codes, universe_key='top100',
             price = float(hist['Close'].iloc[-1])
             if not (price_min <= price <= price_max):
                 return None
-            mask = _compute_entry_mask(hist, codes)
-            if not (len(mask) and bool(mask[-1])):
-                return None
+            # 進場訊號：最新一根 K 棒須觸發（若有選）
+            if codes:
+                mask = _compute_entry_mask(hist, codes)
+                if not (len(mask) and bool(mask[-1])):
+                    return None
+            # 籌碼/量能篩選條件：全部須成立（若有選）
+            if conditions:
+                extra = _wb_cond_extra(code, hist, conditions)
+                for cond in conditions:
+                    passed, _detail = _eval_condition(hist, {}, cond, extra)
+                    if not bool(passed):
+                        return None
             prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else price
             change = round((price / prev - 1) * 100, 2) if prev else 0
             return {
@@ -7499,7 +7622,8 @@ def _run_workbench_daily(cfg, client=None) -> dict:
     pmax  = safe_float(wb.get('price_max', 0)) or 99999
     matched = _scan_entry_signals(
         wb['signals'], wb.get('universe', 'top100'),
-        safe_float(wb.get('price_min', 0)), pmax)
+        safe_float(wb.get('price_min', 0)), pmax,
+        conditions=wb.get('conditions', []))
     top_codes = [m['code'] for m in matched[:10]]
     exit_cfg  = wb.get('exit') or _exit_strategy_grid()[0]
     bt = _workbench_batch_backtest(top_codes, wb['signals'], exit_cfg) if top_codes else {}
@@ -7888,6 +8012,49 @@ def backtest_advice():
 #  策略工作台（選股 → 買賣策略 → 回測 一條龍）
 # ═══════════════════════════════════════════════════════════════════════════
 
+# 工作台選股可加的「籌碼/量能篩選條件」（選股時套用，縮小範圍；不進回測）。
+# 只列免費 FinMind 取得到的；大戶持股級距、分點券商需 FinMind 付費 sponsor，暫不列。
+WORKBENCH_CONDITION_GROUPS = [
+    {'name': '量能', 'conditions': [
+        {'type': 'volume_ratio_above', 'label': '爆量（量 > N 倍均量）',
+         'params': [{'key': 'ratio', 'label': '倍數', 'default': 1.5}]},
+        {'type': 'vol5_avg_above', 'label': '5 日均量大於 N 張',
+         'params': [{'key': 'threshold', 'label': '張數', 'default': 1000}]},
+        {'type': 'volume_5d_high', 'label': '成交量創 5 日新高', 'params': []},
+        {'type': 'vol_5_above_20', 'label': '量能轉強（5 日均量站上 20 日）', 'params': []},
+        {'type': 'volume_shrinking', 'label': '量縮（賣壓宣洩）', 'params': []},
+        {'type': 'high_vol_breakout', 'label': '帶量突破前高', 'params': []},
+        {'type': 'day_trade_ratio_above', 'label': '當沖比大於 N%',
+         'params': [{'key': 'threshold', 'label': '%', 'default': 50}]},
+    ]},
+    {'name': '法人籌碼', 'conditions': [
+        {'type': 'inst_foreign_buy_ndays', 'label': '外資連續 N 日買超',
+         'params': [{'key': 'days', 'label': '天數', 'default': 3}]},
+        {'type': 'inst_trust_buy_ndays', 'label': '投信連續 N 日買超',
+         'params': [{'key': 'days', 'label': '天數', 'default': 3}]},
+        {'type': 'inst_3_buy_ndays', 'label': '三大法人連續 N 日買超',
+         'params': [{'key': 'days', 'label': '天數', 'default': 3}]},
+        {'type': 'inst_net_sum_above', 'label': '近 N 日法人累計買超 > X 千股',
+         'params': [{'key': 'days', 'label': '天數', 'default': 5},
+                    {'key': 'threshold', 'label': '千股', 'default': 5000}]},
+        {'type': 'inst_total_above', 'label': '法人今日合計買超 > N 千股',
+         'params': [{'key': 'threshold', 'label': '千股', 'default': 1000}]},
+        {'type': 'foreign_holding_above', 'label': '外資持股比例大於 N%',
+         'params': [{'key': 'threshold', 'label': '%', 'default': 10}]},
+        {'type': 'inst_pct_above', 'label': '機構持股比例大於 N%',
+         'params': [{'key': 'threshold', 'label': '%', 'default': 20}]},
+    ]},
+    {'name': '資券/借券', 'conditions': [
+        {'type': 'margin_decrease', 'label': '融資減少（散戶退場）', 'params': []},
+        {'type': 'margin_increase', 'label': '融資增加', 'params': []},
+        {'type': 'short_decrease', 'label': '融券減少（空方回補）', 'params': []},
+        {'type': 'high_short_ratio', 'label': '高券資比（大於 N%）',
+         'params': [{'key': 'threshold', 'label': '%', 'default': 30}]},
+        {'type': 'lending_decrease', 'label': '借券餘額減少（空方回補）', 'params': []},
+    ]},
+]
+
+
 @app.route('/workbench')
 def workbench_page():
     return render_template('workbench.html')
@@ -7895,11 +8062,12 @@ def workbench_page():
 
 @app.route('/api/workbench/catalog')
 def workbench_catalog():
-    """進場指標分組（同回測訊號）＋出場策略選項＋股池選項，供前端建表。"""
+    """進場指標分組（同回測訊號）＋籌碼/量能篩選條件＋出場策略＋股池選項，供前端建表。"""
     return jsonify({
-        'signal_groups': SIGNAL_GROUPS_PUBLIC,
-        'exits':         _exit_strategy_grid(),
-        'universes':     [
+        'signal_groups':    SIGNAL_GROUPS_PUBLIC,
+        'condition_groups': WORKBENCH_CONDITION_GROUPS,
+        'exits':            _exit_strategy_grid(),
+        'universes':        [
             {'key': 'top50',  'label': '成交量前 50 大'},
             {'key': 'top100', 'label': '成交量前 100 大'},
             {'key': 'top200', 'label': '成交量前 200 大'},
@@ -7909,18 +8077,19 @@ def workbench_catalog():
 
 @app.route('/api/workbench/scan', methods=['POST'])
 def workbench_scan():
-    """以選定的進場訊號掃描股池，回傳今天觸發的股票（= 選股）。"""
-    body     = request.get_json(force=True) or {}
-    signals  = body.get('signals', [])
-    if not signals:
-        return jsonify({'error': '請至少選一個進場指標'}), 400
+    """以進場訊號＋籌碼/量能條件掃描股池，回傳今天符合的股票（= 選股）。"""
+    body       = request.get_json(force=True) or {}
+    signals    = body.get('signals', [])
+    conditions = body.get('conditions', []) or []
+    if not signals and not conditions:
+        return jsonify({'error': '請至少選一個進場指標或籌碼/量能條件'}), 400
     universe = body.get('universe', 'top100')
     pmin     = safe_float(body.get('price_min', 0))
     pmax     = safe_float(body.get('price_max', 99999)) or 99999
     try:
-        results = _scan_entry_signals(signals, universe, pmin, pmax)
-        return jsonify({'results': results, 'matched': len(results),
-                        'signal_name': _signal_label(_normalize_signal(signals))})
+        results = _scan_entry_signals(signals, universe, pmin, pmax, conditions=conditions)
+        name = _signal_label(_normalize_signal(signals)) if signals else '（純籌碼/量能篩選）'
+        return jsonify({'results': results, 'matched': len(results), 'signal_name': name})
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': f'掃描錯誤：{str(e)[:80]}'}), 500
@@ -7939,20 +8108,28 @@ def workbench_ai_strategy():
     catalog = '\n'.join(
         f"- {code}：{label}"
         for _g, items in _SIGNAL_DEFS for code, label, _fn in items)
+    cond_catalog = '\n'.join(
+        f"- {c['type']}：{c['label']}"
+        for g in WORKBENCH_CONDITION_GROUPS for c in g['conditions'])
     exits = '\n'.join(f"- {e['name']}" for e in _exit_strategy_grid())
     prompt = (
-        '你是台股策略設計師。請從下面的「可用進場指標」挑出 2 到 4 個能互相搭配、邏輯一致的指標，'
-        '組成一個起漲選股策略，並從「可用出場策略」挑一個最搭的買賣出場規則。\n\n'
+        '你是台股策略設計師。請設計一個「起漲選股 + 籌碼/量能確認」的策略：\n'
+        '1) 從「可用進場指標」挑 2 到 4 個能互相搭配、邏輯一致的技術指標（可回測）。\n'
+        '2) 從「可用籌碼/量能條件」挑 0 到 3 個最能加強這個策略勝率的條件當篩選（例如法人連買、量能轉強、'
+        '當沖比過高要避開等），並說明為何這些較重要。\n'
+        '3) 從「可用出場策略」挑一個最搭的買賣出場規則。\n\n'
         f'可用進場指標（代碼：說明）：\n{catalog}\n\n'
+        f'可用籌碼/量能條件（代碼：說明）：\n{cond_catalog}\n\n'
         f'可用出場策略：\n{exits}\n\n'
-        '只能從上面清單挑，不可自創。請只回傳 JSON，格式：\n'
-        '{"signal_codes": ["代碼1","代碼2"], "exit_name": "完整出場策略名稱", '
-        '"strategy_name": "策略短名", "reason": "為何這樣組（繁體中文，2-3 句，不要 emoji）"}'
+        '只能從上面清單挑，不可自創代碼。請只回傳 JSON，格式：\n'
+        '{"signal_codes": ["代碼1","代碼2"], "condition_codes": ["條件代碼1"], '
+        '"exit_name": "完整出場策略名稱", "strategy_name": "策略短名", '
+        '"reason": "為何這樣組，含挑這些籌碼/量能條件的重要性（繁體中文，3-4 句，不要 emoji）"}'
     )
     try:
         client = anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model='claude-opus-4-8', max_tokens=600,
+            model='claude-opus-4-8', max_tokens=700,
             messages=[{'role': 'user', 'content': prompt}],
         )
         text = resp.content[0].text.strip()
@@ -7961,9 +8138,20 @@ def workbench_ai_strategy():
         codes = _normalize_signal(data.get('signal_codes', []))
         exit_name = data.get('exit_name', '')
         exit_cfg = next((e for e in _exit_strategy_grid() if e['name'] == exit_name), None)
+        # 把 AI 挑的條件代碼對回工作台條件目錄（含預設參數）
+        cond_map = {c['type']: c for g in WORKBENCH_CONDITION_GROUPS for c in g['conditions']}
+        chosen_conds = []
+        for ct in (data.get('condition_codes', []) or []):
+            c = cond_map.get(ct)
+            if c:
+                chosen_conds.append({
+                    'type': ct, 'label': c['label'],
+                    'params': {p['key']: p['default'] for p in c.get('params', [])},
+                })
         return jsonify({
             'signal_codes': codes,
             'signal_name':  _signal_label(codes),
+            'conditions':   chosen_conds,
             'exit':         exit_cfg,
             'strategy_name': data.get('strategy_name', ''),
             'reason':       _strip_emoji(data.get('reason', '')),
@@ -8005,7 +8193,7 @@ def workbench_config_api():
         return jsonify(cfg.get('workbench', {}))
     body = request.get_json(force=True) or {}
     wb = cfg.get('workbench', {}) or {}
-    for k in ('enabled', 'signals', 'exit', 'universe', 'price_min', 'price_max',
+    for k in ('enabled', 'signals', 'conditions', 'exit', 'universe', 'price_min', 'price_max',
               'strategy_name'):
         if k in body:
             wb[k] = body[k]
