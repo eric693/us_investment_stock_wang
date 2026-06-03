@@ -775,6 +775,7 @@ async function runScreener() {
       `共掃描 ${data.total} 檔，符合 ${data.matched} 檔`;
 
     renderResults(_scanResults);
+    _saveScreenerState();
     setTimeout(() => { progressWrap.style.display = 'none'; progressFill.style.width = '0%'; }, 1200);
   } catch (e) {
     clearInterval(fakeProgress);
@@ -828,6 +829,27 @@ function renderResults(results) {
 
   html += '</tbody></table></div>';
   area.innerHTML = html;
+}
+
+// ── 切頁後保留上次掃描結果（sessionStorage：同分頁切頁/重整都還在，關掉分頁才清）──
+// 多頁式網站每個導覽連結都是整頁重載，篩選結果只存記憶體會在切頁時消失，故落地存放。
+function _saveScreenerState() {
+  try {
+    sessionStorage.setItem('screenerLast', JSON.stringify({
+      results: _scanResults,
+      meta:    document.getElementById('resultMeta')?.textContent || '',
+    }));
+  } catch (_) {}
+}
+function _restoreScreenerState() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('screenerLast') || 'null');
+    if (!s || !Array.isArray(s.results) || !s.results.length) return;
+    _scanResults = s.results;
+    const meta = document.getElementById('resultMeta');
+    if (meta) meta.textContent = s.meta || '';
+    renderResults(_scanResults);
+  } catch (_) {}
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1035,6 +1057,7 @@ document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('cli
   addExitAlert('kd_death_cross');
 
   renderExitAlerts();
+  _restoreScreenerState();   // 切頁回來時還原上次掃描結果
 })();
 </script>
 </body>

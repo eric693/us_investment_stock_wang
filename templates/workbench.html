@@ -383,6 +383,7 @@ async function runScan() {
     lastScan = r.results || [];
     document.getElementById('scanMsg').textContent = `命中 ${r.matched} 檔（${r.signal_name}）`;
     renderScan();
+    _saveWbScan();
   } catch(e) { document.getElementById('scanMsg').textContent = '失敗：' + e.message; }
   finally { btn.disabled = false; }
 }
@@ -411,6 +412,26 @@ function renderScan() {
 function selectAll(on) {
   document.querySelectorAll('#scanResult .pick').forEach(cb => cb.checked = on);
   const all = document.getElementById('chkAll'); if (all) all.checked = on;
+}
+
+// ── 切頁後保留上次選股結果（sessionStorage：同分頁切頁/重整都還在，關掉分頁才清）──
+function _saveWbScan() {
+  try {
+    sessionStorage.setItem('wbLastScan', JSON.stringify({
+      scan: lastScan,
+      msg:  document.getElementById('scanMsg')?.textContent || '',
+    }));
+  } catch (_) {}
+}
+function _restoreWbScan() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('wbLastScan') || 'null');
+    if (!s || !Array.isArray(s.scan) || !s.scan.length) return;
+    lastScan = s.scan;
+    const m = document.getElementById('scanMsg');
+    if (m) m.textContent = s.msg || '';
+    renderScan();
+  } catch (_) {}
 }
 
 function pickedCodes() {
@@ -537,7 +558,7 @@ async function saveAuto() {
   finally { btn.disabled = false; setTimeout(()=>document.getElementById('autoMsg').textContent='', 3000); }
 }
 
-loadCatalog().then(loadAuto);
+loadCatalog().then(loadAuto).then(_restoreWbScan);   // 切頁回來時還原上次選股結果
 </script>
 </body>
 </html>
