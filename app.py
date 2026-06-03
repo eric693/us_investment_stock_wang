@@ -5625,14 +5625,20 @@ def _get_tw_universe(size: str = 'top100') -> list:
 
 
 def _fallback_tw_universe(size: str = 'top100') -> list:
-    """TWSE openapi 取不到時（本機 IP 常被擋）改用篩選器的精選股池清單。"""
-    codes = []
-    for lst in TW_SCREENER_UNIVERSE.values():
+    """TWSE openapi 取不到時（本機 IP 常被擋）改用篩選器的精選股池清單。
+    個股優先、ETF 殿後：原本依產業字典順序取前 N，開頭 29 檔全是 ETF，top100
+    會把金融/傳產/航運/生技等熱門個股整段砍掉（使用者誤以為「熱門股都篩不到」）。
+    改成先排個股、ETF 放最後，確保 top100 涵蓋各產業龍頭個股。"""
+    seen, indiv, etf = set(), [], []
+    for sector, lst in TW_SCREENER_UNIVERSE.items():
+        bucket = etf if 'ETF' in sector else indiv
         for c in lst:
-            if c not in codes:
-                codes.append(c)
+            if c not in seen:
+                seen.add(c)
+                bucket.append(c)
+    ordered = indiv + etf
     limit = 200 if size == 'top200' else (50 if size == 'top50' else 100)
-    return codes[:limit]
+    return ordered[:limit]
 
 
 def _run_agent_scan(cfg: dict) -> list:
@@ -7251,8 +7257,8 @@ _SIGNAL_DEFS = [
         ('ma_bull',       '均線多頭排列成形（5>10>20>60）',   _sig_ma_bull),
         ('ma20_turn_up',  '月線(MA20)翻揚向上',               _sig_ma20_turn_up),
         ('pullback_ma20', '回測月線守穩（貼月線上方續攻）',   _sig_pullback_ma20),
-        ('breakout_ma20', '股價突破月線(MA20)',               _sig_breakout_ma20),
-        ('breakout_ma60', '股價突破季線(MA60)',               _sig_breakout_ma60),
+        ('breakout_ma20', '股價當日突破月線(MA20)（剛上穿/事件，非「站上」）', _sig_breakout_ma20),
+        ('breakout_ma60', '股價當日突破季線(MA60)（剛上穿/事件，要「站上季線」請用下方均線狀態條件）', _sig_breakout_ma60),
     ]),
     ('動能指標', [
         ('kd_gc',       'KD 黃金交叉',                        _sig_kd_gc),
