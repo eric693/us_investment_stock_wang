@@ -8044,7 +8044,11 @@ WORKBENCH_CONDITION_GROUPS = [
         {'type': 'rsi_below', 'label': 'RSI 低於 N（超賣）',
          'params': [{'key': 'threshold', 'label': 'RSI', 'default': 30}]},
         {'type': 'kd_k_below', 'label': 'KD 的 K 值低於 N（低檔）',
-         'params': [{'key': 'threshold', 'label': 'K', 'default': 20}]},
+         'params': [{'key': 'kd_n', 'label': 'KD週期', 'default': 9},
+                    {'key': 'threshold', 'label': 'K', 'default': 20}]},
+        {'type': 'kd_k_above', 'label': 'KD 的 K 值高於 N（強勢／中軸之上）',
+         'params': [{'key': 'kd_n', 'label': 'KD週期', 'default': 60},
+                    {'key': 'threshold', 'label': 'K', 'default': 50}]},
     ]},
     {'name': '量能', 'conditions': [
         {'type': 'volume_ratio_above', 'label': '爆量（量 > N 倍均量）',
