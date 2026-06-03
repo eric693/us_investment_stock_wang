@@ -10,7 +10,7 @@ import os
 import requests as _requests
 from xml.etree import ElementTree as ET
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
@@ -6399,9 +6399,21 @@ def agent_holdings_api():
         codes = [h.get('code', '') for h in holdings]
         price_map = {}
         if codes:
-            with ThreadPoolExecutor(max_workers=min(12, len(codes))) as ex:
-                for code, data in ex.map(_fetch_holding_price, codes):
+            # 報價是外部 I/O，Yahoo 限流時單檔 .info 可能吊死數十秒，早上開盤尤其明顯。
+            # 設整體硬性逾時：逾時未回的標的改用快取、沒快取就先給 0（前端照常顯示持倉，
+            # 只是該檔暫無即時報價），確保此 API 一定在數秒內回應、不再「一直載入中」。
+            ex = ThreadPoolExecutor(max_workers=min(12, len(codes)))
+            futures = {ex.submit(_fetch_holding_price, c): c for c in codes}
+            try:
+                for fut in as_completed(futures, timeout=8):
+                    code, data = fut.result()
                     price_map[code] = data
+            except FuturesTimeout:
+                pass
+            ex.shutdown(wait=False)   # 不等慢速 stragglers，背景跑完即填回快取供下次命中
+            for c in codes:
+                if c not in price_map:
+                    price_map[c] = _cache_get(f'agent_h_{c}') or {'price': 0, 'name': c}
 
         enriched = []
         for h in holdings:
