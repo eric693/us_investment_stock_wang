@@ -791,7 +791,8 @@ async function sendMessage() {
     messages.push({ role: 'assistant', content: fullText });
     // 回覆完成後，把該則的大張圖片換成文字標記，避免之後每次請求重傳 base64
     // （用物件參照，不受 slice 重新索引影響）
-    if (img) userMsg.content = (text || '請分析這張截圖') + '\n[已上傳一張截圖]';
+    if (imgs.length) userMsg.content = (text || '請分析這張截圖')
+      + `\n[已上傳 ${imgs.length} 張截圖]`;
   } catch(e) {
     bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
   } finally {

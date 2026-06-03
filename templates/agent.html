@@ -1236,8 +1236,10 @@ async function chatSend() {
       }
     }
     chatMessages.push({ role: 'assistant', content: full });
-    // 回覆後把該則的大張圖片換成文字標記（用物件參照，不受 slice 影響）
-    if (img) userMsg.content = (text || '請分析這張截圖') + '\n[已上傳一張截圖]';
+    // 回覆後把該則的大張圖片換成文字標記（用物件參照，不受 slice 影響），
+    // 避免後續每輪都重送整包 base64（payload 暴脹／拖慢／超限）。
+    if (imgs.length) userMsg.content = (text || '請分析這張截圖')
+      + `\n[已上傳 ${imgs.length} 張截圖]`;
     if (chatMessages.length > 20) chatMessages = chatMessages.slice(-20);
   } catch(e) {
     bubble.textContent = '錯誤：' + e.message;
