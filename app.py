@@ -6474,8 +6474,26 @@ def agent_holdings_api():
     if request.method == 'DELETE':
         code = request.args.get('code', '').strip().upper()
         cfg['holdings'] = [h for h in cfg.get('holdings', []) if h.get('code') != code]
+        _monitor_drop_code(code)   # 刪除持倉 → 同步移出盤中監控
         _save_agent_cfg(cfg)
         return jsonify({'ok': True})
+
+
+def _monitor_drop_code(code: str):
+    """持倉全數賣出／刪除時，把該檔一併移出盤中監控清單，避免賣掉後還一直被推
+    「分批了結／賣出」訊號（持倉與監控是兩份清單，過去賣出只清持倉沒清監控）。"""
+    base = (code or '').upper().replace('.TW', '').replace('.TWO', '')
+    if not base:
+        return
+    with _monitor_lock:
+        mcfg = _load_monitor_cfg()
+        tickers = mcfg.get('tickers', {})
+        drop = [k for k in tickers
+                if k.upper().replace('.TW', '').replace('.TWO', '') == base]
+        if drop:
+            for k in drop:
+                tickers.pop(k, None)
+            _save_monitor_cfg(mcfg)
 
 
 @app.route('/api/agent/sell', methods=['POST'])
@@ -6532,6 +6550,7 @@ def agent_sell_api():
     remaining = round(held - sell_shares, 6)
     if remaining <= 1e-6:
         cfg['holdings'] = [x for x in cfg.get('holdings', []) if x.get('code') != code]
+        _monitor_drop_code(code)   # 全數賣出 → 同步移出盤中監控，不再推賣出訊號
     else:
         h['shares'] = int(remaining) if float(remaining).is_integer() else remaining
     _save_agent_cfg(cfg)
