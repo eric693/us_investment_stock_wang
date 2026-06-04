@@ -313,8 +313,10 @@ def _run_server_scan():
                 cooldown_ok  = (not last_notify or
                     (pd.Timestamp.now(tz='Asia/Taipei') -
                      pd.Timestamp(last_notify, tz='Asia/Taipei')).total_seconds() > 3600)
-                # 降低機械式雜訊：只在「中/高信心」才推播，低信心或臨界跳動(低/-)不打擾。
-                conf_ok = str(result.get('confidence', '-')).strip() in ('高', '中')
+                # 降低機械式雜訊：只有「買進」類訊號才要求中/高信心（避免一跌就嘮叨叫買）；
+                # 賣出/轉弱(SELL/AVOID)是風險警示，照原本去重＋冷卻規則照常推，不被信心過濾漏掉。
+                conf_ok = (action != 'BUY'
+                           or str(result.get('confidence', '-')).strip() in ('高', '中'))
                 # 只在該標的所屬市場的交易時段內推播（避免半夜/收盤後狂發）；
                 # 買進與賣出/轉弱（SELL、AVOID）都通知，讓使用者有賣有買。
                 if (action in ('BUY', 'SELL', 'AVOID') and action_changed and cooldown_ok and conf_ok
