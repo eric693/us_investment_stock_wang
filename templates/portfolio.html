@@ -178,6 +178,8 @@
   <a class="nav-link" href="/tw">台股分析</a>
   <a class="nav-link active" href="/portfolio">投資組合</a>
   <a class="nav-link" href="/screener">策略選股</a>
+  <a class="nav-link" href="/bluechip">績優股清單</a>
+  <a class="nav-link" href="/perpetual">低位階永動機</a>
   <a class="nav-link" href="/predict">AI 預測</a>
   <a class="nav-link" href="/agent">AI Agent</a>
   <a class="nav-link" href="/backtest">策略回測</a>
@@ -581,7 +583,7 @@ function renderGroups() {
         ? `<span class="gticker-pct ${cached.pct>=0?'red':'green'}">${cached.pct>=0?'+':''}${cached.pct.toFixed(2)}%</span>`
         : `<span class="gticker-pct" style="color:var(--text-dim)">--</span>`;
       row.innerHTML = `
-        <span class="gticker-sym">${esc(ticker)}</span>
+        <span class="gticker-sym" style="cursor:pointer" onclick="openStockDetail('${esc(ticker)}', ${ticker.endsWith('.TW')||ticker.endsWith('.TWO')||_isTwCode(ticker)})">${esc(ticker)}</span>
         <span class="gticker-name">${cached ? esc(cached.name||'') : ''}</span>
         ${pctHtml}
         <div class="gticker-actions">
@@ -1339,5 +1341,6 @@ async function loadGroupsFromServer() {
   if (active && active.id === 'tab-portfolio') { renderPortfolio(); }
 })();
 </script>
+<script src="/static/js/stock_detail.js"></script>
 </body>
 </html>

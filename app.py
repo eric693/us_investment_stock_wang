@@ -279,9 +279,13 @@ def _run_server_scan():
     tickers_cfg = cfg.get('tickers', {})
     if not tickers_cfg:
         return
+    if cfg.get('monitor_paused'):          # 總開關：暫停全部監測（省 token）
+        return
     now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
     for ticker, settings in list(tickers_cfg.items()):
         try:
+            if not settings.get('enabled', True):   # 個別開關：關閉的標的完全不掃描、不呼叫 AI
+                continue
             profile = settings.get('profile', 'aggressive')
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -289,9 +293,15 @@ def _run_server_scan():
             if price <= 0:
                 continue
             name = tw_cn_name(ticker, info.get('shortName', info.get('longName', ticker)))
-            result = (_aggressive_signal(stock, ticker, price, name)
-                      if profile == 'aggressive'
-                      else _steady_signal(stock, ticker, price, name))
+            if profile == 'aggressive':
+                result = _aggressive_signal(stock, ticker, price, name)
+            elif profile == 'perpetual':
+                code_p = ticker.replace('.TW', '').replace('.TWO', '')
+                hold_p = next((h for h in _load_agent_cfg().get('holdings', [])
+                               if h.get('code', '').strip().upper() == code_p), None)
+                result = _perpetual_signal(stock, ticker, price, name, hold_p)
+            else:
+                result = _steady_signal(stock, ticker, price, name)
             action = result.get('action', 'WAIT')
             should_notify = False
             line_token = line_user_id = ''
@@ -2499,6 +2509,7 @@ def monitor_register():
         existing = cfg['tickers'].get(ticker, {})
         cfg['tickers'][ticker] = {
             'profile':          profile,
+            'enabled':          existing.get('enabled', True),
             'line_token':       line_token,
             'line_user_id':     line_user_id,
             'last_signal':      existing.get('last_signal'),
@@ -2525,7 +2536,35 @@ def monitor_unregister():
 def monitor_list():
     with _monitor_lock:
         cfg = _load_monitor_cfg()
-    return jsonify(cfg.get('tickers', {}))
+    return jsonify({'tickers': cfg.get('tickers', {}),
+                    'paused':  bool(cfg.get('monitor_paused', False))})
+
+
+@app.route('/api/tw/monitor/toggle', methods=['POST'])
+def monitor_toggle():
+    """個別開關：開啟/關閉某檔監測（關閉者不掃描、不呼叫 AI，省 token）。"""
+    data    = request.json or {}
+    ticker  = tw_normalize(data.get('ticker', '').strip())
+    enabled = bool(data.get('enabled', True))
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        if ticker not in cfg.get('tickers', {}):
+            return jsonify({'error': 'ticker not monitored'}), 404
+        cfg['tickers'][ticker]['enabled'] = enabled
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'ticker': ticker, 'enabled': enabled})
+
+
+@app.route('/api/tw/monitor/pause', methods=['POST'])
+def monitor_pause():
+    """總開關：一鍵暫停／啟用全部監測。"""
+    data   = request.json or {}
+    paused = bool(data.get('paused', False))
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        cfg['monitor_paused'] = paused
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'paused': paused})
 
 
 @app.route('/api/tw/monitor/scan_now', methods=['POST'])
@@ -4460,6 +4499,457 @@ def screener_strategies_delete(name):
     return jsonify({'ok': True})
 
 
+# ════════════════════════════════════════════════════════════════════
+#  績優股清單（財報狗選股法）：自由現金流報酬率 + P/B + P/E + 殖利率多因子排名
+# ════════════════════════════════════════════════════════════════════
+def _stmt_series(df, labels):
+    """從 yfinance 財報 DataFrame 取出第一個命中欄位，回傳 {年份: 值}（年份為 int）。"""
+    out = {}
+    if df is None or getattr(df, 'empty', True):
+        return out
+    for lbl in labels:
+        if lbl in df.index:
+            for col in df.columns:
+                try:
+                    yr = int(col.year)
+                except Exception:
+                    try:    yr = int(str(col)[:4])
+                    except Exception: continue
+                v = safe_float(df.loc[lbl, col])
+                if v != 0:
+                    out[yr] = v
+            if out:
+                return out
+    return out
+
+
+def _norm_div_yield(info):
+    """yfinance 的 dividendYield 在不同版本有時是小數(0.025)有時是百分比(2.5)，這裡統一成百分比。"""
+    price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+    rate  = safe_float(info.get('dividendRate', info.get('trailingAnnualDividendRate', 0)))
+    if rate and price:                       # 最可靠：現金股利 / 股價
+        return round(rate / price * 100, 2)
+    dy = safe_float(info.get('dividendYield', 0))
+    if dy <= 0:
+        return 0.0
+    return round(dy if dy > 1 else dy * 100, 2)   # >1 視為已是百分比
+
+
+def _bluechip_metrics(ticker, is_tw):
+    """計算單一個股的財報狗因子；資料慢變，快取 6 小時。"""
+    key = f'bluechip:{ticker}'
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info or {}
+        cf    = stock.cashflow
+        bs    = stock.balance_sheet
+
+        # ── 各年度自由現金流 = 營業現金流 - 資本支出 ──
+        ocf   = _stmt_series(cf, ['Operating Cash Flow', 'Total Cash From Operating Activities'])
+        capex = _stmt_series(cf, ['Capital Expenditure', 'Capital Expenditures'])
+        fcf_d = _stmt_series(cf, ['Free Cash Flow'])
+        fcf_by_year = {}
+        for y in set(list(ocf) + list(capex) + list(fcf_d)):
+            if y in fcf_d:
+                fcf_by_year[y] = fcf_d[y]
+            elif y in ocf:
+                fcf_by_year[y] = ocf[y] + capex.get(y, 0)   # yfinance 的 capex 已是負值
+
+        # ── 各年度投入資本 = 股東權益 + 長短期金融負債 ──
+        equity = _stmt_series(bs, ['Stockholders Equity', 'Total Stockholder Equity', 'Common Stock Equity'])
+        tdebt  = _stmt_series(bs, ['Total Debt'])
+        ltd    = _stmt_series(bs, ['Long Term Debt'])
+        std    = _stmt_series(bs, ['Current Debt', 'Short Long Term Debt',
+                                   'Current Debt And Capital Lease Obligation'])
+        invcap_by_year = {}
+        for y, eq in equity.items():
+            debt = tdebt[y] if y in tdebt else (ltd.get(y, 0) + std.get(y, 0))
+            ic = eq + debt
+            if ic > 0:
+                invcap_by_year[y] = ic
+
+        # ── 各年度自由現金流報酬率（新到舊）──
+        years = sorted(set(fcf_by_year) & set(invcap_by_year), reverse=True)
+        rates = [(y, round(fcf_by_year[y] / invcap_by_year[y] * 100, 2)) for y in years]
+
+        latest_rate = rates[0][1] if rates else None
+        prev_rate   = rates[1][1] if len(rates) > 1 else None
+        declining   = (latest_rate is not None and prev_rate is not None and latest_rate < prev_rate)
+
+        # 3 年平均自由現金流報酬率（全正用幾何平均，否則算術平均）
+        last3 = [r for _, r in rates[:3]]
+        if last3:
+            if all(r > 0 for r in last3):
+                avg3 = round(float(np.prod(last3)) ** (1.0 / len(last3)), 2)
+            else:
+                avg3 = round(sum(last3) / len(last3), 2)
+        else:
+            avg3 = None
+
+        # ── 估值因子 ──
+        pb = safe_float(info.get('priceToBook', 0))
+        pe = safe_float(info.get('trailingPE', 0)) or safe_float(info.get('forwardPE', 0))
+        divy = _norm_div_yield(info)
+        price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+        en_name = (info.get('shortName') or info.get('longName') or ticker)[:30]
+        name = tw_cn_name(ticker, en_name) if is_tw else en_name
+
+        result = {
+            'ticker':     ticker,
+            'display':    tw_display(ticker) if is_tw else ticker,
+            'name':       name,
+            'price':      round(price, 2),
+            'fcfRate':    latest_rate,         # 最新年度自由現金流報酬率 %
+            'fcfPrev':    prev_rate,
+            'fcfAvg3':    avg3,                # 3 年平均
+            'fcfYears':   len(rates),
+            'declining':  declining,
+            'pb':         round(pb, 2) if pb > 0 else None,
+            'pe':         round(pe, 1) if pe > 0 else None,
+            'divYield':   divy if divy > 0 else None,
+        }
+        _cache_set(key, result, ttl=21600)
+        return result
+    except Exception:
+        return None
+
+
+@app.route('/bluechip')
+def bluechip_page():
+    from flask import make_response
+    resp = make_response(render_template('bluechip.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
+
+
+@app.route('/api/bluechip/run', methods=['POST'])
+def bluechip_run():
+    data        = request.json or {}
+    tickers_in  = data.get('tickers', [])
+    is_tw       = data.get('isTw', True)
+    exclude_dec = data.get('excludeDeclining', True)
+    fcf_top_pct = safe_float(data.get('fcfTopPct', 100)) or 100
+    top_n       = int(safe_float(data.get('topN', 80)) or 80)
+
+    if is_tw:
+        tickers = [tw_normalize(t.strip()) for t in tickers_in if t.strip()]
+    else:
+        tickers = [t.strip().upper() for t in tickers_in if t.strip()]
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return jsonify({'error': '請選擇要排名的股票'}), 400
+    if len(tickers) > 120:
+        return jsonify({'error': '最多一次排名 120 檔（多因子需抓多年財報，較耗時）'}), 400
+
+    try:
+        metrics = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs = {ex.submit(_bluechip_metrics, t, is_tw): t for t in tickers}
+            for f in as_completed(futs):
+                try:
+                    m = f.result()
+                    if m:
+                        metrics.append(m)
+                except Exception:
+                    pass
+
+        total_fetched = len(metrics)
+        excluded = {'noData': 0, 'declining': 0, 'fcfPct': 0}
+
+        # 步驟1：排除自由現金流報酬率下滑的公司
+        survivors = []
+        for m in metrics:
+            if m['fcfAvg3'] is None or m['fcfRate'] is None:
+                excluded['noData'] += 1
+                continue
+            if exclude_dec and m['declining']:
+                excluded['declining'] += 1
+                continue
+            survivors.append(m)
+
+        # 步驟2：依 3 年平均自由現金流報酬率排名，保留前 fcf_top_pct%
+        survivors.sort(key=lambda x: x['fcfAvg3'], reverse=True)
+        if fcf_top_pct < 100 and survivors:
+            keep = max(1, int(round(len(survivors) * fcf_top_pct / 100.0)))
+            excluded['fcfPct'] = len(survivors) - keep
+            survivors = survivors[:keep]
+
+        # 步驟3/4/5：分別依 P/B(小→大)、P/E(小→大)、殖利率(大→小)排名
+        def assign_rank(items, field, reverse, rank_key):
+            valid = [it for it in items if it.get(field) is not None]
+            valid.sort(key=lambda x: x[field], reverse=reverse)
+            for i, it in enumerate(valid):
+                it[rank_key] = i + 1
+            worst = len(valid) + 1
+            for it in items:
+                if it.get(rank_key) is None:
+                    it[rank_key] = worst        # 缺值排最後
+
+        for m in survivors:
+            m['rankPB'] = m['rankPE'] = m['rankDivY'] = None
+        assign_rank(survivors, 'pb',       False, 'rankPB')
+        assign_rank(survivors, 'pe',       False, 'rankPE')
+        assign_rank(survivors, 'divYield', True,  'rankDivY')
+
+        # 步驟6：綜合排名（分數越小越被低估）
+        for m in survivors:
+            m['totalScore'] = m['rankPB'] + m['rankPE'] + m['rankDivY']
+        survivors.sort(key=lambda x: (x['totalScore'], x['rankPB']))
+        ranked = survivors[:top_n]
+        for i, m in enumerate(ranked):
+            m['rank'] = i + 1
+
+        return jsonify({
+            'results':  ranked,
+            'total':    len(tickers),
+            'fetched':  total_fetched,
+            'survived': len(survivors),
+            'excluded': excluded,
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'排名發生錯誤，請稍後再試（{str(e)[:80]}）'}), 500
+
+
+# ════════════════════════════════════════════════════════════════════
+#  低位階長期永動機投資法（春燕來了式）：低位階選股 + 起漲/出場訊號（台股）
+# ════════════════════════════════════════════════════════════════════
+def _perpetual_metrics(ticker):
+    """輕量版：算位階、距高點回檔、起漲分數，供選股掃描用。快取 15 分鐘。"""
+    key = f'perp:{ticker}'
+    c = _cache_get(key)
+    if c is not None:
+        return c
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period='1y', interval='1d')
+        if hist.empty:
+            return None
+        hist = hist.dropna(subset=['Close'])         # 對齊各序列長度（避免今日 NaN 造成 calc_kd 長度不符）
+        if len(hist) < 60:
+            return None
+        close = hist['Close']; high = hist['High']; low = hist['Low']; vol = hist['Volume']
+        price = safe_float(close.iloc[-1])
+        if price <= 0:
+            return None
+        ma20 = safe_float(close.rolling(20).mean().iloc[-1])
+        ma60 = safe_float(close.rolling(60).mean().iloc[-1])
+        ma20_5ago = safe_float(close.rolling(20).mean().iloc[-6]) if len(close) > 25 else ma20
+        ma20_up = ma20 > ma20_5ago
+        win  = close.iloc[-252:] if len(close) >= 252 else close
+        hi52 = safe_float(win.max()); lo52 = safe_float(win.min())
+        pos  = (price - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
+        drawdown = (price - hi52) / hi52 * 100 if hi52 else 0
+        avgv = safe_float(vol.rolling(20).mean().iloc[-1])
+        volr = safe_float(vol.iloc[-1]) / avgv if avgv > 0 else 0
+        _, _, osc_s = calc_macd(close)
+        osc = safe_float(osc_s.iloc[-1]); osc_prev = safe_float(osc_s.iloc[-2])
+        k_s, d_s = calc_kd(high, low, close)
+        k = safe_float(k_s.iloc[-1]); d = safe_float(d_s.iloc[-1])
+        kp = safe_float(k_s.iloc[-2]); dp = safe_float(d_s.iloc[-2])
+        rise_factors = [price > ma20, ma20_up, volr >= 1.3, osc > osc_prev, (k > d and kp <= dp)]
+        rise = sum(1 for v in rise_factors if v)
+        code = ticker.replace('.TW', '').replace('.TWO', '')
+        result = {
+            'ticker': ticker, 'display': code, 'name': tw_cn_name(ticker, code),
+            'price': round(price, 2), 'pos': round(pos, 1), 'drawdown': round(drawdown, 1),
+            'ma20': round(ma20, 2), 'ma60': round(ma60, 2), 'ma20Up': ma20_up,
+            'volRatio': round(volr, 2), 'riseScore': rise, 'aboveMa20': bool(price > ma20),
+        }
+        _cache_set(key, result, ttl=900)
+        return result
+    except Exception:
+        return None
+
+
+def _perpetual_signal(stock, ticker, price, name, holding=None):
+    """低位階永動機訊號：低位階+起漲→進場；持倉則續抱/減碼/出場/停損。
+    回傳結構與 _steady_signal 一致，action 用 BUY/SELL/AVOID 接既有推播去重邏輯。"""
+    hist = stock.history(period='1y', interval='1d')
+    if hist.empty or len(hist) < 60:
+        return _signal_wait(ticker, name, price, 'perpetual', '歷史資料不足，無法判斷')
+    hist = hist.dropna(subset=['Close'])             # 對齊各序列長度
+    if len(hist) < 60:
+        return _signal_wait(ticker, name, price, 'perpetual', '歷史資料不足，無法判斷')
+    close = hist['Close']; high = hist['High']; low = hist['Low']; vol = hist['Volume']
+
+    ma20 = safe_float(close.rolling(20).mean().iloc[-1])
+    ma60 = safe_float(close.rolling(60).mean().iloc[-1])
+    ma20_5ago = safe_float(close.rolling(20).mean().iloc[-6]) if len(close) > 25 else ma20
+    ma20_up = ma20 > ma20_5ago
+    win  = close.iloc[-252:] if len(close) >= 252 else close
+    hi52 = safe_float(win.max()); lo52 = safe_float(win.min())
+    pos  = (price - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
+    drawdown = (price - hi52) / hi52 * 100 if hi52 else 0
+    avgv = safe_float(vol.rolling(20).mean().iloc[-1])
+    volr = safe_float(vol.iloc[-1]) / avgv if avgv > 0 else 0
+    _, _, osc_s = calc_macd(close)
+    osc = safe_float(osc_s.iloc[-1]); osc_prev = safe_float(osc_s.iloc[-2])
+    k_s, d_s = calc_kd(high, low, close)
+    k = safe_float(k_s.iloc[-1]); d = safe_float(d_s.iloc[-1])
+    kp = safe_float(k_s.iloc[-2]); dp = safe_float(d_s.iloc[-2])
+    kd_gold = k > d and kp <= dp
+    kd_dead_high = k < d and kp >= dp and k > 70
+    above20 = price > ma20
+    broke20 = price < ma20 * 0.99
+    low_pos = pos < 45
+
+    entry_factors = {
+        '站上月線': above20, '月線翻揚': ma20_up, '帶量(量比≥1.3)': volr >= 1.3,
+        'MACD動能轉強': osc > osc_prev, 'KD黃金交叉': kd_gold,
+    }
+    entry_score = sum(1 for v in entry_factors.values() if v)
+    stop_loss = round(min(ma60, safe_float(low.iloc[-20:].min())) * 0.97, 2)
+    ts = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    details = {
+        'pos': round(pos, 1), 'drawdown': round(drawdown, 1),
+        'ma20': round(ma20, 2), 'ma60': round(ma60, 2), 'ma20Up': ma20_up,
+        'volRatio': round(volr, 2), 'entryScore': entry_score,
+        'entryFactors': entry_factors, 'k': round(k, 1), 'd': round(d, 1),
+    }
+
+    def out(action, action_cn, conf, reason):
+        return {'ticker': ticker, 'name': name, 'price': round(price, 2),
+                'profile': 'perpetual', 'action': action, 'actionCn': action_cn,
+                'confidence': conf, 'reason': reason, 'stopLoss': stop_loss,
+                'trailingStop': f'跌破月線 {ma20:.2f} 或停損 {stop_loss:.2f} 時減碼／出場',
+                'details': details, 'timeframe': '日K（低位階永動機）', 'timestamp': ts}
+
+    if holding:
+        buy_p = safe_float(holding.get('buy_price', 0))
+        pnl = (price - buy_p) / buy_p * 100 if buy_p else 0
+        details['cost'] = buy_p; details['pnl'] = round(pnl, 2)
+        if broke20 and buy_p and price < buy_p:
+            return out('AVOID', '跌破月線且虧損，建議停損', '中',
+                f'股價 {price:.2f} 跌破月線 {ma20:.2f}，且低於成本 {buy_p:g}（{pnl:+.1f}%）。趨勢轉弱，'
+                f'永動機紀律：認賠出場、保留資金等下一檔低位階起漲，不凹單。')
+        if kd_dead_high or (broke20 and pnl > 0):
+            return out('SELL', '高檔轉弱，獲利了結', '中',
+                f'股價 {price:.2f}（{pnl:+.1f}%）出現{"KD 高檔死亡交叉" if kd_dead_high else "跌破月線"}，'
+                f'動能轉弱。建議分批了結，把資金轉到新的低位階候選（換股）。')
+        if pnl >= 25:
+            return out('SELL', '達停利目標，分批了結', '中',
+                f'股價 {price:.2f} 獲利 +{pnl:.1f}% 已達停利區。趨勢仍多可留部分，建議分批落袋，'
+                f'釋出資金投入新的低位階起漲股。')
+        return out('WAIT', '續抱', '-',
+            f'股價 {price:.2f}（{pnl:+.1f}%）守穩月線 {ma20:.2f}，{"月線上揚" if ma20_up else "月線走平"}，'
+            f'趨勢未轉弱，續抱。跌破月線或停損 {stop_loss:.2f} 再出場。')
+
+    if low_pos and entry_score >= 3:
+        conf = '高' if entry_score >= 4 else '中'
+        hit = '、'.join([kk for kk, vv in entry_factors.items() if vv])
+        return out('BUY', '低位階起漲！建議進場', conf,
+            f'位階僅 {pos:.0f}%（距 52 週高點 {drawdown:.0f}%），出現起漲訊號（{entry_score}/5：{hit}）。'
+            f'屬永動機左側低接後轉強，可進場，停損設 {stop_loss:.2f}。')
+    if low_pos and entry_score >= 1:
+        return out('WATCH', '低位階整理，留意起漲', '低',
+            f'位階 {pos:.0f}% 偏低，但起漲訊號未足（{entry_score}/5）。納入監測，等站上月線並帶量再進場。')
+    if not low_pos:
+        return out('WAIT', '位階偏高，不宜追高', '-',
+            f'位階已達 {pos:.0f}%，非低位階區。永動機原則不追高，等拉回低位階再評估。')
+    return out('WAIT', '觀望', '-', f'位階 {pos:.0f}%，尚無明確起漲訊號。')
+
+
+@app.route('/perpetual')
+def perpetual_page():
+    from flask import make_response
+    resp = make_response(render_template('perpetual.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
+
+
+@app.route('/api/perpetual/screen', methods=['POST'])
+def perpetual_screen():
+    data       = request.json or {}
+    tickers_in = data.get('tickers', [])
+    pos_max    = safe_float(data.get('posMax', 40)) or 40
+    dd_min     = safe_float(data.get('drawdownMin', 0))   # 距高點回檔至少 X%（0=不限）
+    min_rise   = int(safe_float(data.get('minRise', 0)))
+    quality    = bool(data.get('quality', False))
+    chip       = bool(data.get('chip', False))
+
+    tickers = list(dict.fromkeys(tw_normalize(t.strip()) for t in tickers_in if t.strip()))
+    if not tickers:
+        return jsonify({'error': '請選擇要掃描的股票'}), 400
+    if len(tickers) > 120:
+        return jsonify({'error': '最多一次掃描 120 檔'}), 400
+
+    try:
+        metrics = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs = {ex.submit(_perpetual_metrics, t): t for t in tickers}
+            for f in as_completed(futs):
+                try:
+                    m = f.result()
+                    if m:
+                        metrics.append(m)
+                except Exception:
+                    pass
+        fetched = len(metrics)
+
+        cands = []
+        for m in metrics:
+            is_low = m['pos'] <= pos_max
+            is_dd  = dd_min > 0 and m['drawdown'] <= -dd_min
+            if not (is_low or is_dd):
+                continue
+            if m['riseScore'] < min_rise:
+                continue
+            cands.append(m)
+
+        if quality:                       # 績優股基本面過濾：剔除自由現金流轉差/虧損地雷
+            kept = []
+            for m in cands:
+                bm = _bluechip_metrics(m['ticker'], True)
+                if bm and bm.get('fcfAvg3') is not None and not bm.get('declining'):
+                    m['fcfAvg3'] = bm.get('fcfAvg3'); m['pb'] = bm.get('pb')
+                    kept.append(m)
+            cands = kept
+
+        if chip:                          # 籌碼過濾：三大法人合計買超
+            kept = []
+            for m in cands:
+                inst = _get_tw_inst(m['display'])
+                if inst and inst.get('total_net', 0) > 0:
+                    m['instNet'] = inst.get('total_net'); kept.append(m)
+            cands = kept
+
+        cands.sort(key=lambda x: (-x['riseScore'], x['pos']))
+        return jsonify({'results': cands, 'total': len(tickers),
+                        'fetched': fetched, 'matched': len(cands)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'掃描發生錯誤，請稍後再試（{str(e)[:80]}）'}), 500
+
+
+@app.route('/api/perpetual/monitor')
+def perpetual_monitor():
+    """回傳監測中（profile=perpetual）的標的與最新訊號，供永動機頁的監測區顯示。"""
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    holdings = {h.get('code', '').strip().upper(): h
+                for h in _load_agent_cfg().get('holdings', []) if h.get('code')}
+    out = []
+    for ticker, s in cfg.get('tickers', {}).items():
+        if s.get('profile') != 'perpetual':
+            continue
+        code = ticker.replace('.TW', '').replace('.TWO', '')
+        sig = s.get('last_signal') or {}
+        h = holdings.get(code)
+        out.append({
+            'ticker': ticker, 'display': code, 'name': sig.get('name', code),
+            'enabled': s.get('enabled', True),
+            'action': sig.get('action', 'WAIT'), 'actionCn': sig.get('actionCn', '尚未掃描'),
+            'confidence': sig.get('confidence', '-'), 'price': sig.get('price'),
+            'reason': sig.get('reason', ''), 'lastScan': s.get('last_scan', ''),
+            'cost': (h or {}).get('buy_price'), 'shares': (h or {}).get('shares'),
+        })
+    return jsonify({'tickers': out, 'paused': bool(cfg.get('monitor_paused', False))})
+
+
 @app.route('/api/screener/add_alert', methods=['POST'])
 def screener_add_alert():
     """Add a ticker to monitor with custom exit alert conditions."""
@@ -4525,8 +5015,12 @@ def _run_server_scan_with_exit():
     # Check exit alerts
     with _monitor_lock:
         cfg = _load_monitor_cfg()
+    if cfg.get('monitor_paused'):
+        return
     now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
     for ticker, entry in list(cfg.get('tickers', {}).items()):
+        if not entry.get('enabled', True):
+            continue
         if not entry.get('exit_conditions'):
             continue
         # 非交易時段不推播出場警示，避免半夜／收盤後一直發

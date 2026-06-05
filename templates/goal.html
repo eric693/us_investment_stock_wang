@@ -107,6 +107,8 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   <a href="/ai" class="home">智能首頁</a>
   <a href="/tw">台股</a>
   <a href="/screener">篩選器</a>
+  <a href="/bluechip">績優股清單</a>
+  <a href="/perpetual">低位階永動機</a>
   <a href="/agent">AI Agent</a>
   <a href="/backtest">策略回測</a>
   <a href="/goal" class="active">目標操盤</a>
@@ -407,5 +409,6 @@ loadGoal();
 loadStatus().then(s => { if (s && s.review_status === 'running') { reviewBtn.disabled = true; startReviewPolling(); } });
 loadUs();
 </script>
+<script src="/static/js/stock_detail.js"></script>
 </body>
 </html>

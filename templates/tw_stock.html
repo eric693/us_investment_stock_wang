@@ -199,6 +199,8 @@
   <a class="market-switch" href="/">美股</a>
   <a class="market-switch" href="/portfolio" style="background:rgba(79,118,173,.15);color:#7ba6db;border-color:rgba(79,118,173,.3);">投資組合</a>
   <a class="market-switch" href="/screener" style="background:rgba(240,180,41,.1);color:var(--gold);border-color:rgba(240,180,41,.25);">策略選股</a>
+  <a class="market-switch" href="/bluechip" style="background:rgba(232,200,74,.1);color:var(--gold);border-color:rgba(232,200,74,.25);">績優股清單</a>
+  <a class="market-switch" href="/perpetual" style="background:rgba(0,214,143,.1);color:var(--green);border-color:rgba(0,214,143,.25);">低位階永動機</a>
   <a class="market-switch" href="/workbench" style="background:rgba(240,180,41,.1);color:var(--gold);border-color:rgba(240,180,41,.25);">策略工作台</a>
   <div class="search-wrap">
     <input id="tickerInput" type="text" placeholder="輸入股票代碼 (2330, 0050, 2454...)" autocomplete="off" spellcheck="false">
@@ -1169,7 +1171,8 @@ async function renderMonitorPanel(d) {
   try {
     const r = await fetch('/api/tw/monitor/list');
     const list = await r.json();
-    _setServerLabel(_monitorMode === 'auto' && !!list[d.ticker]);
+    const tickers = list.tickers || list;   // 相容新舊回傳格式
+    _setServerLabel(_monitorMode === 'auto' && !!tickers[d.ticker]);
   } catch(e) { _setServerLabel(false); }
 }
 
@@ -2793,5 +2796,6 @@ async function loadNews(ticker) {
 }
 </script>
 
+<script src="/static/js/stock_detail.js"></script>
 </body>
 </html>

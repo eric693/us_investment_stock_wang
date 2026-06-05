@@ -808,7 +808,7 @@ function renderResults(results) {
       `<span class="cond-tag pass" title="${c.detail}">${c.label.slice(0,10)}…</span>`
     ).join('');
     html += `<tr>
-      <td><span class="r-sym" onclick="window.open('${link}','_blank')">${r.display}</span></td>
+      <td><span class="r-sym" onclick="openStockDetail('${r.display}', ${r.isTw})">${r.display}</span></td>
       <td><span class="r-name">${esc(r.name)}</span></td>
       <td>${r.price}</td>
       <td class="${updn?'sig-up':'sig-dn'}">${updn?'▲':'▼'}${Math.abs(r.changePct).toFixed(2)}%</td>
@@ -1060,5 +1060,6 @@ document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('cli
   _restoreScreenerState();   // 切頁回來時還原上次掃描結果
 })();
 </script>
+<script src="/static/js/stock_detail.js"></script>
 </body>
 </html>

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>績優股清單 — 財報狗選股法</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+/* ── Nav ─────────────────────────────────────── */
+.sc-nav{position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:rgba(6,10,16,.96);border-bottom:1px solid var(--card-bd);padding:10px 20px;backdrop-filter:blur(12px);}
+.sc-nav .brand{font-size:1rem;font-weight:900;letter-spacing:1px;color:#fff;padding:5px 12px;background:linear-gradient(135deg,#1a6fd4,#0e4a9a);border-radius:6px;}
+.sc-nav .brand span{color:var(--gold);}
+.nav-link{padding:5px 12px;border-radius:6px;color:var(--text-mid);font-size:0.83rem;font-weight:600;border:1px solid transparent;transition:all .15s;text-decoration:none;}
+.nav-link:hover{color:var(--text);border-color:var(--card-bd2);background:#0d1828;}
+.nav-link.active{color:var(--blue);border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08);}
+
+/* ── Layout ──────────────────────────────────── */
+.sc-body{max-width:1500px;margin:0 auto;padding:18px 16px;display:grid;grid-template-columns:380px 1fr;gap:18px;align-items:start;}
+@media(max-width:1100px){.sc-body{grid-template-columns:1fr;}}
+
+.card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:12px;padding:18px;margin-bottom:14px;}
+.card-title{font-size:0.9rem;font-weight:800;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:6px;}
+.section-label{font-size:0.72rem;font-weight:800;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px;}
+
+.btn{padding:7px 16px;border-radius:7px;border:none;font-size:0.83rem;font-weight:700;cursor:pointer;transition:all .15s;}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-primary:hover{background:#2278e0;}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+.btn-sm{padding:4px 10px;font-size:0.76rem;}
+.btn-ghost{background:rgba(255,255,255,.05);color:var(--text-mid);border:1px solid var(--card-bd);}
+.btn-ghost:hover{background:rgba(255,255,255,.09);color:var(--text);}
+
+.inp{padding:7px 11px;border-radius:7px;border:1px solid var(--card-bd2);background:#0a1320;color:var(--text);font-size:0.85rem;outline:none;transition:border-color .2s;width:100%;}
+.inp:focus{border-color:var(--accent);}
+.inp-sm{padding:5px 9px;font-size:0.8rem;}
+
+.mkt-switch{display:flex;gap:4px;margin-bottom:12px;}
+.mkt-btn{flex:1;padding:7px;border-radius:7px;border:1px solid var(--card-bd);background:transparent;color:var(--text-dim);font-size:0.82rem;font-weight:700;cursor:pointer;transition:all .15s;}
+.mkt-btn.active.tw{color:#00d68f;border-color:rgba(0,214,143,.4);background:rgba(0,214,143,.08);}
+.mkt-btn.active.us{color:#3d8ef8;border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08);}
+
+.universe-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;}
+.cat-chip{padding:5px 10px;border-radius:6px;border:1px solid var(--card-bd);background:transparent;color:var(--text-dim);font-size:0.75rem;font-weight:600;cursor:pointer;transition:all .15s;text-align:center;}
+.cat-chip.sel{color:var(--accent);border-color:rgba(61,142,248,.4);background:rgba(61,142,248,.08);}
+.cat-chip:hover:not(.sel){background:#0d1828;color:var(--text);}
+.ticker-tags{display:flex;flex-wrap:wrap;gap:4px;padding:6px;background:#060a10;border-radius:6px;min-height:32px;max-height:90px;overflow-y:auto;}
+.ticker-tag{padding:2px 8px;border-radius:4px;font-size:0.72rem;font-weight:700;background:rgba(61,142,248,.1);color:var(--blue);cursor:pointer;border:1px solid rgba(61,142,248,.2);}
+.ticker-tag:hover{background:rgba(232,70,70,.15);color:var(--red);}
+.custom-ticker-row{display:flex;gap:6px;margin-top:6px;}
+
+.opt-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0;font-size:0.82rem;color:var(--text-mid);}
+.opt-row label{display:flex;align-items:center;gap:7px;cursor:pointer;}
+.opt-row input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+.opt-row .num{width:78px;}
+
+/* ── Progress & results ──────────────────────── */
+.progress-wrap{margin-bottom:14px;}
+.progress-bar{height:6px;background:rgba(61,142,248,.15);border-radius:3px;overflow:hidden;}
+.progress-fill{height:100%;background:linear-gradient(90deg,#1a6fd4,#00d68f);border-radius:3px;transition:width .4s;}
+.progress-txt{font-size:0.76rem;color:var(--text-dim);margin-top:5px;}
+
+.summary-bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.summary-pill{padding:5px 12px;border-radius:20px;font-size:0.74rem;font-weight:700;background:#0d1828;border:1px solid var(--card-bd);color:var(--text-mid);}
+.summary-pill b{color:var(--text);}
+
+.result-table-wrap{overflow-x:auto;}
+.result-table{width:100%;border-collapse:collapse;font-size:0.81rem;}
+.result-table th{padding:8px 9px;background:#0d1828;color:var(--text-dim);font-size:0.7rem;font-weight:700;letter-spacing:.3px;border-bottom:1px solid var(--card-bd);white-space:nowrap;text-align:right;position:sticky;top:0;}
+.result-table th:first-child,.result-table th:nth-child(2){text-align:left;}
+.result-table td{padding:9px 9px;border-bottom:1px solid rgba(21,32,48,.6);text-align:right;vertical-align:middle;white-space:nowrap;}
+.result-table td:first-child,.result-table td:nth-child(2){text-align:left;}
+.result-table tr:hover td{background:rgba(61,142,248,.04);}
+.r-rank{font-weight:800;color:var(--gold);}
+.r-sym{font-weight:800;color:var(--blue);cursor:pointer;}
+.r-sym:hover{text-decoration:underline;}
+.r-name{font-size:0.72rem;color:var(--text-dim);}
+.r-score{font-weight:800;color:var(--green);}
+.r-sub{font-size:0.66rem;color:var(--text-dim);}
+.empty-hint{text-align:center;padding:40px;color:var(--text-dim);font-size:0.88rem;}
+.muted{color:var(--text-dim);}
+
+/* ── Method explainer ────────────────────────── */
+.method{background:#0a1422;border:1px solid var(--card-bd);border-radius:9px;padding:14px 16px;font-size:0.78rem;color:var(--text-mid);line-height:1.7;}
+.method b{color:var(--text);}
+.method code{background:rgba(61,142,248,.1);color:var(--blue);padding:1px 6px;border-radius:4px;font-size:0.74rem;}
+.method .step{margin-bottom:7px;}
+.method .step-n{display:inline-block;min-width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:rgba(232,200,74,.14);color:var(--gold);font-weight:800;font-size:0.7rem;margin-right:6px;}
+</style>
+</head>
+<body>
+
+<nav class="sc-nav">
+  <div class="brand">US<span>STOCK</span></div>
+  <a class="nav-link" href="/ai" style="background:linear-gradient(135deg,#2563a8, #173a6b);color:#fff">AI 首頁</a>
+  <a class="nav-link" href="/">美股分析</a>
+  <a class="nav-link" href="/tw">台股分析</a>
+  <a class="nav-link" href="/portfolio">投資組合</a>
+  <a class="nav-link" href="/screener">策略選股</a>
+  <a class="nav-link active" href="/bluechip">績優股清單</a>
+  <a class="nav-link" href="/predict">AI 預測</a>
+  <a class="nav-link" href="/agent">AI Agent</a>
+  <a class="nav-link" href="/backtest">策略回測</a>
+  <a class="nav-link" href="/goal">目標操盤</a>
+  <a class="nav-link" href="/workbench">策略工作台</a>
+</nav>
+
+<div class="sc-body">
+
+  <!-- ═══ LEFT: Controls ═══════════════════════════════ -->
+  <div>
+    <div class="card">
+      <div class="card-title">績優股排名設定</div>
+
+      <div class="section-label">市場</div>
+      <div class="mkt-switch">
+        <button class="mkt-btn active tw" id="mktTW" onclick="setMarket('tw')">台股</button>
+        <button class="mkt-btn us"        id="mktUS" onclick="setMarket('us')">美股</button>
+      </div>
+
+      <div class="section-label">選擇股票池（可複選產業）</div>
+      <div class="universe-grid" id="universeCats"></div>
+
+      <div class="custom-ticker-row">
+        <input class="inp inp-sm" id="customTickerInput" placeholder="手動加股號，逗號分隔">
+        <button class="btn btn-ghost btn-sm" onclick="addCustomTickers()">加入</button>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
+        <span class="r-sub" id="tickerCount">已選 0 檔</span>
+        <button class="btn btn-ghost btn-sm" onclick="clearAllTickers()">清空</button>
+      </div>
+      <div class="ticker-tags" id="tickerTagsWrap" style="margin-top:6px;"></div>
+
+      <div class="section-label">篩選參數</div>
+      <div class="opt-row">
+        <label><input type="checkbox" id="optExcludeDec" checked> 排除自由現金流報酬率下滑</label>
+      </div>
+      <div class="opt-row">
+        <span>自由現金流報酬率取前</span>
+        <span style="display:flex;align-items:center;gap:5px;">
+          <input class="inp inp-sm num" type="number" id="optFcfPct" value="100" min="5" max="100" step="5">
+          <span>%</span>
+        </span>
+      </div>
+      <div class="opt-row">
+        <span>最後顯示前</span>
+        <span style="display:flex;align-items:center;gap:5px;">
+          <input class="inp inp-sm num" type="number" id="optTopN" value="80" min="5" max="120" step="5">
+          <span>名</span>
+        </span>
+      </div>
+
+      <button class="btn btn-primary" id="runBtn" style="width:100%;margin-top:14px;" onclick="runRank()">
+        開始綜合排名
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">選股邏輯（財報狗選股法）</div>
+      <div class="method">
+        <div class="step"><span class="step-n">1</span>排除前一年度<b>自由現金流報酬率下滑</b>的公司<br>
+          <code>自由現金流 = 營業現金流 − 資本支出</code></div>
+        <div class="step"><span class="step-n">2</span>計算<b>3 年平均自由現金流報酬率</b>（幾何平均），挑出獲利能力高的公司<br>
+          <code>報酬率 = 自由現金流 ÷ 投入資本 × 100%</code></div>
+        <div class="step"><span class="step-n">3</span>依<b>股價淨值比 P/B</b>由小到大排名</div>
+        <div class="step"><span class="step-n">4</span>依<b>本益比 P/E</b>由小到大排名</div>
+        <div class="step"><span class="step-n">5</span>依<b>股息殖利率</b>由大到小排名</div>
+        <div class="step"><span class="step-n">6</span><b>綜合分數 = P/B排名 + P/E排名 + 殖利率排名</b>，分數越小代表相對越被低估</div>
+        <div class="muted" style="margin-top:8px;font-size:0.72rem;">資料來源：yfinance 多年財報，慢變資料快取 6 小時。個別公司若財報不齊全會自動略過。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ RIGHT: Results ═══════════════════════════════ -->
+  <div>
+    <div class="card">
+      <div class="card-title">綜合排名結果</div>
+      <div class="progress-wrap" id="progressWrap" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="progress-txt" id="progressTxt">排名中…</div>
+      </div>
+      <div class="summary-bar" id="summaryBar" style="display:none;"></div>
+      <div id="resultArea">
+        <div class="empty-hint">選好股票池後，點「開始綜合排名」<br>系統會抓取多年財報並算出綜合排名。</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let _universe = {tw:{}, us:{}};
+let _market = 'tw';
+let _selectedTickers = new Set();
+let _selCats = new Set();
+
+async function initUniverse() {
+  const resp = await fetch('/api/screener/universe');
+  _universe = await resp.json();
+  renderUniverseCats();
+}
+
+function setMarket(m) {
+  _market = m;
+  _selectedTickers.clear();
+  document.getElementById('mktTW').className = 'mkt-btn' + (m==='tw' ? ' active tw' : '');
+  document.getElementById('mktUS').className = 'mkt-btn' + (m==='us' ? ' active us' : '');
+  renderUniverseCats();
+}
+
+function renderUniverseCats() {
+  const cats = _market === 'tw' ? _universe.tw : _universe.us;
+  if (!cats) return;
+  const grid = document.getElementById('universeCats');
+  grid.innerHTML = '';
+  _selCats.clear();
+  Object.keys(cats).forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'cat-chip';
+    btn.textContent = cat;
+    btn.onclick = () => toggleCat(cat, btn, cats[cat]);
+    grid.appendChild(btn);
+  });
+  renderTickerTags();
+}
+
+function toggleCat(cat, btn, tickers) {
+  if (_selCats.has(cat)) {
+    _selCats.delete(cat); btn.classList.remove('sel');
+    tickers.forEach(t => _selectedTickers.delete(t));
+  } else {
+    _selCats.add(cat); btn.classList.add('sel');
+    tickers.forEach(t => _selectedTickers.add(t));
+  }
+  renderTickerTags();
+}
+
+function renderTickerTags() {
+  const wrap = document.getElementById('tickerTagsWrap');
+  wrap.innerHTML = '';
+  _selectedTickers.forEach(t => {
+    const tag = document.createElement('span');
+    tag.className = 'ticker-tag';
+    tag.title = '點擊移除';
+    tag.textContent = t;
+    tag.onclick = () => { _selectedTickers.delete(t); renderTickerTags(); };
+    wrap.appendChild(tag);
+  });
+  document.getElementById('tickerCount').textContent = `已選 ${_selectedTickers.size} 檔`;
+}
+
+function addCustomTickers() {
+  const val = document.getElementById('customTickerInput').value.trim();
+  if (!val) return;
+  val.split(/[,，\s]+/).forEach(t => {
+    t = t.trim().toUpperCase();
+    if (t) _selectedTickers.add(t);
+  });
+  document.getElementById('customTickerInput').value = '';
+  renderTickerTags();
+}
+
+function clearAllTickers() {
+  _selectedTickers.clear(); _selCats.clear();
+  document.querySelectorAll('.cat-chip').forEach(b => b.classList.remove('sel'));
+  renderTickerTags();
+}
+
+function showToast(msg) {
+  const t = document.getElementById('progressTxt');
+  document.getElementById('progressWrap').style.display = 'block';
+  t.textContent = msg;
+}
+
+let _fakeTimer = null;
+async function runRank() {
+  if (_selectedTickers.size === 0) { alert('請先選擇要排名的股票'); return; }
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  document.getElementById('summaryBar').style.display = 'none';
+  document.getElementById('resultArea').innerHTML = '';
+
+  const wrap = document.getElementById('progressWrap');
+  const fill = document.getElementById('progressFill');
+  const txt  = document.getElementById('progressTxt');
+  wrap.style.display = 'block';
+  let pct = 0;
+  fill.style.width = '4%';
+  txt.textContent = `抓取多年財報並排名中…（${_selectedTickers.size} 檔，較耗時請稍候）`;
+  clearInterval(_fakeTimer);
+  _fakeTimer = setInterval(() => {
+    pct = Math.min(pct + 3, 92);
+    fill.style.width = pct + '%';
+  }, 700);
+
+  try {
+    const resp = await fetch('/api/bluechip/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        tickers:          [..._selectedTickers],
+        isTw:             _market === 'tw',
+        excludeDeclining: document.getElementById('optExcludeDec').checked,
+        fcfTopPct:        parseFloat(document.getElementById('optFcfPct').value) || 100,
+        topN:             parseInt(document.getElementById('optTopN').value) || 80,
+      }),
+    });
+    const data = await resp.json();
+    clearInterval(_fakeTimer);
+    fill.style.width = '100%';
+    if (!resp.ok) { txt.textContent = (data.error || '排名失敗'); return; }
+    setTimeout(() => { wrap.style.display = 'none'; }, 400);
+    renderResults(data);
+  } catch (e) {
+    clearInterval(_fakeTimer);
+    txt.textContent = '連線錯誤：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function fmt(v, dash='—') { return (v === null || v === undefined) ? dash : v; }
+
+function renderResults(data) {
+  const ex = data.excluded || {};
+  const sb = document.getElementById('summaryBar');
+  sb.style.display = 'flex';
+  sb.innerHTML = `
+    <span class="summary-pill">已選 <b>${data.total}</b> 檔</span>
+    <span class="summary-pill">成功抓取 <b>${data.fetched}</b></span>
+    <span class="summary-pill">通過篩選 <b>${data.survived}</b></span>
+    <span class="summary-pill">財報不全略過 <b>${ex.noData||0}</b></span>
+    <span class="summary-pill">現金流下滑剔除 <b>${ex.declining||0}</b></span>`;
+
+  const rows = data.results || [];
+  const area = document.getElementById('resultArea');
+  if (!rows.length) {
+    area.innerHTML = '<div class="empty-hint">沒有符合條件的公司。<br>可試著放寬「自由現金流取前 %」或取消「排除下滑」，並確認股票池財報資料齊全。</div>';
+    return;
+  }
+
+  const isTw = _market === 'tw';
+  let html = '<div class="result-table-wrap"><table class="result-table"><thead><tr>'
+    + '<th>#</th><th>股票</th><th>綜合分數</th>'
+    + '<th>股價</th>'
+    + '<th>FCF報酬率<div class="r-sub">最新/前年</div></th>'
+    + '<th>3年平均</th>'
+    + '<th>P/B<div class="r-sub">排名</div></th>'
+    + '<th>P/E<div class="r-sub">排名</div></th>'
+    + '<th>殖利率<div class="r-sub">排名</div></th>'
+    + '</tr></thead><tbody>';
+
+  rows.forEach(r => {
+    const fcfTrend = (r.fcfRate!=null && r.fcfPrev!=null && r.fcfRate < r.fcfPrev) ? 'color:var(--red)' : 'color:var(--green)';
+    html += `<tr>
+      <td class="r-rank">${r.rank}</td>
+      <td>
+        <span class="r-sym" onclick="openStockDetail('${r.display}', ${isTw})">${r.display}</span>
+        <div class="r-name">${r.name||''}</div>
+      </td>
+      <td class="r-score">${r.totalScore}</td>
+      <td>${fmt(r.price)}</td>
+      <td style="${fcfTrend}">${fmt(r.fcfRate)}%<div class="r-sub">前年 ${fmt(r.fcfPrev,'—')}%</div></td>
+      <td>${fmt(r.fcfAvg3)}%</td>
+      <td>${fmt(r.pb)}<div class="r-sub">#${r.rankPB}</div></td>
+      <td>${fmt(r.pe)}<div class="r-sub">#${r.rankPE}</div></td>
+      <td>${fmt(r.divYield)}%<div class="r-sub">#${r.rankDivY}</div></td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  area.innerHTML = html;
+}
+
+initUniverse();
+</script>
+<script src="/static/js/stock_detail.js"></script>
+</body>
+</html>
