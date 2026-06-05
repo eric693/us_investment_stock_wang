@@ -141,10 +141,10 @@
     <div class="card">
       <div class="card-title">永動機選股邏輯</div>
       <div class="method">
-        <div><span class="step-n">1</span><b>位階</b> = (現價 − 52週低) ÷ (52週高 − 52週低)。越低代表越接近長期低檔。</div>
-        <div style="margin-top:7px;"><span class="step-n">2</span>在低位階／高檔回檔後的股票裡，找<b>起漲訊號</b>：站上月線、月線翻揚、帶量、MACD 動能轉強、KD 黃金交叉（5 項計分）。</div>
-        <div style="margin-top:7px;"><span class="step-n">3</span>買入後加入監測，<b>跌破月線或停損即出場</b>、達停利分批了結，釋出資金再買下一檔 —— 形成資金循環的永動機。</div>
-        <div class="r-sub" style="margin-top:8px;">註：本頁訊號為程式輔助判斷，非投資建議，請自行評估風險。</div>
+        <div><span class="step-n">1</span><b>找低位階</b>（相對歷史底部）：位階 = 現價在<b>近 5 年</b>高低區間的位置；參考<b>年線之下</b>、<b>週KD 低檔</b>。位階越低、回本越容易。</div>
+        <div style="margin-top:7px;"><span class="step-n">2</span>在低位階股裡找<b>起漲訊號</b>：站上月線、月線翻揚、帶量、MACD 動能轉強、KD 黃金交叉（5 項計分）；可再加籌碼（法人買超）確認主力進場。</div>
+        <div style="margin-top:7px;"><span class="step-n">3</span>買入後加入監測：<b>跌破月線或停損出場</b>、停利分批了結，釋出資金再買下一檔低位階 —— 資金循環的永動機。</div>
+        <div class="r-sub" style="margin-top:8px;">紀律（參考春燕來了）：不追高、低位佈局；停損 -10% 可接受、<b>-20% 為極限務必出場</b>。本頁為程式輔助判斷，非投資建議。</div>
       </div>
     </div>
   </div>
@@ -263,7 +263,7 @@ function renderScreen(data) {
     + '</tr></thead><tbody>';
   rows.forEach(r => {
     h += `<tr>
-      <td><span class="r-sym" onclick="openStockDetail('${r.display}', true)">${r.display}</span><div class="r-name">${r.name||''}</div></td>
+      <td><span class="r-sym" onclick="openStockDetail('${r.display}', true)">${r.display}</span><div class="r-name">${r.name||''}${r.belowYear?' · 年線下':''}${r.weekLow?' · 週KD低':''}</div></td>
       <td>${r.price}</td>
       <td><span class="pos-bar"><span class="pos-fill" style="width:${Math.max(3,Math.min(100,r.pos))}%;background:${posColor(r.pos)}"></span></span>${r.pos}%</td>
       <td style="color:${r.drawdown<=-20?'#00d68f':'var(--text-mid)'}">${r.drawdown}%</td>
@@ -285,7 +285,7 @@ async function addMonitor(code, btn) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticker: code, profile: 'perpetual', line_token: lc.line_token || '', line_user_id: lc.line_user_id || '' }),
     });
-    if (btn) btn.textContent = '已加入';
+    if (btn) btn.textContent = (lc.line_token && lc.line_user_id) ? '已加入' : '已加入(未設LINE)';
     loadMonitor();
   } catch (e) { if (btn) { btn.textContent = '失敗'; btn.disabled = false; } }
 }
@@ -298,7 +298,14 @@ async function loadMonitor() {
     document.getElementById('masterSw').checked = !data.paused;
     const rows = data.tickers || [];
     if (!rows.length) { area.innerHTML = '<div class="empty-hint">尚無永動機監測標的。<br>在上方候選清單點「加入監測」，或在個股詳情面板加入。</div>'; return; }
-    area.innerHTML = rows.map(r => {
+    const exits = rows.filter(r => r.action === 'SELL' || r.action === 'AVOID').map(r => r.display);
+    let banner = '';
+    if (exits.length) {
+      banner = `<div style="padding:10px 12px;margin-bottom:10px;border-radius:9px;background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.3);font-size:0.8rem;color:var(--gold);">`
+        + `永動機提醒：<b>${exits.join('、')}</b> 出現出場訊號。了結後可釋出資金，`
+        + `<a href="#" onclick="document.querySelector('.sc-body').scrollIntoView({behavior:'smooth'});return false;" style="color:var(--blue);text-decoration:underline;">回上方重新選股換股</a>。</div>`;
+    }
+    area.innerHTML = banner + rows.map(r => {
       const cls = r.action === 'BUY' ? 'act-buy' : (r.action === 'SELL' ? 'act-sell' : (r.action === 'AVOID' ? 'act-avoid' : 'act-wait'));
       let pnl = '';
       if (r.cost && r.price) { const p = (r.price / r.cost - 1) * 100; pnl = ` · 損益 <b style="color:${p>=0?'var(--red)':'var(--green)'}">${p>=0?'+':''}${p.toFixed(1)}%</b>`; }

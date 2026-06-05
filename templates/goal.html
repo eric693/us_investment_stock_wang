@@ -272,7 +272,7 @@ function renderSnapshot(p) {
   el.innerHTML = `<table class="gl-tbl">
     <thead><tr><th>標的</th><th>股數</th><th>買入價</th><th>現價</th><th>市值</th><th>損益%</th></tr></thead>
     <tbody>${p.rows.map(r => `<tr>
-      <td>${r.name}（${r.code}）</td><td>${fmt(r.shares)}</td><td>${r.buy_price}</td>
+      <td><span data-sd-code="${r.code}" style="cursor:pointer;color:var(--blue)" title="點看詳情">${r.name}（${r.code}）</span></td><td>${fmt(r.shares)}</td><td>${r.buy_price}</td>
       <td>${r.price}</td><td>${fmt(r.value)}</td>
       <td class="${cls(r.pnl_pct)}">${sign(r.pnl_pct)}${r.pnl_pct}%</td></tr>`).join('')}</tbody></table>`;
 }

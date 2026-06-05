@@ -470,6 +470,13 @@ window.onload = () => {
   document.getElementById('apiKeyInput').addEventListener('change', () => {
     localStorage.setItem('claude_api_key', document.getElementById('apiKeyInput').value);
   });
+  // 由詳情面板「AI 明日預測」帶 ?code= 進來時，自動填代碼並開始分析（需已設定 API Key）
+  const qcode = new URLSearchParams(location.search).get('code');
+  if (qcode) {
+    setStock(qcode.toUpperCase());
+    if (getApiKey()) analyzeStock();
+    else document.getElementById('stockInput').scrollIntoView();
+  }
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────

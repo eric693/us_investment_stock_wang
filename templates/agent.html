@@ -831,7 +831,7 @@ async function loadHoldings() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>
-        <div style="font-weight:800;color:var(--text)">${h.name || h.code}</div>
+        <div style="font-weight:800;color:var(--text);cursor:pointer" data-sd-code="${h.code}" title="點看詳情">${h.name || h.code}</div>
         <div style="font-size:.67rem;color:var(--text-dim)">${h.code}</div>
       </td>
       <td>${h.buy_price || '-'}</td>
@@ -1062,7 +1062,7 @@ function renderCandidates(candidates) {
       <div class="candidate-card" onclick="analyzeScanStock('${c.code}', '${c.name}')">
         <div class="cand-header">
           <div>
-            <div class="cand-name">${c.name}</div>
+            <div class="cand-name" data-sd-code="${c.code}" style="cursor:pointer" title="點看詳情">${c.name}</div>
             <div class="cand-code">${c.code}  ${c.ma_bull ? '<span style="color:#26d96b;font-size:.65rem">多頭排列</span>' : ''}</div>
           </div>
           <div style="text-align:right">

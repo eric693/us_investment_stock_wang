@@ -4717,15 +4717,28 @@ def bluechip_run():
 # ════════════════════════════════════════════════════════════════════
 #  低位階長期永動機投資法（春燕來了式）：低位階選股 + 起漲/出場訊號（台股）
 # ════════════════════════════════════════════════════════════════════
+def _weekly_kd_low(hist):
+    """週KD（春燕重視月/週KD低檔）。回傳 (週K, 週D, 是否低檔<40)。"""
+    try:
+        wk = hist.resample('W').agg({'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+        if len(wk) < 12:
+            return (None, None, False)
+        wk_k, wk_d = calc_kd(wk['High'], wk['Low'], wk['Close'])
+        k = safe_float(wk_k.iloc[-1]); d = safe_float(wk_d.iloc[-1])
+        return (round(k, 1), round(d, 1), k < 40)
+    except Exception:
+        return (None, None, False)
+
+
 def _perpetual_metrics(ticker):
     """輕量版：算位階、距高點回檔、起漲分數，供選股掃描用。快取 15 分鐘。"""
-    key = f'perp:{ticker}'
+    key = f'perpv2:{ticker}'        # v2：改用 5 年位階＋年線＋週KD（資料結構變更，換鍵避免吃到舊快取）
     c = _cache_get(key)
     if c is not None:
         return c
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period='1y', interval='1d')
+        hist = stock.history(period='5y', interval='1d')   # 5 年資料，貼近春燕「相對歷史底部」位階
         if hist.empty:
             return None
         hist = hist.dropna(subset=['Close'])         # 對齊各序列長度（避免今日 NaN 造成 calc_kd 長度不符）
@@ -4739,9 +4752,13 @@ def _perpetual_metrics(ticker):
         ma60 = safe_float(close.rolling(60).mean().iloc[-1])
         ma20_5ago = safe_float(close.rolling(20).mean().iloc[-6]) if len(close) > 25 else ma20
         ma20_up = ma20 > ma20_5ago
-        win  = close.iloc[-252:] if len(close) >= 252 else close
-        hi52 = safe_float(win.max()); lo52 = safe_float(win.min())
-        pos  = (price - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
+        ma240 = safe_float(close.rolling(240).mean().iloc[-1]) if len(close) >= 240 else ma60
+        below_year = bool(price < ma240)             # 年線之下＝相對低位階
+        # 位階：用可取得的全部歷史（最長 5 年）相對高低；距 52 週高點回檔
+        hi_all = safe_float(close.max()); lo_all = safe_float(close.min())
+        pos = (price - lo_all) / (hi_all - lo_all) * 100 if hi_all > lo_all else 50
+        win = close.iloc[-252:] if len(close) >= 252 else close
+        hi52 = safe_float(win.max())
         drawdown = (price - hi52) / hi52 * 100 if hi52 else 0
         avgv = safe_float(vol.rolling(20).mean().iloc[-1])
         volr = safe_float(vol.iloc[-1]) / avgv if avgv > 0 else 0
@@ -4750,6 +4767,7 @@ def _perpetual_metrics(ticker):
         k_s, d_s = calc_kd(high, low, close)
         k = safe_float(k_s.iloc[-1]); d = safe_float(d_s.iloc[-1])
         kp = safe_float(k_s.iloc[-2]); dp = safe_float(d_s.iloc[-2])
+        wk_k, wk_d, week_low = _weekly_kd_low(hist)
         rise_factors = [price > ma20, ma20_up, volr >= 1.3, osc > osc_prev, (k > d and kp <= dp)]
         rise = sum(1 for v in rise_factors if v)
         code = ticker.replace('.TW', '').replace('.TWO', '')
@@ -4757,6 +4775,7 @@ def _perpetual_metrics(ticker):
             'ticker': ticker, 'display': code, 'name': tw_cn_name(ticker, code),
             'price': round(price, 2), 'pos': round(pos, 1), 'drawdown': round(drawdown, 1),
             'ma20': round(ma20, 2), 'ma60': round(ma60, 2), 'ma20Up': ma20_up,
+            'belowYear': below_year, 'weekK': wk_k, 'weekLow': bool(week_low),
             'volRatio': round(volr, 2), 'riseScore': rise, 'aboveMa20': bool(price > ma20),
         }
         _cache_set(key, result, ttl=900)
@@ -4768,7 +4787,7 @@ def _perpetual_metrics(ticker):
 def _perpetual_signal(stock, ticker, price, name, holding=None):
     """低位階永動機訊號：低位階+起漲→進場；持倉則續抱/減碼/出場/停損。
     回傳結構與 _steady_signal 一致，action 用 BUY/SELL/AVOID 接既有推播去重邏輯。"""
-    hist = stock.history(period='1y', interval='1d')
+    hist = stock.history(period='5y', interval='1d')   # 多年資料以判斷相對歷史位階
     if hist.empty or len(hist) < 60:
         return _signal_wait(ticker, name, price, 'perpetual', '歷史資料不足，無法判斷')
     hist = hist.dropna(subset=['Close'])             # 對齊各序列長度
@@ -4780,9 +4799,12 @@ def _perpetual_signal(stock, ticker, price, name, holding=None):
     ma60 = safe_float(close.rolling(60).mean().iloc[-1])
     ma20_5ago = safe_float(close.rolling(20).mean().iloc[-6]) if len(close) > 25 else ma20
     ma20_up = ma20 > ma20_5ago
+    ma240 = safe_float(close.rolling(240).mean().iloc[-1]) if len(close) >= 240 else ma60
+    below_year = price < ma240
+    hi_all = safe_float(close.max()); lo_all = safe_float(close.min())
+    pos = (price - lo_all) / (hi_all - lo_all) * 100 if hi_all > lo_all else 50
     win  = close.iloc[-252:] if len(close) >= 252 else close
-    hi52 = safe_float(win.max()); lo52 = safe_float(win.min())
-    pos  = (price - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
+    hi52 = safe_float(win.max())
     drawdown = (price - hi52) / hi52 * 100 if hi52 else 0
     avgv = safe_float(vol.rolling(20).mean().iloc[-1])
     volr = safe_float(vol.iloc[-1]) / avgv if avgv > 0 else 0
@@ -4791,11 +4813,12 @@ def _perpetual_signal(stock, ticker, price, name, holding=None):
     k_s, d_s = calc_kd(high, low, close)
     k = safe_float(k_s.iloc[-1]); d = safe_float(d_s.iloc[-1])
     kp = safe_float(k_s.iloc[-2]); dp = safe_float(d_s.iloc[-2])
+    _wk_k, _wk_d, week_low = _weekly_kd_low(hist)     # 春燕重視週KD低檔
     kd_gold = k > d and kp <= dp
     kd_dead_high = k < d and kp >= dp and k > 70
     above20 = price > ma20
     broke20 = price < ma20 * 0.99
-    low_pos = pos < 45
+    low_pos = pos < 45 or below_year                 # 位階低 或 年線之下＝相對低位階
 
     entry_factors = {
         '站上月線': above20, '月線翻揚': ma20_up, '帶量(量比≥1.3)': volr >= 1.3,
@@ -4822,6 +4845,10 @@ def _perpetual_signal(stock, ticker, price, name, holding=None):
         buy_p = safe_float(holding.get('buy_price', 0))
         pnl = (price - buy_p) / buy_p * 100 if buy_p else 0
         details['cost'] = buy_p; details['pnl'] = round(pnl, 2)
+        if buy_p and pnl <= -20:                      # 春燕紀律：-20% 為極限，務必停損
+            return out('AVOID', '觸及停損上限(-20%)，務必出場', '高',
+                f'股價 {price:.2f} 較成本 {buy_p:g} 已虧損 {pnl:.1f}%，達 -20% 停損極限。'
+                f'永動機紀律不凹單，立即停損、保留資金等下一檔低位階起漲。')
         if broke20 and buy_p and price < buy_p:
             return out('AVOID', '跌破月線且虧損，建議停損', '中',
                 f'股價 {price:.2f} 跌破月線 {ma20:.2f}，且低於成本 {buy_p:g}（{pnl:+.1f}%）。趨勢轉弱，'
@@ -4830,10 +4857,14 @@ def _perpetual_signal(stock, ticker, price, name, holding=None):
             return out('SELL', '高檔轉弱，獲利了結', '中',
                 f'股價 {price:.2f}（{pnl:+.1f}%）出現{"KD 高檔死亡交叉" if kd_dead_high else "跌破月線"}，'
                 f'動能轉弱。建議分批了結，把資金轉到新的低位階候選（換股）。')
-        if pnl >= 25:
+        if pnl >= 24.95:
             return out('SELL', '達停利目標，分批了結', '中',
                 f'股價 {price:.2f} 獲利 +{pnl:.1f}% 已達停利區。趨勢仍多可留部分，建議分批落袋，'
                 f'釋出資金投入新的低位階起漲股。')
+        if low_pos and above20 and entry_score >= 4 and pnl < 10:
+            return out('BUY', '低位階加碼', '中',
+                f'持倉仍在低位階（{pos:.0f}%）、未明顯起漲（{pnl:+.1f}%），且起漲訊號轉強'
+                f'（{entry_score}/5）。可考慮分批加碼攤平成本、放大部位，停損仍守 {stop_loss:.2f}。')
         return out('WAIT', '續抱', '-',
             f'股價 {price:.2f}（{pnl:+.1f}%）守穩月線 {ma20:.2f}，{"月線上揚" if ma20_up else "月線走平"}，'
             f'趨勢未轉弱，續抱。跌破月線或停損 {stop_loss:.2f} 再出場。')
@@ -4900,19 +4931,21 @@ def perpetual_screen():
                 continue
             cands.append(m)
 
-        if quality:                       # 績優股基本面過濾：剔除自由現金流轉差/虧損地雷
+        if quality and cands:             # 績優股基本面過濾：剔除自由現金流轉差/虧損地雷（並行抓取）
+            with ThreadPoolExecutor(max_workers=10) as ex:
+                bms = list(ex.map(lambda m: _bluechip_metrics(m['ticker'], True), cands))
             kept = []
-            for m in cands:
-                bm = _bluechip_metrics(m['ticker'], True)
+            for m, bm in zip(cands, bms):
                 if bm and bm.get('fcfAvg3') is not None and not bm.get('declining'):
                     m['fcfAvg3'] = bm.get('fcfAvg3'); m['pb'] = bm.get('pb')
                     kept.append(m)
             cands = kept
 
-        if chip:                          # 籌碼過濾：三大法人合計買超
+        if chip and cands:                # 籌碼過濾：三大法人合計買超（並行抓取）
+            with ThreadPoolExecutor(max_workers=10) as ex:
+                insts = list(ex.map(lambda m: _get_tw_inst(m['display']), cands))
             kept = []
-            for m in cands:
-                inst = _get_tw_inst(m['display'])
+            for m, inst in zip(cands, insts):
                 if inst and inst.get('total_net', 0) > 0:
                     m['instNet'] = inst.get('total_net'); kept.append(m)
             cands = kept

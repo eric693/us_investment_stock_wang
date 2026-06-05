@@ -404,7 +404,7 @@ function renderScan() {
         <th class="l">標的</th><th>現價</th><th>當日漲跌</th><th>觸發日</th></tr></thead>
       <tbody>${lastScan.map((s, i) => `<tr>
         <td class="l"><input type="checkbox" class="pick" value="${s.code}" checked></td>
-        <td class="l">${s.name}（${s.code}）</td>
+        <td class="l"><span data-sd-code="${s.code}" style="cursor:pointer;color:var(--blue)" title="點看詳情">${s.name}（${s.code}）</span></td>
         <td>${s.price}</td>
         <td class="${cls(s.changePct)}">${sign(s.changePct)}${s.changePct}%</td>
         <td class="muted">${s.signal_date || '-'}</td></tr>`).join('')}</tbody>
@@ -478,7 +478,7 @@ function renderBacktest(r) {
       <div class="wb-stat"><div class="lbl">買進持有平均</div><div class="val ${cls(s.avg_bh)}">${sign(s.avg_bh)}${s.avg_bh}%</div></div>
     </div>` : '';
   const rows = (r.per_stock || []).map(p => `<tr>
-    <td class="l">${p.name}（${p.code}）</td>
+    <td class="l"><span data-sd-code="${p.code}" style="cursor:pointer;color:var(--blue)" title="點看詳情">${p.name}（${p.code}）</span></td>
     <td>${p.n_signals}</td><td>${p.trades}</td>
     <td>${p.win_rate}%</td>
     <td class="${cls(p.total_ret)}">${sign(p.total_ret)}${p.total_ret}%</td>

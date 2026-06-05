@@ -133,14 +133,29 @@
       F: 'background:rgba(232,70,70,.15);color:#e84646' }[g] || 'background:rgba(125,141,163,.15);color:#7d8da3';
   }
 
+  // 規則式明日傾向（不呼叫 AI、不耗 token）；台股紅漲綠跌
+  function twTomorrowBias(d) {
+    if (d.price == null || d.ma20 == null) return null;
+    var pts = (d.price > d.ma20 ? 1 : 0) + ((d.osc || 0) > 0 ? 1 : 0)
+      + ((d.k || 0) > (d.d || 0) ? 1 : 0) + ((d.rsi || 50) > 50 ? 1 : 0) + (d.ma_bull ? 1 : 0);
+    var L = pts >= 4 ? ['看漲', 'rgba(232,70,70,.18)', '#e84646']
+      : pts === 3 ? ['偏多', 'rgba(232,120,70,.16)', '#e87846']
+      : pts === 2 ? ['中性', 'rgba(240,180,41,.16)', '#f0b429']
+      : pts === 1 ? ['偏空', 'rgba(0,214,143,.14)', '#00d68f']
+      : ['看跌', 'rgba(0,214,143,.2)', '#00d68f'];
+    return { label: L[0], pts: pts, style: 'background:' + L[1] + ';color:' + L[2] };
+  }
+
   function renderTwHead(d) {
     d = state.data || {};
     var mf = d.mf_score || {};
     var grade = mf.grade ? '<span class="sd-grade" style="' + gradeColor(mf.grade) + '">起漲評分 ' + esc(mf.grade)
       + ' · ' + num(mf.pct, '?') + '%</span>' : '';
+    var b = twTomorrowBias(d);
+    var bias = b ? '<span class="sd-grade" style="' + b.style + ';margin-left:6px">明日傾向 ' + b.label + '（' + b.pts + '/5）</span>' : '';
     elHead.innerHTML = '<div class="sd-titlewrap"><div class="sd-code">' + esc(d.name || state.code)
       + ' <small style="color:var(--text-dim);font-weight:600">' + esc(state.code) + (d.is_etf ? ' · ETF' : '') + '</small></div>'
-      + '<div class="sd-name">台股 · 即時技術與籌碼</div>' + grade + '</div>'
+      + '<div class="sd-name">台股 · 即時技術與籌碼</div>' + grade + bias + '</div>'
       + '<div><div class="sd-price">' + (d.price != null ? d.price : '—') + '</div></div>'
       + '<button class="sd-close" title="關閉">&times;</button>';
     elHead.querySelector('.sd-close').onclick = closeDetail;
@@ -293,8 +308,8 @@
 
   function renderTwFoot() {
     elFoot.innerHTML = '<button class="sd-btn primary" id="sdMon">加入監測</button>'
-      + '<a class="sd-btn" href="/tw?ticker=' + encodeURIComponent(state.code) + '" target="_blank">完整分析頁</a>'
-      + '<a class="sd-btn" href="/perpetual?code=' + encodeURIComponent(state.code) + '" target="_blank">永動機</a>';
+      + '<a class="sd-btn" href="/predict?code=' + encodeURIComponent(state.code) + '" target="_blank">AI 明日預測</a>'
+      + '<a class="sd-btn" href="/tw?ticker=' + encodeURIComponent(state.code) + '" target="_blank">完整分析</a>';
     elFoot.querySelector('#sdMon').onclick = addMonitor;
   }
   function renderUsFoot() {
@@ -304,15 +319,28 @@
   function addMonitor() {
     var btn = elFoot.querySelector('#sdMon'); if (!btn) return;
     btn.textContent = '加入中…'; btn.disabled = true;
+    var hasLine = false;
     getJson('/api/tw/line/config').catch(function () { return {}; })
       .then(function (lc) {
+        hasLine = !!(lc.line_token && lc.line_user_id);
         return fetch('/api/tw/monitor/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticker: state.code, profile: 'steady',
+          body: JSON.stringify({ ticker: state.code, profile: 'perpetual',
             line_token: lc.line_token || '', line_user_id: lc.line_user_id || '' })
         });
       }).then(function (r) { return r.json(); })
-      .then(function () { btn.textContent = '已加入監測'; })
+      .then(function () { btn.textContent = hasLine ? '已加入監測' : '已加入(未設LINE)'; })
       .catch(function () { btn.textContent = '加入失敗'; btn.disabled = false; });
   }
+
+  // 全站委派：任何帶 data-sd-code 的元素點了就開面板。
+  // 用 capture 階段並 stopPropagation，避免同時觸發父層既有的 onclick。
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-sd-code]') : null;
+    if (!el) return;
+    e.preventDefault(); e.stopPropagation();
+    var c = el.getAttribute('data-sd-code');
+    var tw = el.getAttribute('data-sd-tw');
+    window.openStockDetail(c, tw == null ? undefined : (tw === '1' || tw === 'true'));
+  }, true);
 })();

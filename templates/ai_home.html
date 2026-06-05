@@ -537,7 +537,7 @@ async function loadHoldings() {
       const cls = pnl > 0 ? 'up' : (pnl < 0 ? 'down' : '');
       const sign = pnl > 0 ? '+' : '';
       return `<div class="hold-item">
-        <div><div class="hold-name">${s.name || s.code}</div><div class="hold-code">${s.code}</div></div>
+        <div><div class="hold-name" data-sd-code="${s.code}" style="cursor:pointer" title="點看詳情">${s.name || s.code}</div><div class="hold-code">${s.code}</div></div>
         <div><div class="hold-pnl ${cls}">${sign}${pnl.toFixed(2)}%</div>
         <div class="hold-price">${s.current_price || '-'}</div></div>
       </div>`;
@@ -620,7 +620,7 @@ function renderCards(cards) {
     const tags = (c.passed || []).slice(0,3).map(t => `<span class="rtag">${t}</span>`).join('');
     return `<div class="rcard" onclick="quickAsk('幫我深入分析 ${c.code} ${c.name||''}')">
       <div class="rcard-h">
-        <div><div class="rcard-name">${c.name||c.code}</div><div class="rcard-code">${c.code}</div></div>
+        <div><div class="rcard-name" data-sd-code="${c.code}" style="cursor:pointer" title="點看詳情">${c.name||c.code}</div><div class="rcard-code">${c.code}</div></div>
         <div class="rcard-grade g-${g}">${g}</div>
       </div>
       <div class="rcard-price">${c.price != null ? c.price + ' 元' : ''} ${c.score != null ? '· '+c.score+'/'+(c.max_score||24)+'分' : ''}</div>
