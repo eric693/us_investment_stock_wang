@@ -193,7 +193,7 @@
       h += '<div class="sd-sec">起漲評分明細（' + num(mf.total) + '/' + num(mf.max) + '）</div>';
       h += mf.breakdown.map(function (f) {
         return '<div class="sd-fac"><span class="dot ' + (f.pass ? 'ok' : 'no') + '"></span>'
-          + '<span class="fl">' + esc(f.label) + '</span><span class="fd">' + esc(f.detail || '') + '</span></div>';
+          + '<span class="fl">' + esc(f.name || f.label || '') + '</span><span class="fd">' + esc(f.detail || '') + '</span></div>';
       }).join('');
     }
     h += '<div class="sd-sec">均線 / 月線扣抵</div><div class="sd-grid">'
@@ -221,16 +221,17 @@
 
   function netCls(v) { return v > 0 ? 'sd-pos' : (v < 0 ? 'sd-neg' : ''); }
   function signed(v) { v = +v || 0; return (v > 0 ? '+' : '') + v.toLocaleString(); }
+  function lots(v) { return Math.round((+v || 0) / 1000); }   // FinMind 法人為「股」，換算成「張」
 
   function renderTwChips(d) {
     var h = '';
     var inst = d.inst, mg = d.margin;
     if (inst) {
       h += '<div class="sd-sec">三大法人（張）</div><div class="sd-grid">'
-        + kv('外資', signed(inst.foreign_net), netCls(inst.foreign_net))
-        + kv('投信', signed(inst.trust_net), netCls(inst.trust_net))
-        + kv('自營商', signed(inst.dealer_net), netCls(inst.dealer_net))
-        + kv('合計', signed(inst.total_net), netCls(inst.total_net)) + '</div>';
+        + kv('外資', signed(lots(inst.foreign_net)), netCls(inst.foreign_net))
+        + kv('投信', signed(lots(inst.trust_net)), netCls(inst.trust_net))
+        + kv('自營商', signed(lots(inst.dealer_net)), netCls(inst.dealer_net))
+        + kv('合計', signed(lots(inst.total_net)), netCls(inst.total_net)) + '</div>';
     } else { h += '<div class="sd-sec">三大法人</div><div class="sd-empty">尚無法人資料（非交易時段或未取得）</div>'; }
     if (mg) {
       h += '<div class="sd-sec">融資融券</div><div class="sd-grid">'

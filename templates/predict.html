@@ -699,8 +699,8 @@ function renderMetrics(d) {
   ];
 
   if (d.inst) {
-    const total = d.inst.total_net;
-    rows.push(['三大法人', `${total > 0 ? '+' : ''}${total?.toLocaleString()}張`, total > 0 ? 'red' : 'green']);
+    const total = Math.round((d.inst.total_net || 0) / 1000);   // FinMind 法人為「股」，換算「張」
+    rows.push(['三大法人', `${total > 0 ? '+' : ''}${total.toLocaleString()}張`, total > 0 ? 'red' : 'green']);
   }
 
   cont.innerHTML = rows.map(([label, val, cls]) => `

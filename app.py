@@ -5234,8 +5234,8 @@ def _multi_factor_score(d: dict) -> dict:
     total_net = inst.get('total_net', 0)
     inst_ok   = total_net > 0
     add('法人買超', inst_ok, 2,
-        f'法人合計+{total_net:.0f}張，主力進場' if inst_ok else
-        (f'法人合計{total_net:.0f}張，賣超' if total_net < 0 else '法人資料未取得'))
+        f'法人合計+{total_net/1000:,.0f}張，主力進場' if inst_ok else
+        (f'法人合計{total_net/1000:,.0f}張，賣超' if total_net < 0 else '法人資料未取得'))
 
     # ── 14. 融資籌碼健康（融資減少 or 低水位）── weight 1
     margin_chg = mg.get('margin_chg', 0)
@@ -5561,10 +5561,10 @@ def _build_analysis_context(data: dict) -> str:
     lines.append(f"\n### 【三大法人（今日）】")
     if inst:
         total = inst.get('total_net', 0)
-        lines.append(f"- 外資買賣超：{inst.get('foreign_net', 0):+,.0f} 張")
-        lines.append(f"- 投信買賣超：{inst.get('trust_net', 0):+,.0f} 張")
-        lines.append(f"- 自營商買賣超：{inst.get('dealer_net', 0):+,.0f} 張")
-        lines.append(f"- 三大合計：{total:+,.0f} 張（{'主力買超' if total > 0 else '主力賣超'}）")
+        lines.append(f"- 外資買賣超：{inst.get('foreign_net', 0)/1000:+,.0f} 張")
+        lines.append(f"- 投信買賣超：{inst.get('trust_net', 0)/1000:+,.0f} 張")
+        lines.append(f"- 自營商買賣超：{inst.get('dealer_net', 0)/1000:+,.0f} 張")
+        lines.append(f"- 三大合計：{total/1000:+,.0f} 張（{'主力買超' if total > 0 else '主力賣超'}）")
     else:
         lines.append(f"- 今日法人資料尚未取得")
 
@@ -6183,7 +6183,7 @@ def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
     inst = data.get('inst')
     if inst:
         total = inst.get('total_net', 0)
-        lines.append(f"三大法人：外資 {inst.get('foreign_net',0):+,.0f} / 投信 {inst.get('trust_net',0):+,.0f} / 自營 {inst.get('dealer_net',0):+,.0f} / 合計 {total:+,.0f} 張")
+        lines.append(f"三大法人：外資 {inst.get('foreign_net',0)/1000:+,.0f} / 投信 {inst.get('trust_net',0)/1000:+,.0f} / 自營 {inst.get('dealer_net',0)/1000:+,.0f} / 合計 {total/1000:+,.0f} 張")
 
     mg = data.get('margin')
     if mg:
