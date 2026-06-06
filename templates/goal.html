@@ -398,6 +398,7 @@ async function gcSend() {
     }
     gcMessages.push({ role: 'assistant', content: full });
     if (gcMessages.length > 20) gcMessages = gcMessages.slice(-20);
+    try { localStorage.setItem('goalChat', JSON.stringify(gcMessages)); } catch(_) {}
   } catch(e) {
     bubble.textContent = '錯誤：' + e.message;
   } finally {
@@ -406,9 +407,22 @@ async function gcSend() {
   }
 }
 
+// 還原跳頁前的 AI 討論對話（localStorage）
+function restoreGoalChat() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('goalChat') || 'null');
+    if (!Array.isArray(saved) || !saved.length) return;
+    gcMessages = saved.slice(-20);
+    for (const m of gcMessages) {
+      if (m && m.content) gcAppend(m.role === 'assistant' ? 'assistant' : 'user', m.content);
+    }
+  } catch(_) {}
+}
+
 loadGoal();
 loadStatus().then(s => { if (s && s.review_status === 'running') { reviewBtn.disabled = true; startReviewPolling(); } });
 loadUs();
+restoreGoalChat();
 </script>
 <script src="/static/js/stock_detail.js"></script>
 </body>

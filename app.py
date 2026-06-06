@@ -6690,6 +6690,16 @@ def _us_overnight_snapshot() -> dict:
     return out
 
 
+def _us_session_phase() -> str:
+    """以台北時間粗略判斷美股時段：'open'＝今夜盤中 / 'closed'＝非盤中。
+    美股常規盤約台北 21:30–04:00（夏令）/22:30–05:00（冬令），這裡用寬鬆 21:00–05:00。
+    用途：睡前產生的操盤總結若此刻美股正在交易，_us_overnight_snapshot 的日線會帶到
+    今夜盤中的即時漲跌，標頭就改稱「今夜美股（盤中）」而非「昨夜美股」。"""
+    now = pd.Timestamp.now(tz='Asia/Taipei')
+    t = now.hour * 60 + now.minute
+    return 'open' if (t >= 21 * 60 or t < 5 * 60) else 'closed'
+
+
 def _portfolio_snapshot(holdings: list) -> dict:
     """依持倉算成本、目前市值、未實現損益。"""
     rows, cost, mkt = [], 0.0, 0.0
@@ -6854,7 +6864,14 @@ def _run_goal_review(cfg: dict, client) -> dict:
     # 組給 Claude 的脈絡
     lines = ['你是使用者的目標導向操盤助理。以下是目前狀況，請依「達標」角度給出明確、可執行的明日操作計畫。', '']
     if us.get('summary'):
-        lines.append(us['summary'] + '。台股常受前一夜美股影響，請把這個偏向納入明日進出場節奏（偏空時保守、偏多時可積極，半導體類股看費半與台積電ADR）。')
+        if _us_session_phase() == 'open':
+            # 睡前產生、此刻美股正在交易：帶到的是今夜盤中即時動態
+            lines.append(us['summary'].replace('昨夜美股', '今夜美股（盤中）')
+                + '。這是你睡前此刻的美股動態，台股明日開盤常跟隨，請把這個偏向納入明日進出場節奏'
+                  '（偏空保守、偏多積極，半導體看費半與台積電ADR）。')
+        else:
+            lines.append(us['summary'] + '。台股常受前一夜美股影響，請把這個偏向納入明日進出場節奏'
+                         '（偏空時保守、偏多時可積極，半導體類股看費半與台積電ADR）。')
     if metrics.get('valid'):
         lines.append(f"目標：在 {goal.get('target_date')} 前把資產累積到 {metrics['target_amount']:,.0f} 元"
                      f"（起始 {metrics['start_capital']:,.0f} 元）。")
@@ -6883,10 +6900,27 @@ def _run_goal_review(cfg: dict, client) -> dict:
     else:
         lines.append('（今日無符合條件候選）')
 
+    # 整併「盤後策略優化」與「工作台自選策略」的結果（背景已算好並快取，不另外推播，
+    # 全部收進這份睡前總結，避免疊床架屋重複報告）。只取「今天」算出的，避免吃到昨日快取。
+    ds = cfg.get('daily_strategy') or {}
+    if ds.get('date') == today_str and ds.get('ranked'):
+        best = next((r for r in ds['ranked'] if r.get('match_count', 0) > 0), None)
+        if best:
+            picks = '、'.join(f"{p['name']}({p['code']})" for p in best.get('top_picks', [])) or '無'
+            lines.append('\n--- 盤後策略優化：今日最佳策略 ---')
+            lines.append(f"{best['name']}｜進場 {best['entry_signal']}｜符合 {best['match_count']} 檔"
+                         f"｜回測平均 {best['avg_backtest_ret']}%｜候選：{picks}")
+    wb = (cfg.get('workbench') or {}).get('last_result') or {}
+    if wb.get('date') == today_str and wb.get('matched'):
+        names = '、'.join(f"{m['name']}({m['code']})" for m in wb['matched'][:6])
+        lines.append('\n--- 你的工作台自選策略今日觸發 ---')
+        lines.append(names)
+
     lines.append(
         '\n請用繁體中文、不要 emoji，輸出以下四段：'
         '\n1) 進度評估：一句話講現在達標機率與該偏積極或保守。'
-        '\n2) 明日買進清單：從候選挑 1-3 檔，每檔給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
+        '\n2) 明日買進清單：從上面「買進候選／盤後策略優化／工作台觸發」綜合挑 1-3 檔，'
+        '每檔給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
         '\n3) 該賣出/減碼：列出持倉中該獲利了結或停損的，講明理由與價位；沒有就說「持倉續抱」。'
         '\n4) 一句總結。'
         '\n\n注意：持倉中若為 ETF（代碼多以 00 開頭），請以中長期角度（淨值溢折價、配息、總經方向）判斷去留，'
@@ -8432,28 +8466,13 @@ def _run_workbench_daily(cfg, client=None) -> dict:
     exit_cfg  = wb.get('exit') or _exit_strategy_grid()[0]
     bt = _workbench_batch_backtest(top_codes, wb['signals'], exit_cfg) if top_codes else {}
 
-    name = wb.get('strategy_name') or _signal_label(_normalize_signal(wb['signals']))
-    lines = [f'[{today}] 策略工作台掃描', f'策略：{name}',
-             f'出場：{exit_cfg.get("name", "")}', '']
-    if matched:
-        lines.append(f'今日觸發 {len(matched)} 檔，前幾名：')
-        for m in matched[:8]:
-            lines.append(f"{m['name']}（{m['code']}） {m['price']} 元（{m['changePct']:+.1f}%）")
-        s = bt.get('summary') or {}
-        if s:
-            lines.append('')
-            lines.append(f"前 {s['count']} 檔歷史回測：平均總報酬 {s['avg_total']}%、"
-                         f"平均勝率 {s['avg_win']}%、{s['beat_bh']}/{s['count']} 檔贏過買進持有。")
-    else:
-        lines.append('今日無符合此策略的標的。')
-
+    # 不單獨推播——觸發清單整併進晚上的「今晚操盤總結」，只把結果算好並快取供晚上取用。
     cfg = _load_agent_cfg()
     wb = cfg.get('workbench', {}) or {}
     wb['last_run'] = today
     wb['last_result'] = {'date': today, 'matched': matched[:20], 'backtest': bt}
     cfg['workbench'] = wb
     _save_agent_cfg(cfg)
-    _agent_notify(cfg, '策略工作台掃描', '\n'.join(lines))
     return wb['last_result']
 
 
@@ -8554,29 +8573,14 @@ def _run_daily_optimizer(cfg, client):
 
     # 先有選到標的的策略才排前面，再比回測平均報酬；全空窗時不會硬挑一個假最佳
     ranked.sort(key=lambda x: (x['match_count'] > 0, x['avg_backtest_ret']), reverse=True)
-    summary = _optimizer_ai_summary(client, ranked)
+    # 不另外呼叫 Opus 做總結、也不單獨推播——結果整併進晚上的「今晚操盤總結」一次產出，
+    # 避免同性質報告疊床架屋重複耗 token。這裡只把排名結果算好並快取供晚上取用。
+    summary = '（已整併進「今晚操盤總結」，請至目標操盤頁查看完整明日操作建議。）'
 
     cfg = _load_agent_cfg()
     cfg['daily_strategy'] = {'date': today, 'ranked': ranked, 'summary': summary}
     cfg['last_optimize']  = today
     _save_agent_cfg(cfg)
-
-    # 只有真的選到標的的策略才能當「最佳」；否則視為訊號空窗
-    best = next((r for r in ranked if r['match_count'] > 0), None)
-    body_lines = [f'[{today}] 每日最佳策略優化', '']
-    if best:
-        picks = '、'.join(f"{p['name']}({p['code']})" for p in best['top_picks']) or '無'
-        body_lines.append(f"今日最佳策略：{best['name']}")
-        body_lines.append(f"進場訊號：{best['entry_signal']}")
-        body_lines.append(f"符合 {best['match_count']} 檔，回測平均報酬 {best['avg_backtest_ret']}%")
-        body_lines.append(f"候選標的：{picks}")
-        body_lines.append('')
-    else:
-        body_lines.append('今日五大策略皆無標的通過篩選（訊號空窗），建議空手觀望，'
-                          '不在此時硬挑「最佳策略」。')
-        body_lines.append('')
-    body_lines.append(summary[:400])
-    _agent_notify(cfg, '每日策略優化', '\n'.join(body_lines))
     return ranked
 
 

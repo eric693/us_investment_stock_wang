@@ -831,11 +831,11 @@ function renderResults(results) {
   area.innerHTML = html;
 }
 
-// ── 切頁後保留上次掃描結果（sessionStorage：同分頁切頁/重整都還在，關掉分頁才清）──
+// ── 切頁後保留上次掃描結果（localStorage：跳頁/重整/關掉分頁再開都還在，直到下次掃描覆蓋）──
 // 多頁式網站每個導覽連結都是整頁重載，篩選結果只存記憶體會在切頁時消失，故落地存放。
 function _saveScreenerState() {
   try {
-    sessionStorage.setItem('screenerLast', JSON.stringify({
+    localStorage.setItem('screenerLast', JSON.stringify({
       results: _scanResults,
       meta:    document.getElementById('resultMeta')?.textContent || '',
     }));
@@ -843,7 +843,9 @@ function _saveScreenerState() {
 }
 function _restoreScreenerState() {
   try {
-    const s = JSON.parse(sessionStorage.getItem('screenerLast') || 'null');
+    // 相容舊的 sessionStorage 暫存，讀不到再退回
+    const s = JSON.parse(localStorage.getItem('screenerLast')
+                         || sessionStorage.getItem('screenerLast') || 'null');
     if (!s || !Array.isArray(s.results) || !s.results.length) return;
     _scanResults = s.results;
     const meta = document.getElementById('resultMeta');
