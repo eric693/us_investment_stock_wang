@@ -3223,6 +3223,77 @@ def _get_tw_daytrade(code: str):
     return res
 
 
+_tw_monthrev_code_cache: dict = {}    # code -> (ts, dict|None) 月營收
+_tw_eps_code_cache: dict = {}         # code -> (ts, dict|None) EPS／季獲利
+
+def _get_tw_month_revenue(code: str):
+    """近期月營收（FinMind TaiwanStockMonthRevenue，逐檔快取 6 小時）。
+    回傳最新月營收與 YoY（前年同月比）、MoM（前月比），找不到回 None。
+    FinMind 欄位：revenue（當月營收）、revenue_month、revenue_year。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_monthrev_code_cache.get(code)
+    if ent and now - ent[0] < 21600:
+        return ent[1]
+    # 取近 400 天涵蓋至少 13 個月，才能算 YoY（去年同月）
+    rows = _finmind_fetch('TaiwanStockMonthRevenue', code, days=420)
+    res = None
+    if rows:
+        # 以 (year, month) 排序，最新在後
+        def _ym(r):
+            return (int(r.get('revenue_year', 0)), int(r.get('revenue_month', 0)))
+        rows_sorted = sorted([r for r in rows if r.get('revenue') is not None], key=_ym)
+        if rows_sorted:
+            last = rows_sorted[-1]
+            ly, lm = _ym(last)
+            cur_rev = safe_float(last.get('revenue', 0))
+            prev_m  = rows_sorted[-2] if len(rows_sorted) > 1 else None
+            yoy_row = next((r for r in rows_sorted if _ym(r) == (ly - 1, lm)), None)
+            mom = (round((cur_rev / safe_float(prev_m.get('revenue', 0)) - 1) * 100, 1)
+                   if prev_m and safe_float(prev_m.get('revenue', 0)) else None)
+            yoy = (round((cur_rev / safe_float(yoy_row.get('revenue', 0)) - 1) * 100, 1)
+                   if yoy_row and safe_float(yoy_row.get('revenue', 0)) else None)
+            res = {
+                'month':   f'{ly}-{lm:02d}',
+                'revenue': cur_rev,            # 單位：元
+                'yoy':     yoy,                # %
+                'mom':     mom,                # %
+            }
+    with _tw_margin_lock:
+        _tw_monthrev_code_cache[code] = (now, res)
+    return res
+
+
+def _get_tw_eps(code: str):
+    """最新季度 EPS／稅後純益（FinMind TaiwanStockFinancialStatements，逐檔快取 12 小時）。
+    type='EPS' 取每股盈餘、type='IncomeAfterTaxes' 取稅後淨利，找不到回 None。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_eps_code_cache.get(code)
+    if ent and now - ent[0] < 43200:
+        return ent[1]
+    # 涵蓋約 5 季
+    rows = _finmind_fetch('TaiwanStockFinancialStatements', code, days=500)
+    res = None
+    if rows:
+        eps_rows = [r for r in rows if r.get('type') == 'EPS' and r.get('value') is not None]
+        if eps_rows:
+            last = max(eps_rows, key=lambda r: r.get('date', ''))
+            ds   = last.get('date', '')           # 例 2025-03-31（季底）
+            net_rows = [r for r in rows
+                        if r.get('type') == 'IncomeAfterTaxes' and r.get('date') == ds]
+            res = {
+                'quarter':   ds,
+                'eps':       safe_float(last.get('value', 0)),
+                'net_income': safe_float(net_rows[0].get('value', 0)) if net_rows else None,
+            }
+    with _tw_margin_lock:
+        _tw_eps_code_cache[code] = (now, res)
+    return res
+
+
 def _eval_condition(hist, info, cond, extra=None):
     """Evaluate a single condition. Returns (passed:bool, detail:str).
     extra = {'weekly': DataFrame, 'monthly': DataFrame, 'margin': dict}
@@ -5424,6 +5495,24 @@ def _fetch_predict_data(code: str) -> dict:
         except Exception:
             result['lending'] = None
 
+        # ── 法人連續買賣超序列（最新在前，供基本面/籌碼面評估）──
+        try:
+            result['inst_hist'] = _get_tw_inst_hist(code)
+        except Exception:
+            result['inst_hist'] = None
+
+        # ── 月營收 YoY/MoM（基本面）──────────────────────────
+        try:
+            result['month_rev'] = _get_tw_month_revenue(code)
+        except Exception:
+            result['month_rev'] = None
+
+        # ── EPS／最新季度獲利（基本面）───────────────────────
+        try:
+            result['eps'] = _get_tw_eps(code)
+        except Exception:
+            result['eps'] = None
+
         # ── 當沖比（FinMind 當沖量 / 該日總量）────────────────
         try:
             dt = _get_tw_daytrade(code)
@@ -5758,9 +5847,15 @@ _agent_lock = threading.Lock()
 _AGENT_SYSTEM_PROMPT = """你是一位專業台股投資 AI 助理，負責分析持倉與市場機會，給出明確的操作建議。
 
 你的職責：
-1. 根據技術指標、籌碼數據、法人動向，對持倉股票給出【買進/加碼/持有/減碼/賣出】建議
+1. 綜合「技術面 + 基本面 + 籌碼面 + 消息面」對持倉股票給出【買進/加碼/持有/減碼/賣出】建議，不要只看技術線型
 2. 掃描低價但出現起漲訊號的股票，主動推薦值得關注的標的
 3. 每次建議必須說明理由、關鍵支撐壓力價、預估漲跌幅
+
+多面向判斷（系統會在數據中附上以下欄位，請務必納入綜合評估）：
+- 基本面：月營收 YoY/MoM（成長動能是否轉強或衰退）、最新季度 EPS／稅後淨利（獲利品質）。營收連月 YoY 轉正且 EPS 成長＝基本面支撐買進；營收衰退則技術面轉強也要保守。
+- 籌碼面：外資/投信「連續買賣超天數」（連續買超是主力吃貨、連續賣超是出貨）、借券賣出餘額趨勢（增加＝空方加碼、減少＝空方回補偏多）。
+- 消息面：依提供的新聞標題研判利多利空，但不可捏造。
+- 前一日美股：台股常跟隨前夜美股與費半，請把「市場與總經背景」中的美股偏向納入明日進出場節奏（偏空保守、偏多積極）。
 
 建議格式（每支股票）：
 操作建議：買進/加碼/持有/減碼/賣出
@@ -5894,6 +5989,7 @@ def _default_agent_cfg() -> dict:
         'last_scan': '',
         'last_morning': '',
         'last_close': '',
+        'last_close_reminder': '',   # 最近一次「請登錄今日買賣」收盤提醒日期
     }
 
 
@@ -6189,6 +6285,59 @@ def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
     if mg:
         lines.append(f"融資餘額：{mg.get('margin_today',0):,.0f}（{mg.get('margin_chg',0):+,.0f}）  融券：{mg.get('short_today',0):,.0f}（{mg.get('short_chg',0):+,.0f}）")
 
+    # 借券賣出餘額趨勢（空方動向）
+    ld = data.get('lending')
+    if ld:
+        bal  = safe_float(ld.get('lending_balance', 0))
+        prev = safe_float(ld.get('lending_balance_prev', 0))
+        chg  = bal - prev
+        trend = '增加（空方加碼）' if chg > 0 else ('減少（空方回補）' if chg < 0 else '持平')
+        lines.append(f"借券賣出餘額：{bal:,.0f} 股（較前日{trend} {abs(chg):,.0f}）")
+
+    # 法人連續買賣超天數（籌碼連續性）
+    ih = data.get('inst_hist')
+    if ih and ih.get('foreign'):
+        def _streak(seq):
+            seq = seq or []
+            if not seq:
+                return 0
+            sign = 1 if seq[0] > 0 else (-1 if seq[0] < 0 else 0)
+            if sign == 0:
+                return 0
+            n = 0
+            for v in seq:
+                if (v > 0 and sign > 0) or (v < 0 and sign < 0):
+                    n += 1
+                else:
+                    break
+            return n * sign
+        fs = _streak(ih.get('foreign'))
+        ts = _streak(ih.get('trust'))
+        def _desc(n):
+            if n > 0:  return f'連{n}日買超'
+            if n < 0:  return f'連{abs(n)}日賣超'
+            return '無連續'
+        f_today = (ih.get('foreign') or [0])[0] / 1000
+        t_today = (ih.get('trust') or [0])[0] / 1000
+        lines.append(f"法人連續：外資 {_desc(fs)}（今 {f_today:+,.0f} 張）/ 投信 {_desc(ts)}（今 {t_today:+,.0f} 張）")
+
+    # 月營收 YoY/MoM（基本面成長動能）
+    mr = data.get('month_rev')
+    if mr:
+        rev_yi = safe_float(mr.get('revenue', 0)) / 1e8   # 億元
+        yoy = mr.get('yoy'); mom = mr.get('mom')
+        yoy_s = f"YoY {yoy:+.1f}%" if yoy is not None else "YoY 未取得"
+        mom_s = f"MoM {mom:+.1f}%" if mom is not None else "MoM 未取得"
+        lines.append(f"月營收（{mr.get('month','')}）：{rev_yi:,.2f} 億元（{yoy_s}／{mom_s}）")
+
+    # EPS／最新季度獲利（基本面）
+    ep = data.get('eps')
+    if ep:
+        eps_v = safe_float(ep.get('eps', 0))
+        ni = ep.get('net_income')
+        ni_s = f"、稅後淨利 {safe_float(ni)/1e8:,.2f} 億元" if ni else ''
+        lines.append(f"最新季度 EPS（{ep.get('quarter','')}）：{eps_v:.2f} 元{ni_s}")
+
     # 多因子評分摘要
     mf = data.get('mf_score') or {}
     if mf:
@@ -6330,8 +6479,12 @@ def _news_digest(query: str, n: int = 3) -> str:
 
 
 def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
-    """Analyze all holdings and return recommendation list（並行，原本逐檔序列在持倉多時極慢）。"""
-    holdings = [h for h in cfg.get('holdings', []) if h.get('code', '').strip()]
+    """Analyze all holdings and return recommendation list（並行，原本逐檔序列在持倉多時極慢）。
+
+    個別關閉 AI 分析（ai_enabled=False）的持倉直接略過，不抓資料、不呼叫 Opus，
+    省 token；晨報/盤中/盤後統合都吃這份過濾後的清單。"""
+    holdings = [h for h in cfg.get('holdings', [])
+                if h.get('code', '').strip() and h.get('ai_enabled', True)]
     if not holdings:
         return []
 
@@ -6675,22 +6828,26 @@ def _goal_chat_context(cfg: dict) -> str:
 
 
 def _run_goal_review(cfg: dict, client) -> dict:
-    """目標導向每日檢討：算進度→看持倉賣訊→掃買進候選→Claude 產生明日買賣清單→推 LINE。"""
+    """今晚操盤總結（統一盤後產出）：使用者登錄完當日買賣後手動觸發。
+    結合前一夜美股→持倉去留→買進候選→目標進度，一次 Opus 產生明日操盤計畫並推 LINE。
+    同時吸收舊「收盤總結」的職責：把今天建議寫進經驗庫、快取本日持倉分析，
+    避免「收盤總結＋目標檢討」兩則疊床架屋重複耗 token。"""
     goal = cfg.get('goal', {}) or {}
-    if not goal.get('enabled'):
-        return {}
 
     status  = _goal_status(cfg)
     metrics = status['metrics']
     snap    = status['portfolio']
 
-    # 共用收盤總結已算好的持倉分析（同一天），省下重跑一次全檔 Opus 的花費
+    # 同一天若已算過持倉分析（例如稍早按過一次）就重用，避免重複耗 token；
+    # 否則現算一次（會自動略過已關閉 AI 監測 ai_enabled=False 的持倉）。
     today_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
     cache = cfg.get('today_analysis') or {}
     if cache.get('date') == today_str and cache.get('results'):
         holdings_analysis = cache['results']
+        fresh = False
     else:
         holdings_analysis = _run_agent_holdings_analysis(cfg, client)
+        fresh = True
     candidates        = _run_agent_scan(cfg)[:8]
     us                = _us_overnight_snapshot()
 
@@ -6755,6 +6912,11 @@ def _run_goal_review(cfg: dict, client) -> dict:
     cfg['goal']['last_status']   = status
     cfg['goal']['last_plan']     = plan
     cfg['goal']['review_status'] = 'done'
+    cfg['candidates'] = candidates
+    # 吸收舊收盤總結職責：剛現算的持倉分析才寫經驗庫＋快取，避免同日重按重複記錄
+    if fresh:
+        _record_recommendations(cfg, today, holdings_analysis)
+        cfg['today_analysis'] = {'date': today, 'results': holdings_analysis}
     _save_agent_cfg(cfg)
 
     head = ''
@@ -6765,7 +6927,7 @@ def _run_goal_review(cfg: dict, client) -> dict:
         head += us['summary'] + '\n'
     if head:
         head += '\n'
-    _agent_notify(cfg, f'[{today}] 目標導向操盤檢討', head + plan)
+    _agent_notify(cfg, f'[{today}] 今晚操盤總結', head + plan)
     return {'status': status, 'plan': plan}
 
 
@@ -6875,32 +7037,18 @@ def _agent_loop():
                             cfg['last_snapshot_date']   = today
                         _save_agent_cfg(cfg)
 
-            # Close summary (13:45-14:15)
-            elif _is_close_time() and cfg.get('last_close', '') != today:
+            # 收盤提醒 (13:45-14:15)：不再自動跑全檔 Opus 收盤總結。
+            # 改推一則「請登錄今日買賣」提醒；統合的操盤總結由使用者在「目標操盤」頁
+            # 按【產生今晚操盤總結】時，用 _run_goal_review（統合版）一次產出——結合前一夜美股、
+            # 持倉去留與目標進度，省 token 且不再「收盤總結＋目標檢討」兩則疊床架屋。
+            elif _is_close_time() and cfg.get('last_close_reminder', '') != today:
                 cfg = _load_agent_cfg()
-                holdings_analysis = _run_agent_holdings_analysis(cfg, client)
-                candidates = _run_agent_scan(cfg)
-
-                lines = [f'[{today}] 收盤分析總結', '']
-                if holdings_analysis:
-                    lines.append('--- 持倉收盤建議 ---')
-                    for h in holdings_analysis:
-                        lines.append(f"{h['name']} 現價:{h['price']} 損益:{h['pnl_pct']:+.1f}%")
-                        lines.append(h['recommendation'][:200])
-                        lines.append('')
-
-                if candidates:
-                    lines.append('--- 明日觀察名單 TOP5 ---')
-                    for c in candidates[:5]:
-                        lines.append(f"{c['name']}（{c['code']}） {c['price']}元 得分{c['score']}/5")
-
-                cfg['last_close'] = today
-                cfg['candidates'] = candidates
-                # 把今天的建議寫進經驗庫，明天分析時可回顧「上次建議＋至今實際漲跌」
-                _record_recommendations(cfg, today, holdings_analysis)
-                # 快取本日持倉分析，供盤後的目標檢討共用，不必再重跑一次全檔 AI
-                cfg['today_analysis'] = {'date': today, 'results': holdings_analysis}
-                _agent_notify(cfg, '收盤總結', '\n'.join(lines))
+                cfg['last_close_reminder'] = today
+                _save_agent_cfg(cfg)
+                _agent_notify(cfg, '收盤提醒',
+                    '今日台股已收盤。請先到「持倉管理」登錄今天的買賣（買進/賣出），'
+                    '完成後到「目標操盤」頁按【產生今晚操盤總結】。'
+                    '系統會結合前一夜美股走勢與你的持倉、目標，產出明日操盤建議。')
 
             # Daily strategy optimizer (after 15:00, once per day)
             elif now.hour >= 15 and cfg.get('last_optimize', '') != today:
@@ -6908,15 +7056,6 @@ def _agent_loop():
                     _run_daily_optimizer(_load_agent_cfg(), client)
                 except Exception as e:
                     print(f'[Agent] optimizer error: {e}')
-
-            # 目標導向每日檢討（盤後，每日一次；策略優化跑完後接著跑）
-            elif (now.hour >= 15
-                  and cfg.get('goal', {}).get('enabled')
-                  and cfg.get('goal', {}).get('last_review', '') != today):
-                try:
-                    _run_goal_review(_load_agent_cfg(), client)
-                except Exception as e:
-                    print(f'[Agent] goal review error: {e}')
 
             # 策略工作台每日收盤自動掃描（盤後，每日一次）
             elif (now.hour >= 15
@@ -7071,6 +7210,8 @@ def agent_holdings_api():
         for field in ('note', 'group', 'name'):
             if field in body:
                 record[field] = body.get(field, '')
+        if 'ai_enabled' in body:
+            record['ai_enabled'] = bool(body.get('ai_enabled'))
         existing.append(record)
         cfg['holdings'] = existing
         _save_agent_cfg(cfg)
@@ -7082,6 +7223,27 @@ def agent_holdings_api():
         _monitor_drop_code(code)   # 刪除持倉 → 同步移出盤中監控
         _save_agent_cfg(cfg)
         return jsonify({'ok': True})
+
+
+@app.route('/api/agent/holdings/ai_toggle', methods=['POST'])
+def agent_holding_ai_toggle_api():
+    """單檔持倉切換 AI 分析監測開關（不重抓報價，省 token＋秒回）。
+    ai_enabled=False 的持倉在晨報/盤中/盤後統合中完全略過，不呼叫 Opus。"""
+    body = request.get_json(force=True)
+    code = str(body.get('code', '')).strip().upper().replace('.TW', '').replace('.TWO', '')
+    enabled = bool(body.get('enabled', True))
+    if not code:
+        return jsonify({'error': '代碼不可為空'}), 400
+    cfg = _load_agent_cfg()
+    found = False
+    for h in cfg.get('holdings', []):
+        if str(h.get('code', '')).strip().upper() == code:
+            h['ai_enabled'] = enabled
+            found = True
+    if not found:
+        return jsonify({'error': '查無此持倉'}), 404
+    _save_agent_cfg(cfg)
+    return jsonify({'ok': True, 'code': code, 'ai_enabled': enabled})
 
 
 def _monitor_drop_code(code: str):

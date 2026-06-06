@@ -118,8 +118,9 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   <h1 class="gl-title">目標導向操盤</h1>
   <div class="gl-sub">
     設定「在多久之內把資產累積到多少」，系統會算出需要的年化報酬，結合你目前的持股與現金，
-    每天盤後自動檢討進度，產生「明日該買哪些、買多少、該賣什麼」的計畫並推 LINE。
-    持倉請在 <a href="/agent" style="color:var(--accent)">AI Agent</a> 頁面維護。
+    產生「明日該買哪些、買多少、該賣什麼」的計畫並推 LINE。
+    台股收盤後系統會提醒你登錄當日買賣；登錄完按下方【產生今晚操盤總結】，
+    系統會結合前一夜美股走勢一併判斷。持倉請在 <a href="/agent" style="color:var(--accent)">AI Agent</a> 頁面維護。
   </div>
 
   <div class="gl-us" id="usBanner" style="display:none"></div>
@@ -142,7 +143,7 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
       </div>
     </div>
     <div class="gl-row">
-      <label class="gl-toggle"><input type="checkbox" id="enabled"> 啟用目標導向操盤（每日盤後自動檢討＋推播）</label>
+      <label class="gl-toggle"><input type="checkbox" id="enabled"> 啟用目標導向操盤（收盤後提醒登錄買賣，並開放【產生今晚操盤總結】）</label>
     </div>
     <div class="gl-row">
       <button class="gl-btn" id="saveBtn" onclick="saveGoal()">儲存目標</button>
@@ -164,12 +165,12 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 
   <!-- 明日買賣計畫 -->
   <div class="gl-card">
-    <h2>明日買賣計畫 <span class="sub">AI 依達標角度產生</span></h2>
+    <h2>今晚操盤總結 <span class="sub">結合前一夜美股、持倉去留與達標進度</span></h2>
     <div class="gl-row" style="margin-top:0">
-      <button class="gl-btn gold" id="reviewBtn" onclick="reviewNow()">立即檢討，產生明日買賣計畫</button>
+      <button class="gl-btn gold" id="reviewBtn" onclick="reviewNow()">產生今晚操盤總結</button>
       <span class="gl-msg" id="reviewMsg"></span>
     </div>
-    <div class="gl-hint">檢討在背景執行約 1-2 分鐘，完成後本頁與 LINE 都會收到計畫。可重新整理本頁查看最新計畫。</div>
+    <div class="gl-hint">請先到 AI Agent 頁登錄今天的買賣，再按此鈕。檢討在背景執行約 1-2 分鐘，完成後本頁與 LINE 都會收到。同日重按會沿用稍早的持倉分析，不重複耗 token。</div>
     <div id="plan" style="margin-top:14px"><div class="gl-plan dim">尚無計畫。</div></div>
   </div>
 

@@ -241,6 +241,17 @@
   cursor: pointer;
 }
 .del-btn:hover { background: #3a1020; }
+.ai-toggle-btn {
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-toggle-btn.on  { background: rgba(40,167,69,.15); border: 1px solid #28a745; color: #38c46a; }
+.ai-toggle-btn.off { background: transparent; border: 1px solid #555; color: var(--text-dim); }
+.ai-toggle-btn:disabled { opacity: .5; cursor: wait; }
 
 /* ── Recommendation panel ─────────────────────────────────────────── */
 .rec-box {
@@ -590,6 +601,7 @@ select.scan-input { width: 120px; }
             <th>現價</th>
             <th>損益（報酬率）</th>
             <th>起漲得分</th>
+            <th>AI監測</th>
             <th></th>
           </tr>
         </thead>
@@ -808,7 +820,7 @@ async function loadHoldings() {
   tbody.innerHTML = '';
 
   if (!holdings.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h3>尚無持倉</h3>在上方輸入您持有的股票代碼與買入資訊</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><h3>尚無持倉</h3>在上方輸入您持有的股票代碼與買入資訊</td></tr>';
     document.getElementById('holdingsTable').style.display = 'table';
     document.getElementById('sumUnrealized').textContent = '--';
     loadSells();   // 持倉清空也要顯示已實現帳本
@@ -828,6 +840,7 @@ async function loadHoldings() {
     if (cur && buy) { totalCost += buy * sh; totalVal += cur * sh; }
     _holdingMap[h.code] = { name: h.name || h.code, shares: sh, buy_price: buy, current_price: cur };
     const amtTxt = (cur && buy) ? `${pnlAmt>=0?'+':''}${Math.round(pnlAmt).toLocaleString()} 元 ` : '';
+    const aiOn = (h.ai_enabled !== false);   // 未設定＝預設開啟
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>
@@ -842,6 +855,13 @@ async function loadHoldings() {
         <div class="score-bar" id="score-${h.code}">
           ${[1,2,3,4,5].map(i => `<div class="score-dot"></div>`).join('')}
         </div>
+      </td>
+      <td>
+        <button class="ai-toggle-btn ${aiOn ? 'on' : 'off'}" id="aiTog-${h.code}"
+                onclick="toggleHoldingAI('${h.code}')"
+                title="關閉後此檔不再耗用 AI（晨報/盤中/盤後統合都略過），可隨時開啟">
+          ${aiOn ? 'AI開' : 'AI關'}
+        </button>
       </td>
       <td style="display:flex;gap:6px">
         <button class="analyze-row-btn" onclick="analyzeHolding('${h.code}')">AI 分析</button>
@@ -968,6 +988,28 @@ async function deleteHolding(code) {
   if (!confirm(`確定刪除 ${code}？`)) return;
   await fetch(`/api/agent/holdings?code=${code}`, { method: 'DELETE' });
   await loadHoldings();
+}
+
+// 單檔切換 AI 分析監測（關閉者晨報/盤中/盤後統合都略過，省 token）
+async function toggleHoldingAI(code) {
+  const btn = document.getElementById('aiTog-' + code);
+  const turnOn = btn && btn.classList.contains('off');   // 目前關 → 要開
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/agent/holdings/ai_toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, enabled: turnOn }),
+    });
+    const j = await r.json();
+    if (btn && r.ok) {
+      const on = (j.ai_enabled !== false);
+      btn.classList.toggle('on', on);
+      btn.classList.toggle('off', !on);
+      btn.textContent = on ? 'AI開' : 'AI關';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function analyzeHolding(code) {
