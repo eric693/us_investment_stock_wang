@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -15,6 +15,51 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
+
+# ── 全站登入保護 ─────────────────────────────────────────────────────────
+# 進站前需先輸入密碼，驗證後存於 session（多 worker 共用同一把 secret key，
+# 故 secret 取自環境變數並提供固定預設值，避免重啟後 session 失效）。
+app.secret_key = os.environ.get('APP_SECRET_KEY', 'us-inv-wang-2026-secret-key')
+SITE_PASSWORD = os.environ.get('SITE_PASSWORD', '654321')
+
+
+@app.before_request
+def _require_login():
+    # 放行登入頁與靜態資源，其餘一律需登入。
+    if request.endpoint in ('login', 'static'):
+        return None
+    if request.path == '/login':
+        return None
+    if session.get('authed'):
+        return None
+    # API 請求回 401（前端可據此導回登入），頁面請求導向登入頁。
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'unauthorized', 'login_required': True}), 401
+    return redirect(url_for('login', next=request.path))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = ''
+    if request.method == 'POST':
+        pwd = (request.form.get('password') or '').strip()
+        if pwd == SITE_PASSWORD:
+            session['authed'] = True
+            session.permanent = True
+            nxt = request.args.get('next') or request.form.get('next') or '/'
+            if not nxt.startswith('/'):
+                nxt = '/'
+            return redirect(nxt)
+        error = '密碼錯誤，請重新輸入'
+    return render_template('login.html', error=error,
+                           next=request.args.get('next', '/'))
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
 
 # ── 排程單一執行權（多 worker 下只讓一個 worker 跑背景排程）──────────────
 # gunicorn 會啟動多個 worker，每個都會 import 本模組並嘗試啟動背景迴圈。

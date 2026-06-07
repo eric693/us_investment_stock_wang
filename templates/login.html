@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登入 — 智能投資分析平台</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:radial-gradient(1200px 600px at 50% -10%,#0e1b2e 0%,#060a10 60%);font-family:system-ui,"Microsoft JhengHei",sans-serif;}
+  .login-card{width:340px;max-width:90vw;background:rgba(12,18,28,.92);border:1px solid rgba(61,142,248,.25);
+       border-radius:16px;padding:34px 30px;box-shadow:0 24px 60px rgba(0,0,0,.55);}
+  .login-brand{font-size:1.15rem;font-weight:900;letter-spacing:1px;color:#fff;text-align:center;margin-bottom:4px;}
+  .login-brand span{color:#f0b429;}
+  .login-sub{font-size:.78rem;color:#7e90a8;text-align:center;margin-bottom:26px;}
+  .login-card label{display:block;font-size:.78rem;font-weight:700;color:#9fb0c8;margin-bottom:8px;}
+  .login-card input[type=password]{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:9px;
+       border:1px solid rgba(120,140,170,.3);background:#0a121e;color:#eaf1fb;font-size:1rem;outline:none;letter-spacing:3px;}
+  .login-card input[type=password]:focus{border-color:#3d8ef8;box-shadow:0 0 0 3px rgba(61,142,248,.15);}
+  .login-btn{width:100%;margin-top:18px;padding:12px;border:none;border-radius:9px;cursor:pointer;
+       font-size:.95rem;font-weight:800;color:#fff;background:linear-gradient(135deg,#1a6fd4,#0e4a9a);transition:filter .15s;}
+  .login-btn:hover{filter:brightness(1.1);}
+  .login-err{margin-top:14px;font-size:.8rem;color:#ff6b6b;text-align:center;min-height:1em;}
+</style>
+</head>
+<body>
+  <form class="login-card" method="POST" action="/login?next={{ next }}">
+    <div class="login-brand">智能投資<span>分析平台</span></div>
+    <div class="login-sub">請輸入密碼以進入</div>
+    <label for="password">密碼</label>
+    <input type="password" id="password" name="password" autofocus autocomplete="current-password" inputmode="numeric">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="login-btn">登入</button>
+    <div class="login-err">{{ error }}</div>
+  </form>
+</body>
+</html>
