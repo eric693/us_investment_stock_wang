@@ -475,6 +475,7 @@ select.scan-input { width: 120px; }
     <a href="/backtest" class="nav-link">策略回測</a>
     <a href="/goal" class="nav-link">目標操盤</a>
     <a href="/workbench" class="nav-link">策略工作台</a>
+    <a href="/history" class="nav-link">歷史紀錄</a>
   </div>
 </nav>
 
@@ -699,6 +700,9 @@ select.scan-input { width: 120px; }
     <!-- Chat tab -->
     <div class="agent-panel" id="tab-chat">
       <div class="agent-chat-wrap">
+        <div style="text-align:right;margin-bottom:6px">
+          <a href="/history?feature=agent_chat" style="font-size:0.74rem;font-weight:700;color:var(--accent);text-decoration:none">查看歷史對話 →</a>
+        </div>
         <div class="agent-chat-msgs" id="chatMsgs">
           <div class="empty-state">
             <h3>AI 投資 Agent</h3>

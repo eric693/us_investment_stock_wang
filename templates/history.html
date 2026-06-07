@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>歷史紀錄</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.h-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.h-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.h-nav .brand span { color: var(--gold); }
+.h-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.h-nav a:hover { color: var(--text); background: #0d1628; }
+.h-nav a.active { color: #fff; background: var(--accent); }
+.h-nav a.home { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+
+.h-wrap { max-width: 1200px; margin: 0 auto; padding: 22px 20px; }
+.h-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.h-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; line-height: 1.6; }
+
+.h-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.h-chip { background: #0d1628; border: 1px solid var(--card-bd); border-radius: 6px;
+  padding: 6px 13px; font-size: 0.76rem; color: var(--text-mid); cursor: pointer; }
+.h-chip:hover { border-color: var(--accent); color: var(--accent); }
+.h-chip.active { background: rgba(26,111,212,.15); border-color: var(--accent); color: #fff; }
+
+.h-main { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+.h-list { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  overflow: hidden; max-height: 72vh; overflow-y: auto; }
+.h-item { padding: 11px 14px; border-bottom: 1px solid #0d1628; cursor: pointer; }
+.h-item:last-child { border-bottom: none; }
+.h-item:hover { background: #0d1628; }
+.h-item.sel { background: rgba(26,111,212,.12); }
+.h-item .it-feat { font-size: 0.64rem; font-weight: 800; color: var(--gold); letter-spacing: .4px; }
+.h-item .it-title { font-size: 0.82rem; color: var(--text); margin: 3px 0; line-height: 1.4; }
+.h-item .it-time { font-size: 0.66rem; color: var(--text-dim); }
+
+.h-detail { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 18px 20px; min-height: 300px; }
+.h-detail .d-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  border-bottom: 1px solid var(--card-bd); padding-bottom: 12px; margin-bottom: 14px; }
+.h-detail .d-feat { font-size: 0.68rem; font-weight: 800; color: var(--gold); }
+.h-detail .d-title { font-size: 1rem; font-weight: 800; margin: 4px 0; }
+.h-detail .d-time { font-size: 0.72rem; color: var(--text-dim); }
+.h-detail .d-text { font-size: 0.86rem; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
+.h-del { background: transparent; border: 1px solid var(--card-bd); color: var(--text-mid);
+  border-radius: 6px; padding: 6px 12px; font-size: 0.74rem; cursor: pointer; white-space: nowrap; }
+.h-del:hover { border-color: #ff4e4e; color: #ff4e4e; }
+.h-clear { font-size: 0.72rem; color: var(--text-dim); cursor: pointer; margin-left: auto; align-self: center; }
+.h-clear:hover { color: #ff4e4e; }
+
+.h-tbl { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 14px; }
+.h-tbl th { text-align: right; padding: 8px 10px; font-size: 0.66rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--card-bd); background: #08101e; }
+.h-tbl th:first-child, .h-tbl td:first-child { text-align: left; }
+.h-tbl td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #0d1628; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; }
+.h-empty { text-align: center; padding: 50px 20px; color: var(--text-dim); font-size: 0.86rem; }
+
+@media (max-width: 760px) { .h-main { grid-template-columns: 1fr; } .h-list { max-height: 40vh; } }
+</style>
+</head>
+<body>
+
+<nav class="h-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/bluechip">績優股清單</a>
+  <a href="/perpetual">低位階永動機</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/goal">目標操盤</a>
+  <a href="/workbench">策略工作台</a>
+  <a href="/history" class="active">歷史紀錄</a>
+</nav>
+
+<div class="h-wrap">
+  <h1 class="h-title">歷史紀錄</h1>
+  <div class="h-sub">全站會花 token 的 AI 產出（對話、單檔分析、工作台策略、操盤總結）與選股清單快照都會自動存在這裡，換頁／重整都找得回來。</div>
+
+  <div class="h-filters" id="filters"></div>
+
+  <div class="h-main">
+    <div class="h-list" id="list"><div class="h-empty">載入中…</div></div>
+    <div class="h-detail" id="detail"><div class="h-empty">從左側點選一筆紀錄查看內容</div></div>
+  </div>
+</div>
+
+<script>
+let labels = {};
+let curFeature = '';
+let items = [];
+let curId = null;
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleString('zh-TW', {year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+async function init() {
+  try { labels = await (await fetch('/api/history/labels')).json(); } catch(e) { labels = {}; }
+  // 支援深連結 /history?feature=goal_chat 直接預選該功能別篩選
+  const qf = new URLSearchParams(location.search).get('feature');
+  if (qf && labels[qf]) curFeature = qf;
+  renderFilters();
+  loadList();
+}
+
+function renderFilters() {
+  const f = document.getElementById('filters');
+  let h = `<span class="h-chip ${curFeature===''?'active':''}" onclick="setFeature('')">全部</span>`;
+  for (const [code, name] of Object.entries(labels)) {
+    h += `<span class="h-chip ${curFeature===code?'active':''}" onclick="setFeature('${code}')">${name}</span>`;
+  }
+  f.innerHTML = h;
+}
+
+function setFeature(code) { curFeature = code; renderFilters(); loadList(); }
+
+async function loadList() {
+  const list = document.getElementById('list');
+  list.innerHTML = '<div class="h-empty">載入中…</div>';
+  try {
+    const q = curFeature ? ('?feature=' + encodeURIComponent(curFeature)) : '';
+    items = await (await fetch('/api/history/list' + q)).json();
+  } catch(e) { items = []; }
+  if (!items.length) { list.innerHTML = '<div class="h-empty">尚無紀錄</div>'; return; }
+  list.innerHTML = items.map(it => `
+    <div class="h-item ${it.id===curId?'sel':''}" id="it-${it.id}" onclick="openItem(${it.id})">
+      <div class="it-feat">${it.feature_label}${it.ref?(' · '+it.ref):''}</div>
+      <div class="it-title">${esc(it.title) || '(無標題)'}</div>
+      <div class="it-time">${fmtTime(it.created)}</div>
+    </div>`).join('');
+}
+
+function esc(s) { return (s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+async function openItem(id) {
+  curId = id;
+  document.querySelectorAll('.h-item').forEach(e => e.classList.remove('sel'));
+  const el = document.getElementById('it-' + id); if (el) el.classList.add('sel');
+  const detail = document.getElementById('detail');
+  detail.innerHTML = '<div class="h-empty">載入中…</div>';
+  let d;
+  try { d = await (await fetch('/api/history/' + id)).json(); } catch(e) { d = {found:false}; }
+  if (!d.found) { detail.innerHTML = '<div class="h-empty">找不到此紀錄</div>'; return; }
+  let html = `<div class="d-head">
+    <div>
+      <div class="d-feat">${d.feature_label}${d.ref?(' · '+d.ref):''}</div>
+      <div class="d-title">${esc(d.title)}</div>
+      <div class="d-time">${fmtTime(d.created)}</div>
+    </div>
+    <button class="h-del" onclick="delItem(${id})">刪除此筆</button>
+  </div>`;
+  if (d.text) html += `<div class="d-text">${esc(d.text)}</div>`;
+  if (d.data && Array.isArray(d.data.results) && d.data.results.length) {
+    html += renderTable(d.data.results);
+  }
+  if (d.data && Array.isArray(d.data.cards) && d.data.cards.length) {
+    html += renderTable(d.data.cards);
+  }
+  detail.innerHTML = html;
+}
+
+// 從清單快照挑常見欄位組表（哪些有就顯示哪些）
+function renderTable(rows) {
+  const cols = [
+    ['rank','排名'], ['code','代碼'], ['display','代碼'], ['name','名稱'],
+    ['price','股價'], ['changePct','漲跌%'], ['pos','位階%'], ['riseScore','起漲分'],
+    ['totalScore','綜合分'], ['fcfAvg3','3年FCF%'], ['pb','PB'], ['pe','PE'], ['divYield','殖利率%'],
+  ];
+  const present = cols.filter(([k]) => rows.some(r => r[k] !== undefined && r[k] !== null))
+                      // code 與 display 擇一
+                      .filter(([k], i, arr) => !(k==='display' && arr.some(([k2])=>k2==='code')));
+  if (!present.length) return '';
+  let h = '<table class="h-tbl"><thead><tr>' + present.map(([,lbl]) => `<th>${lbl}</th>`).join('') + '</tr></thead><tbody>';
+  rows.slice(0, 60).forEach(r => {
+    h += '<tr>' + present.map(([k]) => {
+      let v = r[k];
+      if (v === undefined || v === null) v = '';
+      else if (typeof v === 'number') v = (Math.round(v*100)/100);
+      let cls = '';
+      if (k === 'changePct' && typeof r[k] === 'number') cls = r[k] >= 0 ? 'pos' : 'neg';
+      return `<td class="${cls}">${esc(String(v))}</td>`;
+    }).join('') + '</tr>';
+  });
+  return h + '</tbody></table>';
+}
+
+async function delItem(id) {
+  if (!confirm('刪除此筆歷史紀錄？')) return;
+  try {
+    await fetch('/api/history/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+    curId = null;
+    document.getElementById('detail').innerHTML = '<div class="h-empty">已刪除。從左側點選一筆紀錄查看內容</div>';
+    loadList();
+  } catch(e) {}
+}
+
+init();
+</script>
+</body>
+</html>

@@ -104,6 +104,33 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .bt-advice h3 { font-size: 0.86rem; margin: 0 0 8px; color: var(--gold); }
 .bt-advice .body { font-size: 0.84rem; line-height: 1.75; color: var(--text); white-space: pre-wrap; }
 .bt-advice .body.dim { color: var(--text-dim); }
+.bt-advice .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--card-bd); }
+.bt-mon-btn { background: linear-gradient(135deg, #1f9d5c, #26d96b); color: #04210f; border: none;
+  border-radius: 7px; padding: 8px 16px; font-size: 0.8rem; font-weight: 800; cursor: pointer; }
+.bt-mon-btn:hover { opacity: .9; } .bt-mon-btn:disabled { opacity: .5; cursor: default; }
+.bt-mon-hint { font-size: 0.72rem; color: var(--text-dim); }
+
+/* 已存回測報告清單 */
+.bt-saved { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 14px; }
+.bt-saved h4 { font-size: 0.74rem; color: var(--gold); margin: 0 0 8px; font-weight: 800; }
+.bt-saved .items { display: flex; gap: 8px; flex-wrap: wrap; }
+.bt-saved-chip { display: inline-flex; align-items: center; gap: 8px; background: #0a1120;
+  border: 1px solid var(--card-bd); border-radius: 6px; padding: 5px 8px 5px 11px; font-size: 0.76rem; }
+.bt-saved-chip .lk { color: var(--text-mid); cursor: pointer; }
+.bt-saved-chip .lk:hover { color: var(--accent); }
+.bt-saved-chip .del { color: var(--text-dim); cursor: pointer; font-weight: 900; padding: 0 2px; }
+.bt-saved-chip .del:hover { color: #ff4e4e; }
+.bt-saved .empty { font-size: 0.74rem; color: var(--text-dim); }
+.bt-mon-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #0d1628; font-size: 0.78rem; flex-wrap: wrap; }
+.bt-mon-row:last-child { border-bottom: none; }
+.bt-mon-row .who { font-weight: 800; color: var(--text); min-width: 110px; }
+.bt-mon-row .det { color: var(--text-dim); flex: 1; min-width: 180px; }
+.bt-mon-row .st { font-weight: 800; }
+.bt-mon-row .st.on { color: #26d96b; } .bt-mon-row .st.off { color: var(--text-dim); }
+.bt-mon-row .rm { color: var(--text-dim); cursor: pointer; font-weight: 800; }
+.bt-mon-row .rm:hover { color: #ff4e4e; }
 
 .bt-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
 .bt-empty { text-align: center; padding: 40px; color: var(--text-dim); }
@@ -129,6 +156,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   <a href="/backtest" class="active">策略回測</a>
   <a href="/goal">目標操盤</a>
   <a href="/workbench">策略工作台</a>
+  <a href="/history">歷史紀錄</a>
 </nav>
 
 <div class="bt-wrap">
@@ -181,6 +209,16 @@ body { margin: 0; background: var(--bg); color: var(--text); }
     </div>
   </div>
 
+  <div class="bt-saved" id="monListBox" style="display:none">
+    <h4>監測中的回測策略（達標會用 LINE 通知）</h4>
+    <div id="monListItems"></div>
+  </div>
+
+  <div class="bt-saved" id="savedBox" style="display:none">
+    <h4>已存回測報告（含 AI 建議，免重打省 token）</h4>
+    <div class="items" id="savedItems"></div>
+  </div>
+
   <div class="bt-loading" id="loading" style="display:none">回測計算中，請稍候…</div>
 
   <div class="bt-summary" id="summary"></div>
@@ -193,6 +231,10 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   <div class="bt-advice" id="adviceBox">
     <h3>AI 操作建議與預期報酬</h3>
     <div class="body dim" id="adviceBody">產生中…</div>
+    <div class="acts" id="adviceActs" style="display:none">
+      <button class="bt-mon-btn" id="monBtn" onclick="startMonitor()">照此最佳進出建議啟動監測</button>
+      <span class="bt-mon-hint" id="monHint"></span>
+    </div>
   </div>
 
   <div class="bt-empty" id="emptyState">輸入股票代碼，按「AI 幫我組最佳策略」，或自選條件回測</div>
@@ -206,6 +248,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 <script>
 let groups = [];
 let selected = new Set();
+let current = null;   // 最近一次回測結果（供存檔與監測用）
 
 window.onload = async () => {
   try {
@@ -222,7 +265,104 @@ window.onload = async () => {
         </div>
       </div>`).join('');
   } catch(e) {}
+  loadSavedReports();
+  loadMonitors();
 };
+
+async function loadMonitors() {
+  try {
+    const res = await (await fetch('/api/tw/monitor/list')).json();
+    const tickers = res.tickers || {};
+    const box = document.getElementById('monListBox');
+    const items = document.getElementById('monListItems');
+    const rows = Object.entries(tickers).filter(([t, s]) => s.profile === 'strategy');
+    if (!rows.length) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    items.innerHTML = rows.map(([t, s]) => {
+      const sig = s.last_signal || {};
+      const code = t.replace('.TWO', '').replace('.TW', '');
+      const st = sig.actionCn || '尚未掃描';
+      const exitTxt = s.exit_strategy ? ' → 出場：' + s.exit_strategy : '';
+      return `<div class="bt-mon-row">
+        <span class="who">${code}</span>
+        <span class="det">進場：${s.entry_label || s.entry_code || '-'}${exitTxt}<br>
+          <span style="color:var(--text-mid)">最新：${st}${s.last_scan ? '（'+s.last_scan+'）' : ''}</span></span>
+        <span class="st ${s.enabled ? 'on' : 'off'}">${s.enabled ? '監測中' : '已暫停'}</span>
+        <span class="lk" style="color:var(--accent);cursor:pointer" onclick="toggleMonitor('${t}', ${!s.enabled})">${s.enabled ? '暫停' : '啟用'}</span>
+        <span class="rm" onclick="removeMonitor('${t}')">移除</span>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function toggleMonitor(ticker, enabled) {
+  try {
+    await fetch('/api/tw/monitor/toggle', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ticker, enabled }),
+    });
+    loadMonitors();
+  } catch(e) {}
+}
+
+async function removeMonitor(ticker) {
+  if (!confirm('移除監測 ' + ticker.replace('.TWO','').replace('.TW','') + '？')) return;
+  try {
+    await fetch('/api/tw/monitor/unregister', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ticker }),
+    });
+    loadMonitors();
+  } catch(e) {}
+}
+
+async function loadSavedReports() {
+  try {
+    const list = await (await fetch('/api/backtest/reports')).json();
+    const box = document.getElementById('savedBox');
+    const items = document.getElementById('savedItems');
+    if (!list.length) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    items.innerHTML = list.map(r => {
+      const dt = r.updated ? new Date(r.updated * 1000).toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+      const tag = r.mode === 'optimize' ? 'AI最佳化' : '自選';
+      return `<span class="bt-saved-chip">
+        <span class="lk" onclick="openReport('${r.code}')">${r.name||r.code}（${r.code}）· ${tag} · ${dt}</span>
+        <span class="del" onclick="deleteReport('${r.code}', event)">×</span>
+      </span>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function openReport(code) {
+  busy(true);
+  try {
+    const d = await (await fetch('/api/backtest/report/' + encodeURIComponent(code))).json();
+    if (!d.found || !d.data) { fail('找不到此報告，可能已刪除。'); busy(false); return; }
+    document.getElementById('codeInput').value = code;
+    if (d.mode === 'optimize') renderOptimize(d.data); else renderRun(d.data);
+    captureCurrent(d.mode, d.data);
+    const body = document.getElementById('adviceBody');
+    document.getElementById('adviceBox').style.display = 'block';
+    body.className = 'body';
+    body.textContent = d.advice || '（此報告未存 AI 建議）';
+    resetMonBtn();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch(e) { fail('讀取報告失敗：' + e.message); }
+  finally { busy(false); }
+}
+
+async function deleteReport(code, ev) {
+  if (ev) ev.stopPropagation();
+  if (!confirm('刪除 ' + code + ' 的已存回測報告？')) return;
+  try {
+    await fetch('/api/backtest/report/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code }),
+    });
+    loadSavedReports();
+  } catch(e) {}
+}
 
 function setCode(c) { document.getElementById('codeInput').value = c; }
 function togglePicker() {
@@ -257,6 +397,7 @@ function busy(on) {
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('noteBox').style.display = 'none';
     document.getElementById('adviceBox').style.display = 'none';
+    document.getElementById('adviceActs').style.display = 'none';
   }
 }
 function fail(msg) {
@@ -276,9 +417,27 @@ async function runBacktest() {
     const data = await r.json();
     if (data.error) { fail(data.error); return; }
     renderRun(data);
+    captureCurrent('run', data);
     fetchAdvice({ mode:'run', ...data });
   } catch(e) { fail('回測失敗：' + e.message); }
   finally { busy(false); }
+}
+
+// 從回測結果抽出「最佳進場訊號 + 出場策略」，供存檔與一鍵監測使用
+function captureCurrent(mode, data) {
+  let entry_code, entry_label, exit_strategy;
+  const best = data.best || {};
+  if (mode === 'optimize') {
+    entry_code  = best.entry_code;
+    entry_label = best.entry;
+    exit_strategy = best.strategy;
+  } else {
+    entry_code  = data.signal;        // 使用者勾選的進場訊號（可為陣列）
+    entry_label = data.signal_name;
+    exit_strategy = best.strategy;
+  }
+  current = { code: data.code, name: data.name, mode, data,
+              entry_code, entry_label, exit_strategy };
 }
 
 async function runOptimize() {
@@ -294,6 +453,7 @@ async function runOptimize() {
     if (data.error) { fail(data.error); return; }
     if (!data.best) { fail('此檔在所選期間找不到足夠樣本的有效組合，請拉長回測期間或換一檔。'); return; }
     renderOptimize(data);
+    captureCurrent('optimize', data);
     fetchAdvice({ mode:'optimize', ...data });
   } catch(e) { fail('最佳化失敗：' + e.message); }
   finally { busy(false); document.getElementById('loading').textContent = '回測計算中，請稍候…'; }
@@ -381,9 +541,52 @@ async function fetchAdvice(payload) {
     if (data.error) { body.textContent = '（無法產生建議：' + data.error + '）'; return; }
     body.className = 'body';
     body.textContent = data.advice || '（無建議）';
+    // 建議產生成功：顯示監測按鈕並把整份報告存起來（換頁/重整後可回看）
+    resetMonBtn();
+    if (current) {
+      fetch('/api/backtest/report/save', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ code: current.code, name: current.name,
+                               mode: current.mode, data: current.data, advice: data.advice || '' }),
+      }).then(() => loadSavedReports()).catch(() => {});
+    }
   } catch(e) {
     body.textContent = '（建議產生失敗：' + e.message + '）';
   }
+}
+
+function resetMonBtn() {
+  document.getElementById('adviceActs').style.display = 'flex';
+  const btn = document.getElementById('monBtn');
+  btn.disabled = false;
+  btn.textContent = '照此最佳進出建議啟動監測';
+  document.getElementById('monHint').textContent = '';
+}
+
+async function startMonitor() {
+  if (!current || !current.entry_code) { alert('沒有可監測的策略，請先回測。'); return; }
+  const btn  = document.getElementById('monBtn');
+  const hint = document.getElementById('monHint');
+  btn.disabled = true; hint.textContent = '設定中…';
+  try {
+    const lc = await (await fetch('/api/tw/line/config')).json().catch(() => ({}));
+    const r = await fetch('/api/tw/monitor/register', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        ticker: current.code, profile: 'strategy',
+        entry_code: current.entry_code, entry_label: current.entry_label,
+        exit_strategy: current.exit_strategy,
+        line_token: lc.line_token || '', line_user_id: lc.line_user_id || '',
+      }),
+    });
+    const d = await r.json();
+    if (d.error) { hint.textContent = '失敗：' + d.error; btn.disabled = false; return; }
+    btn.textContent = '已啟動監測';
+    hint.textContent = (lc.line_token && lc.line_user_id)
+      ? `已監測 ${current.code}，最新K棒觸發「${current.entry_label}」進場訊號時用 LINE 通知你。下方清單可暫停／移除。`
+      : `已監測 ${current.code}，但尚未設定 LINE，請至 AI Agent 頁設定 LINE 才會收到通知。`;
+    loadMonitors();
+  } catch(e) { hint.textContent = '失敗：' + e.message; btn.disabled = false; }
 }
 </script>
 </body>

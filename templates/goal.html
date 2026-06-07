@@ -112,6 +112,8 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   <a href="/agent">AI Agent</a>
   <a href="/backtest">策略回測</a>
   <a href="/goal" class="active">目標操盤</a>
+  <a href="/workbench">策略工作台</a>
+  <a href="/history">歷史紀錄</a>
 </nav>
 
 <div class="gl-wrap">
@@ -165,7 +167,9 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 
   <!-- 明日買賣計畫 -->
   <div class="gl-card">
-    <h2>今晚操盤總結 <span class="sub">結合前一夜美股、持倉去留與達標進度</span></h2>
+    <h2>今晚操盤總結 <span class="sub">結合前一夜美股、持倉去留與達標進度</span>
+      <a href="/history?feature=evening" style="float:right;font-size:0.74rem;font-weight:700;color:var(--accent);text-decoration:none">歷史總結 →</a>
+    </h2>
     <div class="gl-row" style="margin-top:0">
       <button class="gl-btn gold" id="reviewBtn" onclick="reviewNow()">產生今晚操盤總結</button>
       <span class="gl-msg" id="reviewMsg"></span>
@@ -176,7 +180,9 @@ table.gl-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 
   <!-- AI 討論 -->
   <div class="gl-card">
-    <h2>AI 討論 <span class="sub">AI 會看到你的目標、持倉與買賣帳本，可回饋買賣對錯一起檢討</span></h2>
+    <h2>AI 討論 <span class="sub">AI 會看到你的目標、持倉與買賣帳本，可回饋買賣對錯一起檢討</span>
+      <a href="/history?feature=goal_chat" style="float:right;font-size:0.74rem;font-weight:700;color:var(--accent);text-decoration:none">查看歷史對話 →</a>
+    </h2>
     <div class="gl-hint" style="margin-top:0;margin-bottom:10px">
       例如：「台積電我該續抱還是落袋？」「我昨天把 2330 賣了 990，這樣對嗎？」「以達標角度，這個月我該偏積極還是保守？」
       回饋實際買賣請到 <a href="/agent" style="color:var(--accent)">AI Agent</a> 頁用「賣出記帳」，AI 才看得到並能檢討。

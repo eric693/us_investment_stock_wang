@@ -13,3 +13,4 @@ cache.sqlite
 cache.sqlite-wal
 cache.sqlite-shm
 tw_names.json
+*.lock

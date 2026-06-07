@@ -7,6 +7,7 @@ import time
 import threading
 import json
 import os
+import tempfile
 import requests as _requests
 from xml.etree import ElementTree as ET
 import urllib.parse
@@ -147,7 +148,36 @@ def tw_cn_name(ticker: str, fallback: str) -> str:
 
 # ── Server-side Monitor ────────────────────────────────────────────────
 MONITOR_FILE = os.path.join(os.path.dirname(__file__), 'monitor_config.json')
-_monitor_lock = threading.Lock()
+
+import fcntl as _fcntl
+_MON_LOCKFILE = MONITOR_FILE + '.lock'
+
+class _CrossProcLock:
+    """執行緒鎖 + OS 檔案鎖二合一。多 gunicorn worker＋排程器共用 monitor_config.json，
+    把所有 `with _monitor_lock:` 的「讀-改-寫」同時對本行程多執行緒與跨行程串行化，
+    避免並行下的遺失更新（新註冊被背景掃描的存檔蓋掉）。檔案鎖取得失敗就退回純執行緒鎖。"""
+    def __init__(self):
+        self._tlock = threading.Lock()
+        self._f = None
+    def __enter__(self):
+        self._tlock.acquire()
+        try:
+            self._f = open(_MON_LOCKFILE, 'w')
+            _fcntl.flock(self._f.fileno(), _fcntl.LOCK_EX)
+        except Exception:
+            self._f = None
+        return self
+    def __exit__(self, *exc):
+        if self._f is not None:
+            try: _fcntl.flock(self._f.fileno(), _fcntl.LOCK_UN)
+            except Exception: pass
+            try: self._f.close()
+            except Exception: pass
+            self._f = None
+        self._tlock.release()
+        return False
+
+_monitor_lock = _CrossProcLock()
 
 def _load_monitor_cfg():
     try:
@@ -159,8 +189,19 @@ def _load_monitor_cfg():
     return {'tickers': {}}
 
 def _save_monitor_cfg(cfg):
-    with open(MONITOR_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    # 原子寫入：先寫同目錄暫存檔再 os.replace，避免多 worker 並行時讀到寫一半的檔
+    # （撕裂讀取會讓 _load 退回空 dict，進而把整份監測清單清空）。
+    d = os.path.dirname(MONITOR_FILE) or '.'
+    fd, tmp = tempfile.mkstemp(prefix='.mon_', dir=d)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, MONITOR_FILE)
+    except Exception:
+        try: os.unlink(tmp)
+        except Exception: pass
+        raise
 
 def _split_for_line(text, size=4800):
     """LINE 單則上限 5000 字，超長就以行為界線切成多則（單行超長才硬切）。"""
@@ -293,7 +334,9 @@ def _run_server_scan():
             if price <= 0:
                 continue
             name = tw_cn_name(ticker, info.get('shortName', info.get('longName', ticker)))
-            if profile == 'aggressive':
+            if profile == 'strategy':
+                result = _strategy_signal(ticker, name, price, settings)
+            elif profile == 'aggressive':
                 result = _aggressive_signal(stock, ticker, price, name)
             elif profile == 'perpetual':
                 code_p = ticker.replace('.TW', '').replace('.TWO', '')
@@ -371,6 +414,14 @@ def _cache_db_init():
         # AI 預測報告長存表（不設過期）：每支股票一筆，存最後一次的數據、對話與已渲染的報告 HTML，
         # 讓查新代號後舊報告不消失、且重查同一檔可直接讀存檔不再呼叫 AI（省 token）。
         conn.execute('CREATE TABLE IF NOT EXISTS reports (code TEXT PRIMARY KEY, name TEXT, data TEXT, msgs TEXT, html TEXT, updated REAL)')
+        # 回測報告長存表：回測本身免費，但「AI 操作建議」要花 token，故把每檔最後一次的
+        # 回測結果(data)＋AI建議(advice)存起來，換頁/重整後仍能回看，不必重打 AI。
+        conn.execute('CREATE TABLE IF NOT EXISTS bt_reports (code TEXT PRIMARY KEY, name TEXT, mode TEXT, data TEXT, advice TEXT, updated REAL)')
+        # 統一歷史紀錄表：全站「會花 token 的 AI 產出」與「選股清單快照」逐筆累積存檔，
+        # 供 /history 集中查閱。feature=功能別, ref=標的/識別, title=人類可讀標題,
+        # data=結構化 JSON, text=純文字內容（建議/對話）, created=時間戳。
+        conn.execute('CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, feature TEXT, ref TEXT, title TEXT, data TEXT, text TEXT, created REAL)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_history_feat ON history(feature, created)')
         conn.commit(); conn.close()
     except Exception:
         pass
@@ -414,6 +465,31 @@ def _cache_set(key, val, ttl=300):
         conn.commit(); conn.close()
     except Exception:
         pass
+
+# ── 統一歷史紀錄 ───────────────────────────────────────────────────
+# 每類保留上限，避免長跑下無限增長（清單快照類量大、設小一點）
+_HISTORY_KEEP = {
+    'ai_chat': 200, 'agent_chat': 200, 'goal_chat': 200, 'agent_analyze': 200, 'wb_strategy': 100,
+    'evening': 365, 'goal_review': 365,
+    'screener': 60, 'bluechip': 60, 'perpetual': 60,
+}
+
+def _history_log(feature, title='', ref='', data=None, text=''):
+    """寫一筆歷史紀錄並修剪該類舊資料。任何失敗都吞掉，絕不影響主流程。"""
+    try:
+        payload = json.dumps(data, ensure_ascii=False) if data is not None else None
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        conn.execute('INSERT INTO history (feature, ref, title, data, text, created) VALUES (?,?,?,?,?,?)',
+                     (feature, ref or '', title or '', payload, text or '', time.time()))
+        keep = _HISTORY_KEEP.get(feature, 200)
+        conn.execute(
+            'DELETE FROM history WHERE feature=? AND id NOT IN '
+            '(SELECT id FROM history WHERE feature=? ORDER BY id DESC LIMIT ?)',
+            (feature, feature, keep))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f'[History] log {feature}: {e}')
+
 
 # ── Helpers ───────────────────────────────────────────────────────
 def safe_float(v, default=0.0):
@@ -626,6 +702,41 @@ def _steady_signal(stock, ticker, price, name):
         },
         'timeframe': '日K',
         'timestamp': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+def _strategy_signal(ticker, name, price, settings):
+    """回測最佳策略監測：檢查最新日K是否觸發回測選出的「最佳進場訊號」，
+    觸發即發出 BUY 並提醒照回測選出的出場策略操作。進場判定與回測同源
+    （_compute_entry_mask），確保監測的就是回測那組策略的達標點。"""
+    entry_code  = settings.get('entry_code') or 'kd_gc'
+    entry_label = settings.get('entry_label') or _signal_label(_normalize_signal(entry_code))
+    exit_name   = settings.get('exit_strategy') or ''
+    ts = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    try:
+        hist, _code, _nm = _bt_load_history(ticker, '1y')
+    except Exception:
+        hist = None
+    if hist is None or len(hist) < 30:
+        return _signal_wait(ticker, name, price, 'strategy', '歷史資料不足，無法判斷回測進場訊號')
+    mask      = _compute_entry_mask(hist, _normalize_signal(entry_code))
+    triggered = bool(len(mask) and mask[-1])
+    sig_date  = hist.index[-1].strftime('%Y-%m-%d')
+    if triggered:
+        action, action_cn, conf = 'BUY', '回測進場訊號觸發', '中'
+        reason = (f'{sig_date} 最新K棒觸發你回測選出的最佳進場訊號「{entry_label}」。'
+                  + (f'依回測建議，進場後採「{exit_name}」方式出場。' if exit_name else ''))
+    else:
+        action, action_cn, conf = 'WAIT', '尚未觸發回測進場訊號', '-'
+        reason = f'最新K棒（{sig_date}）尚未觸發進場訊號「{entry_label}」，持續監測中。'
+    return {
+        'ticker': ticker, 'name': name, 'price': round(price, 2),
+        'profile': 'strategy', 'action': action, 'actionCn': action_cn,
+        'confidence': conf, 'reason': reason, 'stopLoss': 0,
+        'trailingStop': (f'出場依回測策略「{exit_name}」' if exit_name else ''),
+        'details': {'entry_code': entry_code, 'entry_label': entry_label,
+                    'exit_strategy': exit_name, 'triggered': triggered, 'signal_date': sig_date},
+        'timeframe': '日K', 'timestamp': ts,
     }
 
 
@@ -2510,7 +2621,7 @@ def monitor_register():
     with _monitor_lock:
         cfg = _load_monitor_cfg()
         existing = cfg['tickers'].get(ticker, {})
-        cfg['tickers'][ticker] = {
+        entry = {
             'profile':          profile,
             'enabled':          existing.get('enabled', True),
             'line_token':       line_token,
@@ -2520,6 +2631,13 @@ def monitor_register():
             'last_notify_time': existing.get('last_notify_time', ''),
             'registered_at':    existing.get('registered_at', now_str),
         }
+        # profile=strategy（從回測頁「照建議監測」帶入）需保存回測選出的進場訊號與出場策略，
+        # 掃描時用同一進場判定（_strategy_signal）盯達標點。
+        if profile == 'strategy':
+            entry['entry_code']    = data.get('entry_code') or 'kd_gc'
+            entry['entry_label']   = (data.get('entry_label') or '').strip()
+            entry['exit_strategy'] = (data.get('exit_strategy') or '').strip()
+        cfg['tickers'][ticker] = entry
         _save_monitor_cfg(cfg)
     return jsonify({'ok': True, 'ticker': ticker, 'profile': profile})
 
@@ -4531,6 +4649,11 @@ def screener_run():
                     pass
 
         results.sort(key=lambda x: (x.get('changePct') or 0), reverse=True)
+        if results:
+            mkt = '台股' if is_tw else '美股'
+            _history_log('screener', title=f'{mkt}篩選 命中 {len(results)}/{len(tickers)} 檔',
+                         data={'results': results[:60], 'conditions': conditions,
+                               'total': len(tickers), 'matched': len(results), 'isTw': is_tw})
         return jsonify({'results': results, 'total': len(tickers), 'matched': len(results)})
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -4776,13 +4899,18 @@ def bluechip_run():
         for i, m in enumerate(ranked):
             m['rank'] = i + 1
 
-        return jsonify({
+        out = {
             'results':  ranked,
             'total':    len(tickers),
             'fetched':  total_fetched,
             'survived': len(survivors),
             'excluded': excluded,
-        })
+        }
+        if ranked:
+            mkt = '台股' if is_tw else '美股'
+            _history_log('bluechip', title=f'{mkt}績優股排名 前 {len(ranked)} 名',
+                         data={'results': ranked, 'survived': len(survivors), 'isTw': is_tw})
+        return jsonify(out)
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': f'排名發生錯誤，請稍後再試（{str(e)[:80]}）'}), 500
@@ -5025,6 +5153,9 @@ def perpetual_screen():
             cands = kept
 
         cands.sort(key=lambda x: (-x['riseScore'], x['pos']))
+        if cands:
+            _history_log('perpetual', title=f'永動機低位階選股 命中 {len(cands)} 檔',
+                         data={'results': cands, 'total': len(tickers), 'matched': len(cands)})
         return jsonify({'results': cands, 'total': len(tickers),
                         'fetched': fetched, 'matched': len(cands)})
     except Exception as e:
@@ -7248,6 +7379,9 @@ def _run_goal_review(cfg: dict, client) -> dict:
     if head:
         head += '\n'
     _agent_notify(cfg, f'[{today}] 今晚操盤總結', head + plan)
+    # 逐日累積存歷史（不覆蓋舊的；保留上限見 _HISTORY_KEEP['evening']）
+    _history_log('evening', title=f'{today} 今晚操盤總結', ref=today,
+                 data={'status': status, 'candidates': candidates}, text=head + plan)
     return {'status': status, 'plan': plan}
 
 
@@ -7697,7 +7831,9 @@ def agent_analyze_api(code):
     else:
         prompt += '\n\n這不是我的持倉，請評估是否值得買進。'
 
+    nm = (data.get('name') or code) if isinstance(data, dict) else code
     def generate():
+        acc = []
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
@@ -7707,8 +7843,13 @@ def agent_analyze_api(code):
                 messages=[{'role': 'user', 'content': prompt}],
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
+                    clean = _strip_emoji(text)
+                    acc.append(clean)
+                    yield f"data: {json.dumps({'text': clean})}\n\n"
             yield 'data: [DONE]\n\n'
+            full = ''.join(acc).strip()
+            if full:
+                _history_log('agent_analyze', title=f'單檔分析 {nm}（{code}）', ref=code, text=full)
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
@@ -7731,8 +7872,10 @@ def agent_chat_api():
 
     # 把目前持倉＋已實現買賣帳本帶給 AI，讓對話看得到部位、能討論買賣（不再「偵測不到持股」）
     system = _AGENT_SYSTEM_PROMPT + '\n\n' + _goal_chat_context(cfg)
+    last_q = next((m.get('content', '') for m in reversed(msgs) if m.get('role') == 'user'), '')
 
     def generate():
+        acc = []
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
@@ -7742,8 +7885,14 @@ def agent_chat_api():
                 messages=msgs,
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
+                    clean = _strip_emoji(text)
+                    acc.append(clean)
+                    yield f"data: {json.dumps({'text': clean})}\n\n"
             yield 'data: [DONE]\n\n'
+            full = ''.join(acc).strip()
+            if full:
+                _history_log('agent_chat', title=(str(last_q)[:40] or 'AI Agent 對話'),
+                             text=f'問：{str(last_q)[:200]}\n\n答：{full}')
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'error': 'API Key 無效'})}\n\n"
         except Exception as e:
@@ -7819,8 +7968,10 @@ def agent_goal_chat_api():
         return jsonify({'error': '未設定 Claude API Key'}), 400
 
     system = _GOAL_CHAT_SYSTEM_PROMPT + '\n\n' + _goal_chat_context(cfg)
+    last_q = next((m.get('content', '') for m in reversed(msgs) if m.get('role') == 'user'), '')
 
     def generate():
+        acc = []
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
@@ -7830,8 +7981,14 @@ def agent_goal_chat_api():
                 messages=msgs,
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {json.dumps({'text': _strip_emoji(text)})}\n\n"
+                    clean = _strip_emoji(text)
+                    acc.append(clean)
+                    yield f"data: {json.dumps({'text': clean})}\n\n"
             yield 'data: [DONE]\n\n'
+            full = ''.join(acc).strip()
+            if full:
+                _history_log('goal_chat', title=(str(last_q)[:40] or '目標操盤對話'),
+                             text=f'問：{str(last_q)[:200]}\n\n答：{full}')
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'error': 'API Key 無效'})}\n\n"
         except Exception as e:
@@ -8942,7 +9099,9 @@ def ai_chat():
     elif scope_hint == 'market':
         system_prompt += '\n\n使用者偏好：優先以「全市場」方式篩選（scope=market）。'
 
+    last_q = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'), '')
     def generate():
+        acc = []
         try:
             client = anthropic.Anthropic(api_key=api_key)
             convo  = list(messages)
@@ -8962,7 +9121,9 @@ def ai_chat():
                 text_blocks = [b for b in resp.content if b.type == 'text']
                 for tb in text_blocks:
                     if tb.text:
-                        yield f"data: {json.dumps({'text': _strip_emoji(tb.text)})}\n\n"
+                        clean = _strip_emoji(tb.text)
+                        acc.append(clean)
+                        yield f"data: {json.dumps({'text': clean})}\n\n"
 
                 if resp.stop_reason != 'tool_use':
                     break
@@ -9001,6 +9162,12 @@ def ai_chat():
                 yield f"data: {json.dumps({'cards': uniq[:15]})}\n\n"
 
             yield "data: [DONE]\n\n"
+            full = ''.join(acc).strip()
+            if full:
+                cards = uniq[:15] if all_cards else []
+                _history_log('ai_chat', title=(str(last_q)[:40] or '智能首頁對話'),
+                             data={'cards': cards} if cards else None,
+                             text=f'問：{str(last_q)[:200]}\n\n答：{full}')
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'error': 'API Key 無效，請重新確認'})}\n\n"
         except Exception as e:
@@ -9018,6 +9185,11 @@ def backtest_page():
 @app.route('/goal')
 def goal_page():
     return render_template('goal.html')
+
+
+@app.route('/history')
+def history_page():
+    return render_template('history.html')
 
 
 @app.route('/api/backtest/signals')
@@ -9100,6 +9272,150 @@ def backtest_advice():
         return jsonify({'error': 'API Key 無效'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ── 回測報告長存（bt_reports 表）：回測免費但 AI 建議花 token，故存起來換頁可回看 ──
+@app.route('/api/backtest/report/save', methods=['POST'])
+def backtest_report_save():
+    """存／覆蓋某檔回測報告（結果＋AI建議）。前端在 AI 建議產生完成後呼叫。"""
+    body = request.get_json(force=True) or {}
+    code = _norm_code(body.get('code'))
+    if not code:
+        return jsonify({'error': 'code 不可為空'}), 400
+    name   = (body.get('name') or code).strip()
+    mode   = body.get('mode', 'run')
+    data   = json.dumps(body.get('data'), ensure_ascii=False) if body.get('data') is not None else None
+    advice = (body.get('advice') or '').strip()
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        conn.execute('INSERT OR REPLACE INTO bt_reports (code, name, mode, data, advice, updated) VALUES (?,?,?,?,?,?)',
+                     (code, name, mode, data, advice, time.time()))
+        conn.commit(); conn.close()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+@app.route('/api/backtest/report/<code>', methods=['GET'])
+def backtest_report_get(code):
+    """讀某檔已存回測報告（結果＋AI建議）。不存在則 found=False。"""
+    code = _norm_code(code)
+    row = None
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        row = conn.execute('SELECT name, mode, data, advice, updated FROM bt_reports WHERE code=?', (code,)).fetchone()
+        conn.close()
+    except Exception:
+        row = None
+    if not row:
+        return jsonify({'found': False})
+    return jsonify({
+        'found':   True, 'code': code, 'name': row[0], 'mode': row[1],
+        'data':    json.loads(row[2]) if row[2] else None,
+        'advice':  row[3] or '', 'updated': row[4],
+    })
+
+
+@app.route('/api/backtest/reports', methods=['GET'])
+def backtest_reports_list():
+    """列出所有已存回測報告（新到舊），供回測頁歷史清單切換。"""
+    out = []
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        rows = conn.execute('SELECT code, name, mode, updated FROM bt_reports ORDER BY updated DESC').fetchall()
+        conn.close()
+        out = [{'code': r[0], 'name': r[1], 'mode': r[2], 'updated': r[3]} for r in rows]
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route('/api/backtest/report/delete', methods=['POST'])
+def backtest_report_delete():
+    """刪除某檔已存回測報告。"""
+    code = _norm_code((request.get_json(force=True) or {}).get('code'))
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        conn.execute('DELETE FROM bt_reports WHERE code=?', (code,))
+        conn.commit(); conn.close()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+# ── 統一歷史紀錄通用路由（供 /history 集中頁查閱、刪除） ──
+_HISTORY_LABELS = {
+    'ai_chat': '智能首頁對話', 'agent_chat': 'AI Agent 對話', 'goal_chat': '目標操盤對話',
+    'agent_analyze': 'AI 單檔分析', 'wb_strategy': '工作台 AI 策略',
+    'evening': '今晚操盤總結', 'goal_review': '目標回顧',
+    'screener': '篩選器快照', 'bluechip': '績優股快照', 'perpetual': '永動機選股快照',
+}
+
+@app.route('/api/history/labels')
+def history_labels():
+    """功能別代碼→中文名，供前端篩選器顯示。"""
+    return jsonify(_HISTORY_LABELS)
+
+@app.route('/api/history/list')
+def history_list():
+    """列出歷史紀錄（可用 ?feature= 篩選、?ref= 篩選、?limit= 限筆數），新到舊。"""
+    feature = (request.args.get('feature', '') or '').strip()
+    ref     = (request.args.get('ref', '') or '').strip()
+    try:
+        limit = min(int(request.args.get('limit', 200)), 500)
+    except Exception:
+        limit = 200
+    where, params = [], []
+    if feature: where.append('feature=?'); params.append(feature)
+    if ref:     where.append('ref=?');     params.append(ref)
+    sql = 'SELECT id, feature, ref, title, created FROM history'
+    if where: sql += ' WHERE ' + ' AND '.join(where)
+    sql += ' ORDER BY id DESC LIMIT ?'; params.append(limit)
+    out = []
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+        out = [{'id': r[0], 'feature': r[1], 'feature_label': _HISTORY_LABELS.get(r[1], r[1]),
+                'ref': r[2], 'title': r[3], 'created': r[4]} for r in rows]
+    except Exception:
+        pass
+    return jsonify(out)
+
+@app.route('/api/history/<int:hid>')
+def history_get(hid):
+    """讀單筆歷史紀錄完整內容（含 data 與 text）。"""
+    row = None
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        row = conn.execute('SELECT feature, ref, title, data, text, created FROM history WHERE id=?', (hid,)).fetchone()
+        conn.close()
+    except Exception:
+        row = None
+    if not row:
+        return jsonify({'found': False})
+    return jsonify({
+        'found': True, 'id': hid, 'feature': row[0], 'feature_label': _HISTORY_LABELS.get(row[0], row[0]),
+        'ref': row[1], 'title': row[2],
+        'data': json.loads(row[3]) if row[3] else None, 'text': row[4] or '', 'created': row[5],
+    })
+
+@app.route('/api/history/delete', methods=['POST'])
+def history_delete():
+    """刪除單筆（id）或整類（feature）歷史紀錄。"""
+    body = request.get_json(force=True) or {}
+    hid     = body.get('id')
+    feature = (body.get('feature', '') or '').strip()
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        if hid is not None:
+            conn.execute('DELETE FROM history WHERE id=?', (hid,))
+        elif feature:
+            conn.execute('DELETE FROM history WHERE feature=?', (feature,))
+        conn.commit(); conn.close()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -9259,14 +9575,18 @@ def workbench_ai_strategy():
                     'type': ct, 'label': c['label'],
                     'params': {p['key']: p['default'] for p in c.get('params', [])},
                 })
-        return jsonify({
+        out = {
             'signal_codes': codes,
             'signal_name':  _signal_label(codes),
             'conditions':   chosen_conds,
             'exit':         exit_cfg,
             'strategy_name': data.get('strategy_name', ''),
             'reason':       _strip_emoji(data.get('reason', '')),
-        })
+        }
+        sname = out['strategy_name'] or out['signal_name']
+        _history_log('wb_strategy', title=f'AI 策略：{sname}', data=out,
+                     text=f"{sname}\n進場：{out['signal_name']}\n出場：{exit_name}\n理由：{out['reason']}")
+        return jsonify(out)
     except anthropic.AuthenticationError:
         return jsonify({'error': 'API Key 無效'}), 400
     except Exception as e:
