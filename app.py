@@ -5366,11 +5366,11 @@ def _fetch_predict_data(code: str) -> dict:
 
     try:
         stock = yf.Ticker(ticker_yf)
-        hist = stock.history(period='6mo', interval='1d')
+        hist = stock.history(period='2y', interval='1d')   # 2 年：確保 52 週(252日)位階與年線真的算得出來
         if hist.empty:
             ticker_yf = code + '.TWO'
             stock = yf.Ticker(ticker_yf)
-            hist = stock.history(period='6mo', interval='1d')
+            hist = stock.history(period='2y', interval='1d')
         if hist.empty:
             result['error'] = f'找不到股票代碼 {code}'
             return result
@@ -5410,11 +5410,13 @@ def _fetch_predict_data(code: str) -> dict:
             etf['expense']  = round(exp * 100, 3) if exp else None
             ytd             = info.get('ytdReturn')
             etf['ytd_return'] = round(safe_float(ytd) * 100, 2) if ytd is not None else None
-            # 近期績效用價格自行計算（一定有資料，不依賴 info）
+            # 近期績效用價格自行計算（一定有資料，不依賴 info）。
+            # 注意：主序列已改抓 2 年，故用「交易日偏移」回推各期起點，不能用 iloc[0]（那會變成 2 年報酬）。
             try:
-                if n >= 21:  etf['ret_1m'] = round((price / float(close.iloc[-21]) - 1) * 100, 2)
-                if n >= 63:  etf['ret_3m'] = round((price / float(close.iloc[-63]) - 1) * 100, 2)
-                etf['ret_6m'] = round((price / float(close.iloc[0]) - 1) * 100, 2)
+                if n >= 21:  etf['ret_1m'] = round((price / float(close.iloc[-21])  - 1) * 100, 2)
+                if n >= 63:  etf['ret_3m'] = round((price / float(close.iloc[-63])  - 1) * 100, 2)
+                if n >= 126: etf['ret_6m'] = round((price / float(close.iloc[-126]) - 1) * 100, 2)
+                if n >= 252: etf['ret_1y'] = round((price / float(close.iloc[-252]) - 1) * 100, 2)
             except Exception:
                 pass
             result['etf'] = etf
@@ -5427,8 +5429,10 @@ def _fetch_predict_data(code: str) -> dict:
         result['ma20'] = round(ma20, 2)
         result['ma60'] = round(ma60, 2)
 
-        # ── 月線扣抵（明日扣抵值 = 21 個交易日前的收盤價）──────
-        deduct_idx = max(0, n - 21)
+        # ── 月線扣抵 ──────────────────────────────────────────
+        # 今日 20MA = 最近 20 根收盤(iloc[-20..-1])的均值。算「明日」20MA 時，會把最舊的 iloc[-20]
+        # 剔除、補進明日收盤。故「明日扣抵價」= iloc[-20]（= n-20）。若明日收盤 > 此扣抵價，月線上揚。
+        deduct_idx = max(0, n - 20)
         deduct_price = float(close.iloc[deduct_idx])
         result['ma20_deduct_price'] = round(deduct_price, 2)
         result['ma20_trend'] = '上揚（支撐防護罩）' if price > deduct_price else '下彎（蓋頭壓力）'
@@ -6522,9 +6526,13 @@ def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
     code  = data.get('code', '')
     name  = data.get('name', code)
     price = data.get('price', 0)
+    mf    = data.get('mf_score') or {}
     score = _score_breakout(data)
+    smax  = mf.get('max', 5)            # 綜合評分滿分（15 因子加權，實際為 20；無 mf 時退回舊 5 分制）
+    grade = mf.get('grade', '')
+    gtxt  = f'（{grade} 級）' if grade else ''
 
-    lines.append(f"股票：{name}（{code}）  現價：{price} 元  起漲指標得分：{score}/5")
+    lines.append(f"股票：{name}（{code}）  現價：{price} 元  綜合評分：{score}/{smax}{gtxt}")
 
     if holding:
         buy_p  = holding.get('buy_price', 0)
@@ -6708,7 +6716,7 @@ def _run_agent_scan(cfg: dict) -> list:
                 'name':          data.get('name', code),
                 'price':         price,
                 'score':         mf.get('total', 0),
-                'max_score':     mf.get('max', 24),
+                'max_score':     mf.get('max', 20),
                 'grade':         grade,
                 'grade_pct':     mf.get('pct', 0),
                 'bias20':        data.get('bias20'),

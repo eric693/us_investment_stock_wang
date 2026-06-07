@@ -1,7 +1,7 @@
 /* ============================================================
  * 全站共用：個股詳情滑出面板（drawer）
  * 用法：openStockDetail(code, isTw)
- *   - 台股：整合 技術/起漲評分 + 籌碼(法人/融資/借券/當沖) + 新聞
+ *   - 台股：整合 技術/綜合評分 + 籌碼(法人/融資/借券/當沖) + 新聞
  *   - 美股：整合 基本面 + 新聞
  * 只需在頁面引入：<script src="/static/js/stock_detail.js"></script>
  * 不使用任何 emoji。
@@ -170,7 +170,7 @@
   function renderTwHead(d) {
     d = state.data || {};
     var mf = d.mf_score || {};
-    var grade = mf.grade ? '<span class="sd-grade" style="' + gradeColor(mf.grade) + '">起漲評分 ' + esc(mf.grade)
+    var grade = mf.grade ? '<span class="sd-grade" style="' + gradeColor(mf.grade) + '">綜合評分 ' + esc(mf.grade)
       + ' · ' + num(mf.pct, '?') + '%</span>' : '';
     var b = twTomorrowBias(d);
     var bias = b ? '<span class="sd-grade" style="' + b.style + ';margin-left:6px">明日傾向 ' + b.label + '（' + b.pts + '/5）</span>' : '';
@@ -350,7 +350,7 @@
     var h = '';
     var mf = d.mf_score || {};
     if (mf.breakdown && mf.breakdown.length) {
-      h += '<div class="sd-sec">起漲評分明細（' + num(mf.total) + '/' + num(mf.max) + '）</div>';
+      h += '<div class="sd-sec">綜合評分明細（' + num(mf.total) + '/' + num(mf.max) + '）</div>';
       h += mf.breakdown.map(function (f) {
         return '<div class="sd-fac"><span class="dot ' + (f.pass ? 'ok' : 'no') + '"></span>'
           + '<span class="fl">' + esc(f.name || f.label || '') + '</span><span class="fd">' + esc(f.detail || '') + '</span></div>';
