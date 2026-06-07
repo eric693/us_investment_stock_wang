@@ -111,7 +111,7 @@
   <div>
     <div class="card">
       <div class="card-title">低位階選股設定</div>
-      <div class="card-sub">找出位階偏低／高點回檔後、且開始出現起漲訊號的台股。僅限台股（需籌碼與位階資料）。</div>
+      <div class="card-sub">找出位階偏低／高點回檔後、且開始出現起漲動能的台股。僅限台股（需籌碼與位階資料）。</div>
 
       <div class="section-label">選擇股票池（可複選產業）</div>
       <div class="universe-grid" id="universeCats"></div>
@@ -130,7 +130,7 @@
         <span style="display:flex;align-items:center;gap:5px;"><input class="inp inp-sm num" type="number" id="optPosMax" value="40" min="5" max="90" step="5"><span>%</span></span></div>
       <div class="opt-row"><span>或 距高點回檔（≥）</span>
         <span style="display:flex;align-items:center;gap:5px;"><input class="inp inp-sm num" type="number" id="optDrawdown" value="0" min="0" max="80" step="5"><span>%</span></span></div>
-      <div class="opt-row"><span>最低起漲分數（0–5）</span>
+      <div class="opt-row"><span>最低起漲動能分（0–5）</span>
         <span style="display:flex;align-items:center;gap:5px;"><input class="inp inp-sm num" type="number" id="optMinRise" value="2" min="0" max="5" step="1"></span></div>
       <div class="opt-row"><label><input type="checkbox" id="optQuality"> 績優股基本面過濾（剔除地雷）</label></div>
       <div class="opt-row"><label><input type="checkbox" id="optChip"> 籌碼過濾（三大法人買超）</label></div>
@@ -142,7 +142,7 @@
       <div class="card-title">永動機選股邏輯</div>
       <div class="method">
         <div><span class="step-n">1</span><b>找低位階</b>（相對歷史底部）：位階 = 現價在<b>近 5 年</b>高低區間的位置；參考<b>年線之下</b>、<b>週KD 低檔</b>。位階越低、回本越容易。</div>
-        <div style="margin-top:7px;"><span class="step-n">2</span>在低位階股裡找<b>起漲訊號</b>：站上月線、月線翻揚、帶量、MACD 動能轉強、KD 黃金交叉（5 項計分）；可再加籌碼（法人買超）確認主力進場。</div>
+        <div style="margin-top:7px;"><span class="step-n">2</span>在低位階股裡找<b>起漲動能</b>（5 項計分）：站上月線、月線翻揚、帶量、MACD 動能轉強、KD 黃金交叉；可再加籌碼（法人買超）確認主力進場。<br><span style="color:var(--text-dim);font-size:0.9em;">註：此處的「起漲動能」量的是右側轉強動能，與 AI 預測報告裡的「初升段防禦檢查」（乖離／反彈／當沖等不過熱檢查）是兩回事，不會互相否定。</span></div>
         <div style="margin-top:7px;"><span class="step-n">3</span>買入後加入監測：<b>跌破月線或停損出場</b>、停利分批了結，釋出資金再買下一檔低位階 —— 資金循環的永動機。</div>
         <div class="r-sub" style="margin-top:8px;">紀律（參考春燕來了）：不追高、低位佈局；停損 -10% 可接受、<b>-20% 為極限務必出場</b>。本頁為程式輔助判斷，非投資建議。</div>
       </div>
@@ -228,7 +228,7 @@ async function runScreen() {
   document.getElementById('resultArea').innerHTML = '';
   const wrap = document.getElementById('progressWrap'), fill = document.getElementById('progressFill'), txt = document.getElementById('progressTxt');
   wrap.style.display = 'block'; let pct = 4; fill.style.width = '4%';
-  txt.textContent = `掃描位階與起漲訊號中…（${_selectedTickers.size} 檔）`;
+  txt.textContent = `掃描位階與起漲動能中…（${_selectedTickers.size} 檔）`;
   clearInterval(_fakeTimer); _fakeTimer = setInterval(() => { pct = Math.min(pct + 4, 92); fill.style.width = pct + '%'; }, 600);
   try {
     const data = await getJson('/api/perpetual/screen', {
@@ -257,9 +257,9 @@ function renderScreen(data) {
     + `<span class="summary-pill">符合候選 <b>${data.matched}</b></span>`;
   const rows = data.results || [];
   const area = document.getElementById('resultArea');
-  if (!rows.length) { area.innerHTML = '<div class="empty-hint">沒有符合的低位階候選。<br>可放寬「位階上限」或調低「最低起漲分數」。</div>'; return; }
+  if (!rows.length) { area.innerHTML = '<div class="empty-hint">沒有符合的低位階候選。<br>可放寬「位階上限」或調低「最低起漲動能分」。</div>'; return; }
   let h = '<div class="result-table-wrap"><table class="result-table"><thead><tr>'
-    + '<th>股票</th><th>現價</th><th>位階</th><th>距高點</th><th>起漲<div class="r-sub">分數</div></th><th>月線</th><th>量比</th><th></th>'
+    + '<th>股票</th><th>現價</th><th>位階</th><th>距高點</th><th>起漲動能<div class="r-sub">分數</div></th><th>月線</th><th>量比</th><th></th>'
     + '</tr></thead><tbody>';
   rows.forEach(r => {
     h += `<tr>

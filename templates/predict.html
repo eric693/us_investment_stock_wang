@@ -373,6 +373,21 @@
       <button class="analyze-btn" id="analyzeBtn" onclick="analyzeStock()">
         取得數據並分析
       </button>
+      <button class="analyze-btn" id="reanalyzeBtn" onclick="analyzeStock(true)"
+              style="display:none;margin-top:8px;background:#13233a;color:var(--accent);border:1px solid var(--accent);">
+        重新分析（會花 token）
+      </button>
+      <div id="savedHint" style="display:none;font-size:0.65rem;color:#26d96b;margin-top:6px;line-height:1.4;"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>已存報告</span>
+        <span id="reportCount" style="font-size:0.6rem;color:var(--text-dim);"></span>
+      </div>
+      <div id="reportHistory" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;">
+        <div style="font-size:0.65rem;color:var(--text-dim);">尚無存檔</div>
+      </div>
     </div>
 
     <div class="sidebar-section">
@@ -470,12 +485,17 @@ window.onload = () => {
   document.getElementById('apiKeyInput').addEventListener('change', () => {
     localStorage.setItem('claude_api_key', document.getElementById('apiKeyInput').value);
   });
-  // 由詳情面板「AI 明日預測」帶 ?code= 進來時，自動填代碼並開始分析（需已設定 API Key）
+  refreshHistory();
+  // 由詳情面板「AI 明日預測」帶 ?code= 進來時：先試讀存檔（不花 token），沒存檔才在有 Key 時分析
   const qcode = new URLSearchParams(location.search).get('code');
   if (qcode) {
-    setStock(qcode.toUpperCase());
-    if (getApiKey()) analyzeStock();
-    else document.getElementById('stockInput').scrollIntoView();
+    const code = qcode.toUpperCase();
+    setStock(code);
+    loadSavedByCode(code).then(found => {
+      if (found) return;
+      if (getApiKey()) analyzeStock();
+      else document.getElementById('stockInput').scrollIntoView();
+    });
   }
 };
 
@@ -637,13 +657,23 @@ window.addEventListener('paste', (e) => {
 })();
 
 // ── Analyze stock ─────────────────────────────────────────────────────────
-async function analyzeStock() {
-  const key  = getApiKey();
+async function analyzeStock(force = false) {
   const code = getStockCode();
-  if (!key)  { alert('請先輸入 Claude API Key'); return; }
   if (!code) { alert('請輸入台股代碼'); return; }
 
+  // 非強制時先試讀存檔：有就直接顯示舊報告，完全不呼叫 AI（省 token）
+  if (!force) {
+    const found = await loadSavedByCode(code);
+    if (found) return;
+  }
+
+  const key = getApiKey();
+  if (!key)  { alert('請先輸入 Claude API Key'); return; }
+
   currentStockCode = code;
+  clearChat();
+  document.getElementById('savedHint').style.display = 'none';
+  document.getElementById('reanalyzeBtn').style.display = 'none';
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true;
   btn.textContent = '取得數據中…';
@@ -672,6 +702,104 @@ async function analyzeStock() {
     btn.disabled = false;
     btn.textContent = '取得數據並分析';
   }
+}
+
+// ── 報告存檔／讀檔／歷史 ─────────────────────────────────────────────────────
+function clearChat() {
+  const wrap = document.getElementById('chatMessages');
+  // 保留 welcome 節點但清掉舊訊息
+  wrap.querySelectorAll('.msg').forEach(n => n.remove());
+}
+
+// 把目前對話（含已渲染 HTML 與 messages、數據）存到伺服器
+async function saveReport() {
+  if (!currentStockCode || !stockData) return;
+  const html = document.getElementById('chatMessages').innerHTML;
+  try {
+    await fetch('/api/predict/report/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code:     currentStockCode,
+        name:     stockData.name || currentStockCode,
+        data:     stockData,
+        messages: messages,
+        html:     html,
+      }),
+    });
+    refreshHistory();
+  } catch(_) {}
+}
+
+// 讀某代號存檔並渲染；回傳是否找到
+async function loadSavedByCode(code) {
+  try {
+    const r = await fetch(`/api/predict/report/${code}`);
+    const s = await r.json();
+    if (!s.found) return false;
+    renderSavedReport(s);
+    return true;
+  } catch(_) { return false; }
+}
+
+function renderSavedReport(s) {
+  currentStockCode = s.code;
+  stockData = s.data;
+  messages  = s.messages || [];
+  setStock(s.code);
+  if (s.data) renderMetrics(s.data);
+  hideWelcome();
+  const wrap = document.getElementById('chatMessages');
+  clearChat();
+  // 把存檔的訊息 HTML 接回（移除可能殘留的 welcome）
+  const tmp = document.createElement('div');
+  tmp.innerHTML = s.html || '';
+  tmp.querySelectorAll('#welcomeScreen, .chat-welcome').forEach(n => n.remove());
+  tmp.querySelectorAll('.msg').forEach(n => wrap.appendChild(n));
+  scrollToBottom();
+  setStatus('已載入存檔', 'ready');
+  const d = s.updated ? new Date(s.updated * 1000) : null;
+  const hint = document.getElementById('savedHint');
+  hint.style.display = 'block';
+  hint.textContent = '顯示存檔報告' + (d ? '（' + fmtTime(d) + '）' : '') + '，未花 token。';
+  document.getElementById('reanalyzeBtn').style.display = 'block';
+}
+
+async function refreshHistory() {
+  let list = [];
+  try { list = await (await fetch('/api/predict/reports')).json(); } catch(_) {}
+  const box = document.getElementById('reportHistory');
+  document.getElementById('reportCount').textContent = list.length ? list.length + ' 檔' : '';
+  if (!list.length) { box.innerHTML = '<div style="font-size:0.65rem;color:var(--text-dim);">尚無存檔</div>'; return; }
+  box.innerHTML = list.map(it => {
+    const d = it.updated ? new Date(it.updated * 1000) : null;
+    const nm = (it.name || it.code).replace(/</g, '&lt;');
+    return `<div class="quick-stock" style="display:flex;justify-content:space-between;align-items:center;gap:6px;"
+                 onclick="loadSavedByCode('${it.code}')" title="點擊載入存檔（不花 token）">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.code} ${nm}</span>
+      <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <span style="font-size:0.55rem;color:var(--text-dim);">${d ? fmtTime(d) : ''}</span>
+        <span onclick="event.stopPropagation();deleteReport('${it.code}')"
+              style="color:#ff6b6b;cursor:pointer;padding:0 2px;" title="刪除">×</span>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+async function deleteReport(code) {
+  if (!confirm('刪除 ' + code + ' 的存檔報告？')) return;
+  try {
+    await fetch('/api/predict/report/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+  } catch(_) {}
+  refreshHistory();
+}
+
+function fmtTime(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ── Render sidebar metrics ─────────────────────────────────────────────────
@@ -735,7 +863,12 @@ async function sendAnalysis(code, data) {
       }),
     });
 
-    await processStream(resp, bubble, userText);
+    const fullText = await processStream(resp, bubble, userText);
+    if (fullText) {
+      messages.push({ role: 'assistant', content: fullText });
+      await saveReport();   // 報告產出後即存檔，查別檔回來也還在
+      document.getElementById('reanalyzeBtn').style.display = 'block';
+    }
   } catch(e) {
     bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
   } finally {
@@ -802,6 +935,7 @@ async function sendMessage() {
     // （用物件參照，不受 slice 重新索引影響）
     if (imgs.length) userMsg.content = (text || '請分析這張截圖')
       + `\n[已上傳 ${imgs.length} 張截圖]`;
+    await saveReport();   // 後續對話也一併存檔，下次回來對話不消失
   } catch(e) {
     bubble.innerHTML = `<span style="color:#ff4e4e">錯誤：${e.message}</span>`;
   } finally {
