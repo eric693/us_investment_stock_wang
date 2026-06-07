@@ -5374,6 +5374,8 @@ def _fetch_predict_data(code: str) -> dict:
         if hist.empty:
             result['error'] = f'找不到股票代碼 {code}'
             return result
+        result['ticker'] = ticker_yf   # 上櫃股 .TW 抓不到會退到 .TWO，這裡同步回填正確市場別
+        result['market'] = 'TWO' if ticker_yf.endswith('.TWO') else 'TW'
 
         close = hist['Close']
         high  = hist['High']
