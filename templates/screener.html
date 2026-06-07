@@ -362,6 +362,7 @@ const COND_DEFS = {
   // ── 布林帶 ──
   bb_squeeze:               { label:'布林帶收窄（即將爆發）',    badge:'tech', params:[{key:'threshold',label:'帶寬% ≤',default:5,type:'number'}] },
   bb_breakout_up:           { label:'股價突破布林上軌',           badge:'tech', params:[] },
+  bb_true_breakout:         { label:'布林真突破（窄通道+帶量+RSI確認）', badge:'tech', params:[{key:'squeeze_pct',label:'前期帶寬% ≤',default:6,type:'number'},{key:'squeeze_days',label:'蓄勢回看天數',default:20,type:'number'},{key:'vol_ratio',label:'量比 ≥',default:1.5,type:'number'},{key:'rsi_period',label:'RSI週期',default:14,type:'number'},{key:'rsi_threshold',label:'RSI >',default:50,type:'number'}] },
   // ── 成交量 ──
   volume_nd_high:           { label:'成交量創N日新高',            badge:'tech', params:[{key:'days',label:'天數',default:20,type:'number'}] },
   obv_rising:               { label:'OBV能量潮上升',             badge:'tech', params:[{key:'trend_days',label:'趨勢天數',default:10,type:'number'}] },
@@ -552,7 +553,7 @@ const COND_CATS = {
   'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_low_golden_cross','kd_death_cross'],
   'MACD':   ['macd_bullish','macd_golden_cross','macd_death_cross'],
   'RSI':    ['rsi_above','rsi_below','rsi_cross_above','rsi_cross_below'],
-  '布林':   ['price_near_bb_lower','price_near_bb_upper','bb_squeeze','bb_breakout_up','bb_oversold'],
+  '布林':   ['price_near_bb_lower','price_near_bb_upper','bb_squeeze','bb_breakout_up','bb_true_breakout','bb_oversold'],
   '量能':   ['volume_ratio_above','vol_5_above_20','volume_shrinking','volume_nd_high','obv_rising','vol_up_candle','vol_down_candle','big_vol_red','vol_price_divergence_up','vol_price_divergence_down','price_consolidation_break'],
   '價格':   ['price_change_above','price_nd_high','price_from_high_below','price_range','consecutive_up','consecutive_down','price_change_nd','price_change_nd_down','price_gap_up','high_vol_breakout','price_near_52w_low','close_near_high','limit_up','limit_down','outperform_index'],
   '指標':   ['william_r_oversold','william_r_cross_above','cci_oversold','cci_cross_above','adx_strong_trend','bias_low','bias_high','psy_low','psy_high','atr_expand','mtm_cross_above','mtm_positive'],

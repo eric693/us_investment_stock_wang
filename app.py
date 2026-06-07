@@ -3787,6 +3787,38 @@ def _eval_condition(hist, info, cond, extra=None):
             bbu = safe_float(bb_u.iloc[-1])
             return price >= bbu, f'股價 {price:.2f} ≥ 布林上軌 {bbu:.2f}'
 
+        elif ctype == 'bb_true_breakout':
+            # 收盤價突破布林上軌，且須同時滿足：先前布林帶收窄（盤整蓄勢）、
+            # 帶量、RSI > 門檻（動能確認），用以過濾假突破。
+            squeeze_pct = float(params.get('squeeze_pct', 6))
+            squeeze_days = int(params.get('squeeze_days', 20))
+            vol_ratio    = float(params.get('vol_ratio', 1.5))
+            rsi_period   = int(params.get('rsi_period', 14))
+            rsi_thr      = float(params.get('rsi_threshold', 50))
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbu = safe_float(bb_u.iloc[-1])
+            # 帶寬序列（%），檢查突破前是否曾收窄
+            bw_series = (bb_u - bb_l) / bb_m.replace(0, float('nan')) * 100
+            bw_window = bw_series.iloc[-(squeeze_days + 1):-1].dropna()
+            min_bw = safe_float(bw_window.min()) if len(bw_window) else 999
+            # 量比
+            avg_vol  = safe_float(vol.rolling(squeeze_days, min_periods=1).mean().iloc[-1])
+            curr_vol = safe_float(vol.iloc[-1])
+            vr = curr_vol / avg_vol if avg_vol > 0 else 0
+            # RSI 動能
+            rv = safe_float(calc_rsi(close, rsi_period).iloc[-1])
+
+            price_ok   = price >= bbu
+            squeeze_ok = min_bw <= squeeze_pct
+            vol_ok     = vr >= vol_ratio
+            rsi_ok     = rv > rsi_thr
+            passed = price_ok and squeeze_ok and vol_ok and rsi_ok
+            return (passed,
+                    f'收盤{price:.2f}{"≥" if price_ok else "<"}上軌{bbu:.2f}；'
+                    f'前期最窄帶寬{min_bw:.1f}%{"≤" if squeeze_ok else ">"}{squeeze_pct}%；'
+                    f'量比{vr:.2f}x{"≥" if vol_ok else "<"}{vol_ratio}x；'
+                    f'RSI({rsi_period}){rv:.0f}{">" if rsi_ok else "≤"}{rsi_thr}')
+
         # ── 成交量 ─────────────────────────────────────────
         elif ctype == 'volume_nd_high':
             days = int(params.get('days', 20))
@@ -8141,6 +8173,7 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 - price_consolidation_break 突破盤整區
 - bb_squeeze 布林通道收口（變盤前）
 - bb_breakout_up 突破布林上軌
+- bb_true_breakout 布林真突破（突破上軌＋前期窄通道蓄勢＋帶量＋RSI>門檻，過濾假突破）
 - price_near_bb_lower 接近布林下軌（低接）
 - bb_oversold 布林超賣
 
@@ -8451,7 +8484,7 @@ def _bt_indicators(hist):
     openp = hist['Open'];  vol  = hist['Volume']
     k, d = calc_kd(high, low, close)
     macd, macd_sig, _ = calc_macd(close)
-    bb_up, _bb_mid, bb_low = calc_bollinger(close)
+    bb_up, bb_mid, bb_low = calc_bollinger(close)
     return {
         'open': openp, 'close': close, 'high': high, 'low': low, 'vol': vol,
         'ma5':  close.rolling(5,  min_periods=1).mean(),
@@ -8461,7 +8494,7 @@ def _bt_indicators(hist):
         'vma5':  vol.rolling(5,  min_periods=1).mean(),
         'vma20': vol.rolling(20, min_periods=1).mean(),
         'k': k, 'd': d, 'macd': macd, 'macd_sig': macd_sig,
-        'rsi': calc_rsi(close), 'bb_up': bb_up, 'bb_low': bb_low,
+        'rsi': calc_rsi(close), 'bb_up': bb_up, 'bb_mid': bb_mid, 'bb_low': bb_low,
     }
 
 
@@ -8495,6 +8528,14 @@ def _sig_high_vol_breakout(c):
     return (c['close'] > prior_high) & (c['vol'] > 1.5 * c['vma20'])
 def _sig_vol5_cross20(c):  return _cross_up(c['vma5'], c['vma20'])
 def _sig_bb_break_up(c):   return _cross_up(c['close'], c['bb_up'])
+def _sig_bb_true_breakout(c):
+    # 收盤上穿布林上軌，且：前期帶寬曾收窄(≤6%)、帶量(>1.5倍均量)、RSI>50
+    bw = (c['bb_up'] - c['bb_low']) / c['bb_mid'].replace(0, np.nan) * 100
+    min_bw = bw.rolling(20).min().shift(1)   # 突破前 20 日最窄帶寬（不含當日）
+    return (_cross_up(c['close'], c['bb_up'])
+            & (min_bw <= 6)
+            & (c['vol'] > 1.5 * c['vma20'])
+            & (c['rsi'] > 50))
 def _sig_bb_os_recover(c): return (c['close'].shift(1) <= c['bb_low'].shift(1)) & (c['close'] > c['bb_low'])
 
 def _sig_hammer(c):
@@ -8538,6 +8579,7 @@ _SIGNAL_DEFS = [
         ('high_vol_breakout', '帶量突破近 20 日新高',            _sig_high_vol_breakout),
         ('vol5_cross20',      '量能轉強（5 日均量站上 20 日）',   _sig_vol5_cross20),
         ('bb_break_up',       '突破布林上軌',                    _sig_bb_break_up),
+        ('bb_true_breakout',  '布林真突破（窄通道+帶量+RSI>50）', _sig_bb_true_breakout),
         ('bb_os_recover',     '布林下軌低接反彈',                _sig_bb_os_recover),
     ]),
     ('K 線型態', [
