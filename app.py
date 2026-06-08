@@ -48,31 +48,37 @@ _tw_name_cache: dict[str, str] = {}
 _tw_name_lock  = threading.Lock()
 
 def _load_tw_names():
-    """Fetch Chinese names from TWSE API and cache them."""
+    """抓取全上市櫃中文名稱並快取。
+    註：openapi.twse.com.tw 會回安全擋頁（非 JSON），改用實際可用來源：
+      上市 www.twse.com.tw rwd JSON、上櫃 www.tpex.org.tw openapi。"""
     global _tw_name_cache
+    import urllib.request
+    def _get_json(url):
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        return json.loads(urllib.request.urlopen(req, timeout=15).read())
+
+    result = {}
+    # 上市（TWSE）：data 列為 [證券代號, 證券名稱, …]
     try:
-        import urllib.request
-        urls = [
-            'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',
-            'https://openapi.twse.com.tw/v1/exchangeReport/TPEX_STOCK_DAY_ALL',
-        ]
-        result = {}
-        for url in urls:
-            try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                data = json.loads(urllib.request.urlopen(req, timeout=10).read())
-                for item in data:
-                    code = item.get('Code') or item.get('SecuritiesCompanyCode', '')
-                    name = item.get('Name') or item.get('CompanyName', '')
-                    if code and name:
-                        result[code] = name
-            except Exception:
-                pass
-        if result:
-            with _tw_name_lock:
-                _tw_name_cache = result
+        d = _get_json('https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json')
+        for row in (d.get('data') or []):
+            if len(row) >= 2 and row[0] and row[1]:
+                result[str(row[0]).strip()] = str(row[1]).strip()
     except Exception:
         pass
+    # 上櫃（TPEX）：{SecuritiesCompanyCode, CompanyName, …}
+    try:
+        for item in _get_json('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes'):
+            code = (item.get('SecuritiesCompanyCode') or item.get('Code') or '').strip()
+            name = (item.get('CompanyName') or item.get('Name') or '').strip()
+            if code and name:
+                result[code] = name
+    except Exception:
+        pass
+
+    if result:
+        with _tw_name_lock:
+            _tw_name_cache = result
 
 threading.Thread(target=_load_tw_names, daemon=True).start()
 
@@ -6046,6 +6052,635 @@ def backtest_run():
         return jsonify({'error': '請輸入股票代碼'}), 400
     result = _run_backtest(code, signal, period)
     return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  低位階永動機 — 春燕來了 低位階長期永動機投資法（台股）
+#  以五年區間計算股價位階，鎖定相對歷史底部；判斷是否在年線之下、週 KD 是否低檔，
+#  給出 撿壘 / 續抱 / 減碼 / 出場 訊號，並對監測標的做 -20% 硬停損提醒。
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _perpetual_core(ticker, hist, entry_price=None, is_tw=True):
+    """以五年日線資料計算位階與永動機訊號。hist 為 5y 日線 DataFrame。"""
+    close = hist['Close'].dropna()
+    n     = len(close)
+    price = safe_float(close.iloc[-1])
+    low5  = safe_float(hist['Low'].min())
+    high5 = safe_float(hist['High'].max())
+    rng   = high5 - low5
+
+    # 位階 =（現價 − 五年低點）/（五年高點 − 五年低點），越低越接近底部
+    position = round((price - low5) / rng * 100, 1) if rng > 0 else 50.0
+    position = min(100.0, max(0.0, position))
+
+    # 年線（MA240）
+    ma240      = safe_float(close.rolling(min(240, n), min_periods=1).mean().iloc[-1])
+    below_year = price < ma240
+    year_bias  = round((price / ma240 - 1) * 100, 1) if ma240 > 0 else 0.0
+
+    # 週 KD（由日線重採樣為週線，避免額外抓取）
+    wk_k = wk_d = 50.0
+    wk_low = wk_golden = False
+    try:
+        wh = hist.resample('W').agg({'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+        if len(wh) >= 3:
+            k, d = calc_kd(wh['High'], wh['Low'], wh['Close'])
+            wk_k = round(safe_float(k.iloc[-1]), 1)
+            wk_d = round(safe_float(d.iloc[-1]), 1)
+            wk_low    = wk_k < 35
+            wk_golden = (safe_float(k.iloc[-2]) <= safe_float(d.iloc[-2])) and (wk_k > wk_d)
+    except Exception:
+        pass
+
+    # 從五年低點反彈幅度（仍處低檔初升段）
+    bounce = round((price / low5 - 1) * 100, 1) if low5 > 0 else 0.0
+
+    code = tw_display(ticker) if is_tw else ticker
+    name = tw_cn_name(ticker, code) if is_tw else code
+
+    # 停損狀態：-10% 警戒、-20% 硬停損
+    pnl = round((price / entry_price - 1) * 100, 1) if entry_price else None
+    stop_status = 'ok'
+    if entry_price:
+        if   pnl <= -20: stop_status = 'hard'
+        elif pnl <= -10: stop_status = 'warn'
+
+    reasons = []
+    if stop_status == 'hard':
+        signal, sclass = '出場', 'exit'
+        reasons.append(f'跌破進場價 {pnl}%，觸發 -20% 硬停損，建議出場')
+    else:
+        if position < 35 and below_year and (wk_low or wk_golden):
+            signal, sclass = '撿壘', 'buy'
+            reasons.append(f'位階 {position}（五年區間相對低檔），股價在年線之下')
+            if wk_golden:
+                reasons.append(f'週 KD 低檔金叉（K={wk_k} / D={wk_d}），起漲訊號浮現')
+            elif wk_low:
+                reasons.append(f'週 KD 低檔（K={wk_k}），打底蓄勢')
+        elif position < 35:
+            signal, sclass = '觀望', 'wait'
+            reasons.append(f'位階低（{position}）但尚無起漲訊號（年線之上或週 KD 未低檔），續打底')
+        elif position < 58:
+            signal, sclass = '續抱', 'hold'
+            reasons.append(f'位階 {position}，初升段，趨勢轉強可續抱')
+        elif position < 80:
+            signal, sclass = '減碼', 'reduce'
+            reasons.append(f'位階偏高（{position}），逢高分批減碼鎖利')
+        else:
+            signal, sclass = '出場', 'exit'
+            reasons.append(f'位階過高（{position}），五年相對高檔，建議出場')
+        if stop_status == 'warn':
+            reasons.append(f'目前 {pnl}%，已逾 -10% 警戒區，留意 -20% 硬停損')
+
+    return {
+        'ticker': ticker, 'code': code, 'name': name, 'isTw': is_tw,
+        'price': round(price, 2),
+        'low5': round(low5, 2), 'high5': round(high5, 2),
+        'position': position,
+        'ma240': round(ma240, 2), 'belowYear': below_year, 'yearBias': year_bias,
+        'wkK': wk_k, 'wkD': wk_d, 'wkLow': wk_low, 'wkGolden': wk_golden,
+        'bounce': bounce,
+        'signal': signal, 'signalClass': sclass,
+        'reasons': reasons,
+        'entryPrice': round(entry_price, 2) if entry_price else None,
+        'pnlPct': pnl,
+        'stopStatus': stop_status,
+        'stopHardPrice': round(entry_price * 0.8, 2) if entry_price else None,
+    }
+
+
+def _perpetual_fetch(ticker, entry_price=None, is_tw=True):
+    """抓取 5 年日線並回傳位階分析；失敗回 None。"""
+    try:
+        stock = yf.Ticker(ticker)
+        hist  = stock.history(period='5y')
+        if hist.empty or len(hist) < 60:
+            return None
+        if safe_float(hist['Close'].dropna().iloc[-1]) <= 0:
+            return None
+        return _perpetual_core(ticker, hist, entry_price, is_tw)
+    except Exception:
+        return None
+
+
+@app.route('/perpetual')
+def perpetual_page():
+    from flask import make_response
+    resp = make_response(render_template('perpetual.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
+
+
+@app.route('/api/perpetual/universe')
+def perpetual_universe():
+    return jsonify({'tw': TW_SCREENER_UNIVERSE, 'us': US_SCREENER_UNIVERSE})
+
+
+@app.route('/api/perpetual/analyze', methods=['POST'])
+def perpetual_analyze():
+    data  = request.get_json(force=True) or {}
+    raw   = str(data.get('code', '')).strip()
+    is_tw = bool(data.get('isTw', True))
+    entry = safe_float(data.get('entry', 0)) or None
+    if not raw:
+        return jsonify({'error': '請輸入股票代碼'}), 400
+    ticker = tw_normalize(raw) if is_tw else raw.upper()
+    res = _perpetual_fetch(ticker, entry, is_tw)
+    if not res:
+        return jsonify({'error': '查無資料或上市未滿一定期間，請改用其他代碼'}), 404
+    return jsonify(res)
+
+
+@app.route('/api/perpetual/scan', methods=['POST'])
+def perpetual_scan():
+    data    = request.get_json(force=True) or {}
+    is_tw   = bool(data.get('isTw', True))
+    sectors = data.get('sectors', [])
+    universe = TW_SCREENER_UNIVERSE if is_tw else US_SCREENER_UNIVERSE
+
+    codes = []
+    if sectors:
+        for s in sectors:
+            codes.extend(universe.get(s, []))
+    else:
+        for lst in universe.values():
+            codes.extend(lst)
+    codes = list(dict.fromkeys(codes))  # 去重保序
+    if not codes:
+        return jsonify({'error': '請選擇要掃描的族群'}), 400
+    if len(codes) > 150:
+        codes = codes[:150]
+
+    tickers = [tw_normalize(c) if is_tw else c.upper() for c in codes]
+    results = []
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(_perpetual_fetch, t, None, is_tw): t for t in tickers}
+        for f in as_completed(futs):
+            try:
+                r = f.result()
+                # 只保留低位階（<35）且有起漲跡象的標的
+                if r and r['position'] < 35 and (r['belowYear'] and (r['wkLow'] or r['wkGolden'])):
+                    results.append(r)
+            except Exception:
+                pass
+
+    results.sort(key=lambda x: x['position'])
+    return jsonify({'results': results, 'total': len(tickers), 'matched': len(results)})
+
+
+# ── 全上市櫃掃描（背景執行 + 進度輪詢，結果寫檔供多 worker 共享）─────────────
+PP_SCAN_FILE = os.path.join(os.path.dirname(__file__), 'perpetual_scan.json')
+_pp_scan_lock = threading.Lock()
+
+
+def _pp_is_stock_or_etf(code: str) -> bool:
+    """全上市櫃普通股 + ETF；排除權證（6 碼）、特別股（含字母）。"""
+    if not code.isdigit():
+        return False
+    if len(code) == 4 and code[0] != '0':      # 普通股 1101~9962、TDR 91xx
+        return True
+    if code.startswith('00') and 4 <= len(code) <= 6:  # ETF 0050 / 00878 …
+        return True
+    return False
+
+
+def _pp_full_codes() -> list:
+    with _tw_name_lock:
+        codes = [c for c in _tw_name_cache.keys() if _pp_is_stock_or_etf(c)]
+    return sorted(set(codes))
+
+
+def _pp_scan_load() -> dict:
+    try:
+        if os.path.exists(PP_SCAN_FILE):
+            with open(PP_SCAN_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {'running': False, 'total': 0, 'done': 0, 'matched': 0,
+            'results': [], 'started': '', 'finished': ''}
+
+
+def _pp_scan_save(st: dict):
+    with open(PP_SCAN_FILE, 'w', encoding='utf-8') as f:
+        json.dump(st, f, ensure_ascii=False)
+
+
+def _run_full_scan():
+    """背景：批次下載全上市櫃 5 年資料，篩出低位階起漲標的，邊跑邊更新進度檔。"""
+    codes   = _pp_full_codes()
+    tickers = [tw_normalize(c) for c in codes]
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    with _pp_scan_lock:
+        _pp_scan_save({'running': True, 'total': len(tickers), 'done': 0,
+                       'matched': 0, 'results': [], 'started': now_str, 'finished': ''})
+
+    results = []
+    CHUNK = 60
+    for i in range(0, len(tickers), CHUNK):
+        batch = tickers[i:i + CHUNK]
+        try:
+            data = yf.download(batch, period='5y', group_by='ticker',
+                               threads=True, progress=False, auto_adjust=True)
+        except Exception:
+            data = None
+        for t in batch:
+            try:
+                if data is None:
+                    continue
+                hist = data[t] if (len(batch) > 1 and t in data.columns.get_level_values(0)) else data
+                hist = hist.dropna(how='all')
+                if hist.empty or len(hist) < 60:
+                    continue
+                r = _perpetual_core(t, hist, None, True)
+                if r['position'] < 35 and r['belowYear'] and (r['wkLow'] or r['wkGolden']):
+                    results.append(r)
+            except Exception:
+                pass
+        ranked = sorted(results, key=lambda x: x['position'])
+        with _pp_scan_lock:
+            st = _pp_scan_load()
+            st.update(done=min(i + CHUNK, len(tickers)), matched=len(ranked), results=ranked)
+            _pp_scan_save(st)
+
+    fin = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    with _pp_scan_lock:
+        st = _pp_scan_load()
+        st.update(running=False, done=len(tickers), matched=len(results),
+                  results=sorted(results, key=lambda x: x['position']), finished=fin)
+        _pp_scan_save(st)
+
+
+@app.route('/api/perpetual/scan_all', methods=['POST'])
+def perpetual_scan_all():
+    with _pp_scan_lock:
+        st = _pp_scan_load()
+        if st.get('running') and st.get('started'):
+            try:
+                age = (pd.Timestamp.now(tz='Asia/Taipei') -
+                       pd.Timestamp(st['started'], tz='Asia/Taipei')).total_seconds()
+            except Exception:
+                age = 9999
+            if age < 1200:   # 既有任務未逾 20 分鐘，沿用不重啟
+                return jsonify({'ok': True, 'already': True, 'state': st})
+        if not _pp_full_codes():
+            return jsonify({'error': '全上市櫃清單尚未就緒（名稱快取載入中），請稍候再試'}), 503
+        _pp_scan_save({'running': True, 'total': len(_pp_full_codes()), 'done': 0,
+                       'matched': 0, 'results': [],
+                       'started': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+                       'finished': ''})
+    threading.Thread(target=_run_full_scan, daemon=True).start()
+    return jsonify({'ok': True, 'started': True})
+
+
+@app.route('/api/perpetual/scan_all/status')
+def perpetual_scan_all_status():
+    with _pp_scan_lock:
+        return jsonify(_pp_scan_load())
+
+
+def _perpetual_line_text(res, title):
+    arrow = {'buy': '撿壘', 'hold': '續抱', 'reduce': '減碼', 'exit': '出場', 'wait': '觀望'}
+    lines = [f"【低位階永動機】{res['name']}（{res['code']}）", title,
+             f"現價 {res['price']}・位階 {res['position']}（五年 {res['low5']}~{res['high5']}）",
+             f"訊號：{res['signal']}"]
+    if res.get('pnlPct') is not None:
+        lines.append(f"進場 {res['entryPrice']}・損益 {res['pnlPct']}%（硬停損價 {res['stopHardPrice']}）")
+    if res.get('reasons'):
+        lines.append('・'.join(res['reasons'][:2]))
+    return '\n'.join(lines)
+
+
+@app.route('/api/perpetual/monitor/list')
+def perpetual_monitor_list():
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    watches = cfg.get('perpetual', {})
+    out = []
+    for ticker, w in watches.items():
+        out.append({
+            'ticker': ticker, 'code': tw_display(ticker) if w.get('is_tw', True) else ticker,
+            'name': w.get('name', ''), 'isTw': w.get('is_tw', True),
+            'entryPrice': w.get('entry_price'),
+            'registeredAt': w.get('registered_at', ''),
+            'lastSignal': w.get('last_signal', ''),
+            'lastCheck': w.get('last_check', ''),
+            'lastResult': w.get('last_result'),
+        })
+    out.sort(key=lambda x: x.get('registeredAt', ''), reverse=True)
+    return jsonify({'watches': out})
+
+
+@app.route('/api/perpetual/monitor/add', methods=['POST'])
+def perpetual_monitor_add():
+    data  = request.get_json(force=True) or {}
+    raw   = str(data.get('code', '')).strip()
+    is_tw = bool(data.get('isTw', True))
+    entry = safe_float(data.get('entry', 0)) or None
+    line_token   = data.get('line_token', '')
+    line_user_id = data.get('line_user_id', '')
+    if not raw:
+        return jsonify({'error': '請輸入股票代碼'}), 400
+    ticker = tw_normalize(raw) if is_tw else raw.upper()
+
+    res = _perpetual_fetch(ticker, entry, is_tw)
+    if not res:
+        return jsonify({'error': '查無資料，無法加入監測'}), 404
+
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        cfg.setdefault('perpetual', {})
+        existing = cfg['perpetual'].get(ticker, {})
+        cfg['perpetual'][ticker] = {
+            'is_tw': is_tw,
+            'entry_price': entry,
+            'name': res['name'],
+            'line_token':   line_token or existing.get('line_token', cfg.get('line_token', '')),
+            'line_user_id': line_user_id or existing.get('line_user_id', cfg.get('line_user_id', '')),
+            'registered_at': existing.get('registered_at', now_str),
+            'last_signal': res['signal'],
+            'last_check': now_str,
+            'last_result': res,
+            'last_notify_time': existing.get('last_notify_time', ''),
+        }
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True, 'ticker': ticker, 'result': res})
+
+
+@app.route('/api/perpetual/monitor/remove', methods=['POST'])
+def perpetual_monitor_remove():
+    data   = request.get_json(force=True) or {}
+    ticker = str(data.get('ticker', '')).strip()
+    if not ticker:
+        return jsonify({'error': 'ticker required'}), 400
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+        cfg.get('perpetual', {}).pop(ticker, None)
+        _save_monitor_cfg(cfg)
+    return jsonify({'ok': True})
+
+
+def _run_perpetual_watch():
+    """背景：對監測中的永動機標的更新訊號，訊號轉強/減碼/出場或觸發硬停損時推播 LINE。"""
+    with _monitor_lock:
+        cfg = _load_monitor_cfg()
+    watches = cfg.get('perpetual', {})
+    if not watches:
+        return
+    now    = pd.Timestamp.now(tz='Asia/Taipei')
+    now_str = now.strftime('%Y-%m-%d %H:%M')
+    for ticker, w in list(watches.items()):
+        try:
+            res = _perpetual_fetch(ticker, w.get('entry_price'), w.get('is_tw', True))
+            if not res:
+                continue
+            sig       = res['signal']
+            last_sig  = w.get('last_signal')
+            notify, title = False, ''
+            if res['stopStatus'] == 'hard':
+                notify, title = True, '觸發 -20% 硬停損'
+            elif sig in ('撿壘', '減碼', '出場') and sig != last_sig:
+                notify, title = True, f'訊號轉為「{sig}」'
+
+            last_notify = w.get('last_notify_time', '')
+            cooldown_ok = (not last_notify or
+                (now - pd.Timestamp(last_notify, tz='Asia/Taipei')).total_seconds() > 14400)
+            line_token   = w.get('line_token', '')
+            line_user_id = w.get('line_user_id', '')
+
+            with _monitor_lock:
+                cfg2 = _load_monitor_cfg()
+                if ticker not in cfg2.get('perpetual', {}):
+                    continue
+                cfg2['perpetual'][ticker]['last_signal'] = sig
+                cfg2['perpetual'][ticker]['last_check']  = now_str
+                cfg2['perpetual'][ticker]['last_result'] = res
+                if notify and cooldown_ok and line_token and line_user_id:
+                    cfg2['perpetual'][ticker]['last_notify_time'] = now_str
+                    _save_monitor_cfg(cfg2)
+                    _push_line_msg(line_token, line_user_id, _perpetual_line_text(res, title))
+                else:
+                    _save_monitor_cfg(cfg2)
+        except Exception as e:
+            print(f'[Perpetual] {ticker}: {e}')
+
+
+# 掛到既有背景掃描鏈（在出場警示之後再跑永動機監測）
+_prev_scan_fn = sys.modules[__name__].__dict__['_run_server_scan']
+
+def _run_server_scan_with_perp():
+    _prev_scan_fn()
+    try:
+        _run_perpetual_watch()
+    except Exception as e:
+        print(f'[Perpetual] watch loop error: {e}')
+
+sys.modules[__name__].__dict__['_run_server_scan'] = _run_server_scan_with_perp
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  績優股清單 — 財報狗選股法（被低估的績優股）
+#  先剔除自由現金流報酬率三年衰退的公司；再以「三年平均自由現金流報酬率、本益比、
+#  股價淨值比、殖利率」四因子各自排名加總，綜合分數越小＝越被低估，排越前面。
+#  單檔財報資料快取 6 小時（第二次跑分更快）。預設台股，可切美股。
+# ═══════════════════════════════════════════════════════════════════════════
+
+BLUECHIP_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'bluechip_cache.json')
+BLUECHIP_SCAN_FILE  = os.path.join(os.path.dirname(__file__), 'bluechip_scan.json')
+BLUECHIP_TTL = 6 * 3600
+_bluechip_lock = threading.Lock()
+
+
+def _bc_json_load(path, default):
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return default
+
+
+def _bc_json_save(path, obj):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False)
+
+
+def _bluechip_compute(ticker, is_tw):
+    """抓單檔財報因子：三年平均自由現金流報酬率、本益比、股價淨值比、殖利率。"""
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+        mktcap = safe_float(info.get('marketCap', 0))
+        price  = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
+        pe     = safe_float(info.get('trailingPE', 0))
+        pb     = safe_float(info.get('priceToBook', 0))
+        dy     = safe_float(info.get('dividendYield', 0))   # 既有慣例：視為百分比
+        if mktcap <= 0 or price <= 0:
+            return {'ok': False}
+
+        # 自由現金流序列（年報，最多 3 年；欄位由新到舊）
+        fcf_vals = []
+        try:
+            cf = stock.cashflow
+            if cf is not None and not cf.empty:
+                fcf_row = None
+                for lbl in ['Free Cash Flow']:
+                    if lbl in cf.index:
+                        fcf_row = cf.loc[lbl]; break
+                if fcf_row is None:
+                    ocf = capex = None
+                    for lbl in ['Operating Cash Flow', 'Total Cash From Operating Activities']:
+                        if lbl in cf.index: ocf = cf.loc[lbl]; break
+                    for lbl in ['Capital Expenditure', 'Capital Expenditures']:
+                        if lbl in cf.index: capex = cf.loc[lbl]; break
+                    if ocf is not None and capex is not None:
+                        fcf_row = ocf + capex
+                if fcf_row is not None:
+                    for x in fcf_row.values[:3]:
+                        fx = safe_float(x)
+                        if x == x:           # 非 NaN
+                            fcf_vals.append(fx)
+        except Exception:
+            pass
+
+        if len(fcf_vals) < 2:
+            return {'ok': False}
+
+        avg_fcf     = sum(fcf_vals) / len(fcf_vals)
+        avg3_yield  = round(avg_fcf / mktcap * 100, 2)
+        declining   = fcf_vals[0] < fcf_vals[-1]   # 最新年 < 最舊年 → 視為衰退
+        name = tw_cn_name(ticker, tw_display(ticker)) if is_tw \
+            else (info.get('shortName') or info.get('longName') or ticker)[:30]
+
+        return {
+            'ok': True, 'name': name, 'price': round(price, 2),
+            'avg3FcfYield': avg3_yield,
+            'fcfYields': [round(v / 1e9, 2) for v in fcf_vals],
+            'declining': declining,
+            'pe': round(pe, 2), 'pb': round(pb, 2), 'divYield': round(dy, 2),
+        }
+    except Exception:
+        return {'ok': False}
+
+
+def _run_bluechip_scan(market):
+    is_tw    = (market != 'us')
+    universe = TW_SCREENER_UNIVERSE if is_tw else US_SCREENER_UNIVERSE
+    codes    = []
+    for lst in universe.values():
+        codes.extend(lst)
+    codes   = list(dict.fromkeys(codes))
+    tickers = [tw_normalize(c) if is_tw else c.upper() for c in codes]
+
+    now     = time.time()
+    now_str = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    cache   = _bc_json_load(BLUECHIP_CACHE_FILE, {})
+
+    raw, to_fetch = {}, []
+    for t in tickers:
+        e = cache.get(t)
+        if e and (now - e.get('ts', 0) < BLUECHIP_TTL):
+            raw[t] = e['data']
+        else:
+            to_fetch.append(t)
+
+    def _set_state(done, running=True, results=None, finished=''):
+        with _bluechip_lock:
+            st = {'running': running, 'market': market, 'total': len(tickers),
+                  'done': done, 'matched': len(results or []),
+                  'results': results or [], 'started': now_str, 'finished': finished}
+            _bc_json_save(BLUECHIP_SCAN_FILE, st)
+
+    _set_state(len(raw))
+
+    done = len(raw)
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(_bluechip_compute, t, is_tw): t for t in to_fetch}
+        for f in as_completed(futs):
+            t = futs[f]
+            try:
+                raw[t] = f.result() or {'ok': False}
+            except Exception:
+                raw[t] = {'ok': False}
+            cache[t] = {'ts': now, 'data': raw[t]}
+            done += 1
+            if done % 20 == 0:
+                _set_state(done)
+
+    with _bluechip_lock:
+        _bc_json_save(BLUECHIP_CACHE_FILE, cache)
+
+    # 剔除：資料不全 / FCF 三年衰退 / 平均 FCF 報酬率為負 / 無正本益比、淨值比
+    survivors = [t for t, d in raw.items()
+                 if d.get('ok') and not d['declining']
+                 and d['avg3FcfYield'] > 0 and d['pe'] > 0 and d['pb'] > 0]
+
+    def _rank(key, higher_better):
+        order = sorted(survivors, key=lambda t: raw[t][key], reverse=higher_better)
+        return {t: i + 1 for i, t in enumerate(order)}
+
+    r_fcf = _rank('avg3FcfYield', True)
+    r_pe  = _rank('pe', False)
+    r_pb  = _rank('pb', False)
+    r_dy  = _rank('divYield', True)
+
+    results = []
+    for t in survivors:
+        d = raw[t]
+        score = r_fcf[t] + r_pe[t] + r_pb[t] + r_dy[t]
+        results.append({
+            'ticker': t, 'code': tw_display(t) if is_tw else t,
+            'name': d['name'], 'price': d['price'],
+            'score': score,
+            'avg3FcfYield': d['avg3FcfYield'], 'pe': d['pe'], 'pb': d['pb'], 'divYield': d['divYield'],
+            'rankFcf': r_fcf[t], 'rankPe': r_pe[t], 'rankPb': r_pb[t], 'rankDy': r_dy[t],
+            'declining': d['declining'],
+        })
+    results.sort(key=lambda x: (x['score'], x['pe']))
+
+    fin = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+    _set_state(len(tickers), running=False, results=results, finished=fin)
+
+
+@app.route('/bluechip')
+def bluechip_page():
+    from flask import make_response
+    resp = make_response(render_template('bluechip.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
+
+
+@app.route('/api/bluechip/scan', methods=['POST'])
+def bluechip_scan():
+    data   = request.get_json(force=True) or {}
+    market = 'us' if str(data.get('market', 'tw')).lower() == 'us' else 'tw'
+    with _bluechip_lock:
+        st = _bc_json_load(BLUECHIP_SCAN_FILE, {})
+        if st.get('running') and st.get('started'):
+            try:
+                age = (pd.Timestamp.now(tz='Asia/Taipei') -
+                       pd.Timestamp(st['started'], tz='Asia/Taipei')).total_seconds()
+            except Exception:
+                age = 9999
+            if age < 1200:
+                return jsonify({'ok': True, 'already': True, 'state': st})
+        _bc_json_save(BLUECHIP_SCAN_FILE,
+                      {'running': True, 'market': market, 'total': 0, 'done': 0,
+                       'matched': 0, 'results': [],
+                       'started': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+                       'finished': ''})
+    threading.Thread(target=_run_bluechip_scan, args=(market,), daemon=True).start()
+    return jsonify({'ok': True, 'started': True})
+
+
+@app.route('/api/bluechip/scan/status')
+def bluechip_scan_status():
+    with _bluechip_lock:
+        return jsonify(_bc_json_load(BLUECHIP_SCAN_FILE,
+                       {'running': False, 'total': 0, 'done': 0, 'matched': 0,
+                        'results': [], 'started': '', 'finished': '', 'market': 'tw'}))
 
 
 if __name__ == '__main__':

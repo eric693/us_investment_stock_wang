@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>低位階永動機</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.pp-nav {
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd);
+  position: sticky; top: 0; z-index: 50; overflow-x: auto;
+}
+.pp-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; white-space: nowrap; }
+.pp-nav .brand span { color: var(--gold); }
+.pp-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; white-space: nowrap;
+  font-weight: 700; padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.pp-nav a:hover { color: var(--text); background: #0d1628; }
+.pp-nav a.active { color: #fff; background: var(--accent); }
+.pp-nav a.home { background: linear-gradient(135deg, #1a6fd4, #7c4dff); color: #fff; }
+
+.pp-wrap { max-width: 1080px; margin: 0 auto; padding: 22px 20px; }
+.pp-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.pp-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 18px; line-height: 1.6; }
+
+.pp-card { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 16px; margin-bottom: 18px; }
+.pp-card h2 { font-size: 0.96rem; font-weight: 900; margin: 0 0 12px; }
+
+.pp-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.pp-field { display: flex; flex-direction: column; gap: 5px; }
+.pp-field label { font-size: 0.68rem; color: var(--text-dim); font-weight: 700; }
+.pp-input, .pp-select {
+  background: #0a1120; border: 1px solid var(--card-bd); border-radius: 7px;
+  color: var(--text); padding: 9px 12px; font-size: 0.84rem; outline: none; }
+.pp-input { width: 130px; }
+.pp-input:focus, .pp-select:focus { border-color: var(--accent); }
+.pp-select { min-width: 160px; }
+.pp-btn { background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  padding: 10px 22px; font-size: 0.85rem; font-weight: 800; cursor: pointer; }
+.pp-btn:hover { opacity: .9; } .pp-btn:disabled { opacity: .4; cursor: default; }
+.pp-btn.ghost { background: #0d1628; border: 1px solid var(--card-bd); color: var(--text-mid); }
+.pp-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.pp-chip { background: #0d1628; border: 1px solid var(--card-bd); border-radius: 5px;
+  padding: 4px 10px; font-size: 0.72rem; color: var(--text-mid); cursor: pointer; }
+.pp-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.muted { color: var(--text-dim); }
+.pp-loading { text-align: center; padding: 26px; color: var(--text-dim); font-size: 0.86rem; }
+
+/* 訊號徽章 */
+.sig { display: inline-block; padding: 3px 12px; border-radius: 6px; font-weight: 900; font-size: 0.86rem; }
+.sig-buy    { background: rgba(255,78,78,.16);  color: #ff6b6b; border: 1px solid #ff4e4e55; }
+.sig-hold   { background: rgba(255,196,0,.14);  color: var(--gold); border: 1px solid #ffc40055; }
+.sig-reduce { background: rgba(38,217,107,.14); color: #38d96b; border: 1px solid #26d96b55; }
+.sig-exit   { background: rgba(38,217,107,.20); color: #26d96b; border: 1px solid #26d96b88; }
+.sig-wait   { background: #0d1628; color: var(--text-mid); border: 1px solid var(--card-bd); }
+
+/* 位階條 */
+.pp-gauge { margin: 14px 0 6px; }
+.pp-bar { position: relative; height: 16px; border-radius: 8px; overflow: hidden;
+  background: linear-gradient(90deg, #ff4e4e, #ffc400 50%, #26d96b); }
+.pp-bar .mark { position: absolute; top: -3px; width: 3px; height: 22px; background: #fff;
+  box-shadow: 0 0 5px #000; }
+.pp-bar-lbl { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--text-dim); margin-top: 4px; }
+
+.pp-stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.pp-stat { background: #08101e; border: 1px solid var(--card-bd); border-radius: 8px;
+  padding: 9px 14px; min-width: 96px; }
+.pp-stat .l { font-size: 0.64rem; color: var(--text-dim); font-weight: 700; }
+.pp-stat .v { font-size: 0.98rem; font-weight: 900; margin-top: 3px; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; }
+
+.pp-reasons { list-style: none; padding: 0; margin: 10px 0 0; }
+.pp-reasons li { font-size: 0.82rem; color: var(--text-mid); padding: 4px 0 4px 16px; position: relative; line-height: 1.5; }
+.pp-reasons li::before { content: "›"; position: absolute; left: 2px; color: var(--accent); font-weight: 900; }
+
+.pp-stop { margin-top: 10px; font-size: 0.78rem; padding: 8px 12px; border-radius: 7px; }
+.pp-stop.ok   { background: #0d1628; color: var(--text-dim); }
+.pp-stop.warn { background: rgba(255,196,0,.12); color: var(--gold); border: 1px solid #ffc40044; }
+.pp-stop.hard { background: rgba(38,217,107,.14); color: #26d96b; border: 1px solid #26d96b66; }
+
+.pp-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.pp-table th { text-align: right; padding: 10px 12px; font-size: 0.66rem; font-weight: 800;
+  color: var(--text-dim); border-bottom: 1px solid var(--card-bd); background: #08101e; }
+.pp-table th:first-child { text-align: left; }
+.pp-table td { padding: 10px 12px; text-align: right; border-bottom: 1px solid #0d1628; }
+.pp-table td:first-child { text-align: left; font-weight: 700; }
+.pp-table tr.click { cursor: pointer; }
+.pp-table tr.click:hover td { background: rgba(26,111,212,.08); }
+
+.pp-sectors { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; max-height: 120px; overflow-y: auto; }
+.pp-sec { background: #0d1628; border: 1px solid var(--card-bd); border-radius: 5px;
+  padding: 4px 10px; font-size: 0.72rem; color: var(--text-mid); cursor: pointer; user-select: none; }
+.pp-sec.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.pp-empty { text-align: center; padding: 30px; color: var(--text-dim); font-size: 0.84rem; }
+.pp-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 8px; line-height: 1.6; }
+.pp-x { color: var(--text-dim); cursor: pointer; font-weight: 900; }
+.pp-x:hover { color: #ff4e4e; }
+</style>
+</head>
+<body>
+
+<nav class="pp-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/predict">AI 預測</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/perpetual" class="active">永動機</a>
+  <a href="/bluechip">績優股</a>
+</nav>
+
+<div class="pp-wrap">
+  <h1 class="pp-title">低位階永動機</h1>
+  <div class="pp-sub">
+    依「春燕來了」的低位階投資法：以五年區間計算股價<b>位階</b>，鎖定相對歷史底部；判斷是否在年線（MA240）之下、週 KD 是否低檔，
+    給出 <b>撿壘 / 續抱 / 減碼 / 出場</b> 訊號。加入監測後系統會持續判斷，跌破 -20% 觸發硬停損提醒。<br>
+    位階 =（現價 − 五年低點）/（五年高點 − 五年低點），數值越低越接近底部。
+  </div>
+
+  <!-- 個股位階分析 -->
+  <div class="pp-card">
+    <h2>個股位階分析</h2>
+    <div class="pp-form">
+      <div class="pp-field">
+        <label>股票代碼</label>
+        <input class="pp-input" id="codeInput" placeholder="如 2330" maxlength="6">
+        <div class="pp-quick">
+          <span class="pp-chip" onclick="setCode('2330')">2330</span>
+          <span class="pp-chip" onclick="setCode('2317')">2317</span>
+          <span class="pp-chip" onclick="setCode('2603')">2603</span>
+          <span class="pp-chip" onclick="setCode('00878')">00878</span>
+        </div>
+      </div>
+      <div class="pp-field">
+        <label>進場價（選填，算停損）</label>
+        <input class="pp-input" id="entryInput" placeholder="如 580" inputmode="decimal">
+      </div>
+      <button class="pp-btn" id="analyzeBtn" onclick="analyze()">分析位階</button>
+    </div>
+    <div class="pp-loading" id="aLoading" style="display:none">分析中，抓取五年資料…</div>
+    <div id="aResult"></div>
+  </div>
+
+  <!-- 低位階選股 -->
+  <div class="pp-card">
+    <h2>低位階選股</h2>
+    <div class="muted" style="font-size:.78rem;margin-bottom:8px">挑出目前位階 &lt;35、在年線之下且週 KD 低檔／金叉（有起漲跡象）的標的。不選族群＝掃描全部。</div>
+    <div class="pp-sectors" id="sectorBox"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="pp-btn" id="scanBtn" onclick="scan()">掃描所選族群</button>
+      <button class="pp-btn ghost" onclick="clearSectors()">清除族群</button>
+      <button class="pp-btn ghost" id="scanAllBtn" onclick="scanAll()" style="margin-left:auto">掃描全上市櫃（背景）</button>
+    </div>
+    <div class="pp-note">全上市櫃約 1,900 檔，採背景批次下載，約需 2–5 分鐘；結果會邊跑邊更新，可離開頁面稍後再回來看。</div>
+    <div class="pp-loading" id="sLoading" style="display:none">掃描中，可能需要 30 秒至 1 分鐘…</div>
+    <div id="scanProgress" style="display:none;margin-top:10px"></div>
+    <div id="scanResult"></div>
+  </div>
+
+  <!-- 長期監測 -->
+  <div class="pp-card">
+    <h2>長期監測清單</h2>
+    <div class="pp-form" style="margin-bottom:10px">
+      <div class="pp-field">
+        <label>LINE Token（選填，推播用）</label>
+        <input class="pp-input" id="lineToken" style="width:200px" placeholder="Channel access token">
+      </div>
+      <div class="pp-field">
+        <label>LINE User ID（選填）</label>
+        <input class="pp-input" id="lineUser" style="width:200px" placeholder="Uxxxxxxxx">
+      </div>
+    </div>
+    <div class="pp-note">填了 LINE 後，訊號轉為 撿壘／減碼／出場 或觸發 -20% 硬停損時會自動推播（每檔每訊號 4 小時內不重複）。</div>
+    <div id="watchList" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+let UNIVERSE = {};
+let selectedSectors = new Set();
+
+window.onload = async () => {
+  try {
+    const u = await (await fetch('/api/perpetual/universe')).json();
+    UNIVERSE = u.tw || {};
+    const box = document.getElementById('sectorBox');
+    box.innerHTML = Object.keys(UNIVERSE).map(s =>
+      `<span class="pp-sec" data-s="${s}" onclick="toggleSector(this)">${s}</span>`).join('');
+  } catch(e) {}
+  loadWatches();
+  // 還原全上市櫃掃描狀態（若先前已啟動或完成）
+  try {
+    const st = await (await fetch('/api/perpetual/scan_all/status')).json();
+    if (st.running || (st.finished && st.results && st.results.length)) {
+      document.getElementById('scanAllBtn').disabled = st.running;
+      pollScanAll();
+    }
+  } catch(e) {}
+};
+
+function setCode(c) { document.getElementById('codeInput').value = c; }
+function toggleSector(el) {
+  const s = el.dataset.s;
+  if (selectedSectors.has(s)) { selectedSectors.delete(s); el.classList.remove('on'); }
+  else { selectedSectors.add(s); el.classList.add('on'); }
+}
+function clearSectors() {
+  selectedSectors.clear();
+  document.querySelectorAll('.pp-sec').forEach(e => e.classList.remove('on'));
+}
+
+function sigClass(c) { return 'sig sig-' + (c || 'wait'); }
+function fmtPos(p) {
+  // 位階低=紅(便宜/接近底部)，高=綠(貴/接近高點)，符合台股紅漲綠跌的「位階」直覺
+  const cls = p < 35 ? 'pos' : (p >= 80 ? 'neg' : '');
+  return `<span class="${cls}">${p}</span>`;
+}
+
+function resultCard(d, withAdd) {
+  const bias = d.yearBias;
+  let stopHtml = '';
+  if (d.entryPrice != null) {
+    const cls = d.stopStatus;
+    const pnlCls = d.pnlPct > 0 ? 'pos' : (d.pnlPct < 0 ? 'neg' : '');
+    const label = cls === 'hard' ? '已觸發 -20% 硬停損，建議出場'
+              : cls === 'warn' ? '已逾 -10% 警戒，留意 -20% 硬停損'
+              : '停損尚安全（-10% 可接受，-20% 為極限）';
+    stopHtml = `<div class="pp-stop ${cls}">進場 ${d.entryPrice}・損益 <span class="${pnlCls}">${d.pnlPct>0?'+':''}${d.pnlPct}%</span>・硬停損價 ${d.stopHardPrice}｜${label}</div>`;
+  }
+  return `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px">
+      <div style="font-size:1.05rem;font-weight:900">${d.name}（${d.code}）</div>
+      <div style="font-weight:900">${d.price}</div>
+      <span class="${sigClass(d.signalClass)}">${d.signal}</span>
+    </div>
+    <div class="pp-gauge">
+      <div class="pp-bar"><div class="mark" style="left:${d.position}%"></div></div>
+      <div class="pp-bar-lbl"><span>五年低 ${d.low5}（位階0）</span><span>位階 ${d.position}</span><span>五年高 ${d.high5}（位階100）</span></div>
+    </div>
+    <div class="pp-stats">
+      <div class="pp-stat"><div class="l">位階</div><div class="v">${fmtPos(d.position)}</div></div>
+      <div class="pp-stat"><div class="l">年線 MA240</div><div class="v">${d.ma240}</div></div>
+      <div class="pp-stat"><div class="l">距年線</div><div class="v ${bias<0?'neg':'pos'}">${bias>0?'+':''}${bias}%</div></div>
+      <div class="pp-stat"><div class="l">週 KD</div><div class="v">${d.wkK}/${d.wkD}${d.wkGolden?' 金叉':(d.wkLow?' 低檔':'')}</div></div>
+      <div class="pp-stat"><div class="l">距五年低反彈</div><div class="v">${d.bounce}%</div></div>
+    </div>
+    <ul class="pp-reasons">${d.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+    ${stopHtml}
+    ${withAdd ? `<div style="margin-top:12px"><button class="pp-btn" onclick='addWatch(${JSON.stringify(d.code)}, ${d.isTw})'>加入長期監測</button></div>` : ''}
+  `;
+}
+
+async function analyze() {
+  const code = document.getElementById('codeInput').value.trim();
+  if (!code) { alert('請輸入股票代碼'); return; }
+  const entry = parseFloat(document.getElementById('entryInput').value) || 0;
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  document.getElementById('aLoading').style.display = 'block';
+  document.getElementById('aResult').innerHTML = '';
+  try {
+    const r = await fetch('/api/perpetual/analyze', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ code, entry, isTw: true }),
+    });
+    const d = await r.json();
+    if (d.error) { document.getElementById('aResult').innerHTML = `<div class="pp-empty">${d.error}</div>`; return; }
+    document.getElementById('aResult').innerHTML = resultCard(d, true);
+  } catch(e) {
+    document.getElementById('aResult').innerHTML = `<div class="pp-empty">分析失敗：${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    document.getElementById('aLoading').style.display = 'none';
+  }
+}
+
+async function scan() {
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  document.getElementById('sLoading').style.display = 'block';
+  document.getElementById('scanResult').innerHTML = '';
+  try {
+    const r = await fetch('/api/perpetual/scan', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ sectors: [...selectedSectors], isTw: true }),
+    });
+    const d = await r.json();
+    if (d.error) { document.getElementById('scanResult').innerHTML = `<div class="pp-empty">${d.error}</div>`; return; }
+    renderScan(d, false);
+  } catch(e) {
+    document.getElementById('scanResult').innerHTML = `<div class="pp-empty">掃描失敗：${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    document.getElementById('sLoading').style.display = 'none';
+  }
+}
+
+function renderScan(d, partial) {
+  const el = document.getElementById('scanResult');
+  if (!d.results || !d.results.length) {
+    el.innerHTML = partial ? '' : `<div class="pp-empty">掃描 ${d.total} 檔，目前沒有符合低位階起漲條件的標的。</div>`;
+    return;
+  }
+  const rows = d.results.map(x => `
+    <tr class="click" onclick='showFromScan(${JSON.stringify(x)})'>
+      <td>${x.name}（${x.code}）</td>
+      <td>${x.price}</td>
+      <td>${fmtPos(x.position)}</td>
+      <td class="neg">${x.yearBias}%</td>
+      <td>${x.wkK}/${x.wkD}</td>
+      <td><span class="${sigClass(x.signalClass)}">${x.signal}</span></td>
+    </tr>`).join('');
+  el.innerHTML = `
+    <div class="muted" style="font-size:.76rem;margin:10px 0 6px">掃描 ${d.total} 檔，命中 ${d.matched} 檔（依位階由低到高，點列查看詳情）</div>
+    <table class="pp-table">
+      <thead><tr><th>標的</th><th>現價</th><th>位階</th><th>距年線</th><th>週KD</th><th>訊號</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+let scanAllTimer = null;
+
+async function scanAll() {
+  const btn = document.getElementById('scanAllBtn');
+  btn.disabled = true;
+  document.getElementById('scanResult').innerHTML = '';
+  document.getElementById('scanProgress').style.display = 'block';
+  document.getElementById('scanProgress').innerHTML = '<div class="pp-loading">啟動全上市櫃背景掃描…</div>';
+  try {
+    const r = await fetch('/api/perpetual/scan_all', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('scanProgress').innerHTML = `<div class="pp-empty">${d.error}</div>`;
+      btn.disabled = false; return;
+    }
+    pollScanAll();
+  } catch(e) {
+    document.getElementById('scanProgress').innerHTML = `<div class="pp-empty">啟動失敗：${e.message}</div>`;
+    btn.disabled = false;
+  }
+}
+
+async function pollScanAll() {
+  if (scanAllTimer) clearTimeout(scanAllTimer);
+  try {
+    const st = await (await fetch('/api/perpetual/scan_all/status')).json();
+    const pct = st.total ? Math.round(st.done / st.total * 100) : 0;
+    const prog = document.getElementById('scanProgress');
+    prog.style.display = 'block';
+    prog.innerHTML = `
+      <div style="font-size:.78rem;color:var(--text-mid);margin-bottom:6px">
+        ${st.running ? '掃描中' : '已完成'} ${st.done}/${st.total}（${pct}%）・命中 ${st.matched} 檔${st.finished ? '・完成於 '+st.finished : ''}
+      </div>
+      <div class="pp-bar" style="background:#0d1628;height:8px"><div style="position:absolute;height:8px;border-radius:8px;background:var(--accent);width:${pct}%"></div></div>`;
+    renderScan(st, st.running);  // 邊跑邊更新；跑完時若無命中也顯示空狀態
+    if (st.running) {
+      scanAllTimer = setTimeout(pollScanAll, 4000);
+    } else {
+      document.getElementById('scanAllBtn').disabled = false;
+    }
+  } catch(e) {
+    scanAllTimer = setTimeout(pollScanAll, 6000);
+  }
+}
+
+function showFromScan(x) {
+  setCode(x.code);
+  document.getElementById('entryInput').value = '';
+  document.getElementById('aResult').innerHTML = resultCard(x, true);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function addWatch(code, isTw) {
+  const entry = parseFloat(document.getElementById('entryInput').value) || 0;
+  const body = {
+    code, isTw,
+    entry,
+    line_token: document.getElementById('lineToken').value.trim(),
+    line_user_id: document.getElementById('lineUser').value.trim(),
+  };
+  try {
+    const r = await fetch('/api/perpetual/monitor/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    loadWatches();
+    alert(code + ' 已加入長期監測');
+  } catch(e) { alert('加入失敗：' + e.message); }
+}
+
+async function removeWatch(ticker) {
+  if (!confirm('移除監測 ' + ticker + '？')) return;
+  await fetch('/api/perpetual/monitor/remove', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ ticker }),
+  });
+  loadWatches();
+}
+
+async function loadWatches() {
+  try {
+    const d = await (await fetch('/api/perpetual/monitor/list')).json();
+    const el = document.getElementById('watchList');
+    if (!d.watches.length) { el.innerHTML = '<div class="pp-empty">尚無監測標的。分析個股後點「加入長期監測」。</div>'; return; }
+    const rows = d.watches.map(w => {
+      const res = w.lastResult || {};
+      const pos = res.position != null ? fmtPos(res.position) : '-';
+      const pnl = res.pnlPct != null ? `<span class="${res.pnlPct>0?'pos':'neg'}">${res.pnlPct>0?'+':''}${res.pnlPct}%</span>` : '-';
+      return `<tr>
+        <td>${w.name||w.code}（${w.code}）</td>
+        <td>${res.price ?? '-'}</td>
+        <td>${pos}</td>
+        <td>${w.entryPrice ?? '-'}</td>
+        <td>${pnl}</td>
+        <td>${res.signalClass ? `<span class="${sigClass(res.signalClass)}">${w.lastSignal||res.signal}</span>` : (w.lastSignal||'-')}</td>
+        <td class="muted" style="font-size:.7rem">${w.lastCheck||'未檢查'}</td>
+        <td><span class="pp-x" onclick='removeWatch(${JSON.stringify(w.ticker)})'>✕</span></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table class="pp-table">
+      <thead><tr><th>標的</th><th>現價</th><th>位階</th><th>進場</th><th>損益</th><th>訊號</th><th>更新</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div class="pp-note">背景每 5 分鐘更新一次（僅在排程 worker 上執行）。</div>`;
+  } catch(e) {}
+}
+</script>
+</body>
+</html>

@@ -8,3 +8,6 @@ __pycache__/
 monitor_config.json
 strategies.json
 agent_config.json
+perpetual_scan.json
+bluechip_cache.json
+bluechip_scan.json
