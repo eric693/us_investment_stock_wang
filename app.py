@@ -297,8 +297,12 @@ def _build_line_text(sig):
     )
 
 
-def _monitor_ai_advice(code, result, holding):
-    """命中可動作訊號時，用 Claude 產生一段含現價/成本/具體買賣動作的綜合建議（僅台股）。"""
+def _monitor_ai_advice(code, result, holding, price=None):
+    """命中可動作訊號時，用 Claude 產生一段含現價/成本/具體買賣動作的綜合建議（僅台股）。
+
+    price：推播標頭已抓到的即時報價。盤中即時價與日線最後收盤會差幾分，若不帶入，
+    AI 段會用自己抓的收盤價，整則訊息就出現兩個不同現價/損益。帶入後統一用標頭那個價，
+    讓 AI 段顯示的現價與未實現損益和標頭一致（技術指標仍依日線序列計算，幾分差可忽略）。"""
     try:
         cfg = _load_agent_cfg()
         api_key = _agent_api_key(cfg)
@@ -308,6 +312,9 @@ def _monitor_ai_advice(code, result, holding):
         data = _fetch_predict_data(code)
         if data.get('error'):
             return ''
+        live = safe_float(price)
+        if live > 0:
+            data['price'] = round(live, 2)
         ctx = _agent_recommendation_text(data, holding)
         sig_line = (f"系統訊號：{result.get('actionCn','')}（信心 {result.get('confidence','-')}）"
                     f"— {result.get('reason','')}")
@@ -353,7 +360,7 @@ def _build_monitor_message(ticker, result, price):
 
     # AI 綜合建議：僅台股（_fetch_predict_data 為台股資料源），命中時才呼叫以控制花費
     if ticker.upper().endswith(('.TW', '.TWO')):
-        advice = _monitor_ai_advice(code, result, holding)
+        advice = _monitor_ai_advice(code, result, holding, price)
         if advice:
             msg += f"\n\n【AI 綜合建議】\n{advice}"
     return msg
@@ -544,6 +551,26 @@ def safe_float(v, default=0.0):
         return default if (np.isnan(f) or np.isinf(f)) else f
     except Exception:
         return default
+
+def norm_return_pct(v, is_fraction):
+    """把 yfinance 報酬率欄位正規化成「百分比數字」。
+
+    yfinance 同一支、不同欄位的單位慣例不同（實測 yfinance 1.3.0）：
+      - ytdReturn 已是百分比數字：16.6 = 16.6% → is_fraction=False（不要再 ×100）
+      - threeYearAverageReturn / fiveYearAverageReturn 是小數：0.294 = 29.4% → is_fraction=True
+    舊版對 ytdReturn 無條件 ×100，才把 5.98(=5.98%) 放大成 598.47% 的假數字。
+    不可用「數值大小」猜單位（真實 YTD +1.2% 會被誤判成 120%），必須依欄位指定。
+    轉換後 |pct|>300 視為壞資料回 None（上層顯示「未取得」而非錯誤數字）。"""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(f) or np.isinf(f):
+        return None
+    pct = round(f * 100 if is_fraction else f, 2)
+    return None if abs(pct) > 300 else pct
 
 def last_valid(series, default=0.0):
     """Return last non-NaN value from a pandas Series (handles today's NaN for TW stocks)."""
@@ -2196,9 +2223,9 @@ def get_tw_stock(ticker):
             if er > 1: er /= 100
             ta_yi = round(ta / 1e8, 1)
             er_pct = round(er * 100, 4) if er > 0 else 0
-            three_yr = round(safe_float(info.get('threeYearAverageReturn', 0)) * 100, 2)
-            five_yr  = round(safe_float(info.get('fiveYearAverageReturn',  0)) * 100, 2)
-            ytd_ret  = round(safe_float(info.get('ytdReturn', 0)) * 100, 2)
+            three_yr = norm_return_pct(info.get('threeYearAverageReturn'), is_fraction=True) or 0
+            five_yr  = norm_return_pct(info.get('fiveYearAverageReturn'),  is_fraction=True) or 0
+            ytd_ret  = norm_return_pct(info.get('ytdReturn'),              is_fraction=False) or 0
             etf_data = {
                 'totalAssets':   ta_yi,
                 'expenseRatio':  er_pct,
@@ -5618,8 +5645,7 @@ def _fetch_predict_data(code: str) -> dict:
             etf['family']   = info.get('fundFamily') or ''
             exp             = safe_float(info.get('annualReportExpenseRatio', 0))
             etf['expense']  = round(exp * 100, 3) if exp else None
-            ytd             = info.get('ytdReturn')
-            etf['ytd_return'] = round(safe_float(ytd) * 100, 2) if ytd is not None else None
+            etf['ytd_return'] = norm_return_pct(info.get('ytdReturn'), is_fraction=False)
             # 近期績效用價格自行計算（一定有資料，不依賴 info）。
             # 注意：主序列已改抓 2 年，故用「交易日偏移」回推各期起點，不能用 iloc[0]（那會變成 2 年報酬）。
             try:
