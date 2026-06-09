@@ -198,6 +198,8 @@
 .import-btn:disabled { opacity: .5; cursor: default; }
 .import-paste { font-size: 0.74rem; color: var(--text-dim); }
 .import-status { margin-top: 8px; font-size: 0.76rem; color: var(--text-dim); }
+.editable-cell { cursor: pointer; border-bottom: 1px dashed var(--card-bd2); }
+.editable-cell:hover { background: rgba(61,142,248,.08); }
 .import-preview { margin-top: 14px; border-top: 1px solid var(--card-bd); padding-top: 12px; }
 .import-preview-head { font-size: 0.78rem; font-weight: 800; color: var(--accent); margin-bottom: 8px; }
 .import-table { width: 100%; border-collapse: collapse; }
@@ -585,6 +587,7 @@ select.scan-input { width: 120px; }
         <input type="text"   class="form-input" id="h-date"      placeholder="買入日期">
         <button class="form-add-btn" onclick="addHolding()">新增</button>
       </div>
+      <div class="import-paste" style="margin-top:6px">同代碼再次「新增」＝自動加碼（累加股數＋算加權平均成本）；表格內「買入價／股數」可<b>雙擊直接修改</b>（Enter 存、Esc 取消）。</div>
 
       <!-- 損益彙總（未實現＋已實現＋報酬率）-->
       <div id="pnlSummary" style="display:none;gap:18px;flex-wrap:wrap;margin:10px 0;font-size:.82rem;">
@@ -851,8 +854,8 @@ async function loadHoldings() {
         <div style="font-weight:800;color:var(--text);cursor:pointer" data-sd-code="${h.code}" title="點看詳情">${h.name || h.code}</div>
         <div style="font-size:.67rem;color:var(--text-dim)">${h.code}</div>
       </td>
-      <td>${h.buy_price || '-'}</td>
-      <td>${(h.shares || 0).toLocaleString()}</td>
+      <td class="editable-cell" title="雙擊修改買入均價" ondblclick="editHoldingField(this,'${h.code}','buy_price',${buy})">${h.buy_price || '-'}</td>
+      <td class="editable-cell" title="雙擊修改股數" ondblclick="editHoldingField(this,'${h.code}','shares',${sh})">${(h.shares || 0).toLocaleString()}</td>
       <td style="font-weight:700">${h.current_price || '-'}</td>
       <td class="${pnlCls}">${amtTxt}(${pnlSign}${pnl.toFixed(2)}%)</td>
       <td>
@@ -981,6 +984,45 @@ async function addHolding() {
   document.getElementById('h-buyprice').value = '';
   document.getElementById('h-shares').value = '';
   await loadHoldings();
+}
+
+// 雙擊持倉的「買入價/股數」直接編輯：Enter 存、Esc 取消。存檔不帶 merge＝覆寫該欄
+// （非加碼合併），方便把均價校正成券商含手續費的成本，或修正登錄錯誤。
+function editHoldingField(td, code, field, current) {
+  if (td.querySelector('input')) return;          // 已在編輯
+  const original = td.innerHTML;
+  const inp = document.createElement('input');
+  inp.type = 'number';
+  inp.step = (field === 'buy_price') ? '0.0001' : '1';
+  inp.min  = '0';
+  inp.value = current;
+  inp.style.cssText = 'width:88px;padding:3px 5px;background:#0d1828;color:#fff;'
+    + 'border:1px solid var(--blue);border-radius:4px;font-size:.85rem;';
+  td.innerHTML = '';
+  td.appendChild(inp);
+  inp.focus(); inp.select();
+  let done = false;
+  const commit = async (save) => {
+    if (done) return; done = true;
+    const val = parseFloat(inp.value);
+    if (save && !isNaN(val) && val >= 0) {
+      try {
+        await fetch('/api/agent/holdings', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code, [field]: val }),   // 不帶 merge → 只覆寫此欄
+        });
+      } catch (_) {}
+      await loadHoldings();
+    } else {
+      td.innerHTML = original;
+    }
+  };
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+  });
+  inp.addEventListener('blur', () => commit(true));
 }
 
 async function deleteHolding(code) {
