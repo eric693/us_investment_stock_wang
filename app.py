@@ -7253,14 +7253,23 @@ def _ticker_session_open(ticker: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _quick_price(code: str) -> float:
-    """抓單一台股最新收盤價（上市找不到退回上櫃）。"""
+    """抓單一台股最新收盤價（上市找不到退回上櫃）。成功的報價快取 15 分鐘；
+    若這次抓失敗（yfinance 限流／暫時無回應）就回近期快取價，避免整批持倉估值歸零
+    （目標操盤頁一次抓 20+ 檔易被限流，全回 0 會讓市值/損益變成 0/-100% 的假數字）。"""
+    code_k = str(code).strip().upper().replace('.TW', '').replace('.TWO', '')
+    ck = f'qprice_{code_k}'
     try:
-        h = yf.Ticker(tw_normalize(code)).history(period='5d', interval='1d')
+        h = yf.Ticker(tw_normalize(code_k)).history(period='5d', interval='1d')
         if h.empty:
-            h = yf.Ticker(code + '.TWO').history(period='5d', interval='1d')
-        return safe_float(h['Close'].iloc[-1]) if not h.empty else 0.0
+            h = yf.Ticker(code_k + '.TWO').history(period='5d', interval='1d')
+        p = safe_float(h['Close'].iloc[-1]) if not h.empty else 0.0
     except Exception:
-        return 0.0
+        p = 0.0
+    if p > 0:
+        _cache_set(ck, p, ttl=900)
+        return p
+    cached = _cache_get(ck)
+    return safe_float(cached) if cached else 0.0
 
 
 # 昨夜美股對台股的領先指標（費半/那指/台積電ADR 對半導體權重最大）
@@ -7739,27 +7748,37 @@ def _us_session_phase() -> str:
     return 'open' if (t >= 21 * 60 or t < 5 * 60) else 'closed'
 
 
-def _portfolio_snapshot(holdings: list) -> dict:
-    """依持倉算成本、目前市值、未實現損益。"""
+def _portfolio_snapshot(holdings: list, price_map: dict = None) -> dict:
+    """依持倉算成本、目前市值、未實現損益。
+    price_map：可傳入「已抓好的現價」（如當日持倉分析結果）優先使用，避免重抓 20+ 檔被限流。
+    報價暫時抓不到（yfinance 限流）時，以成本價估值並標 no_quote，
+    避免整批市值/損益變成 0 / -100% 的假數字。"""
+    price_map = price_map or {}
     rows, cost, mkt = [], 0.0, 0.0
+    missing = 0
     for h in holdings:
         code   = str(h.get('code', '')).upper().strip()
         if not code:
             continue
         shares = safe_float(h.get('shares', 0))
         buy    = safe_float(h.get('buy_price', 0))
-        price  = _quick_price(code)
+        price  = safe_float(price_map.get(code, 0)) or _quick_price(code)
+        no_quote = price <= 0
+        if no_quote:                 # 報價取不到 → 用成本估值（損益視為 0），不歸零
+            price = buy
+            missing += 1
         v, c   = price * shares, buy * shares
         cost += c; mkt += v
         rows.append({
             'code': code, 'name': h.get('name', code) or code,
             'shares': shares, 'buy_price': buy, 'price': round(price, 2),
-            'value': round(v, 0),
+            'value': round(v, 0), 'no_quote': no_quote,
             'pnl_pct': round((price - buy) / buy * 100, 2) if buy else 0,
         })
     return {'rows': rows, 'cost': round(cost, 0), 'market_value': round(mkt, 0),
             'pnl': round(mkt - cost, 0),
-            'pnl_pct': round((mkt - cost) / cost * 100, 2) if cost else 0}
+            'pnl_pct': round((mkt - cost) / cost * 100, 2) if cost else 0,
+            'missing_quotes': missing}
 
 
 def _goal_metrics(goal: dict, market_value: float, cash: float = 0.0) -> dict:
@@ -7802,7 +7821,16 @@ def _goal_metrics(goal: dict, market_value: float, cash: float = 0.0) -> dict:
 def _goal_status(cfg: dict) -> dict:
     """組合『目標 + 持倉快照 + 達標試算』給前端與每日檢討使用。"""
     goal = cfg.get('goal', {}) or {}
-    snap = _portfolio_snapshot(cfg.get('holdings', []))
+    # 優先重用當天持倉分析已抓好的現價，避免目標頁重抓 20+ 檔報價被 yfinance 限流
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+    cache = cfg.get('today_analysis') or {}
+    price_map = {}
+    if cache.get('date') == today:
+        for r in cache.get('results', []):
+            c, p = str(r.get('code', '')).upper().strip(), safe_float(r.get('price', 0))
+            if c and p > 0:
+                price_map[c] = p
+    snap = _portfolio_snapshot(cfg.get('holdings', []), price_map)
     metrics = _goal_metrics(goal, snap['market_value'], goal.get('cash', 0))
     return {'goal': goal, 'portfolio': snap, 'metrics': metrics}
 
@@ -7845,11 +7873,15 @@ def _goal_chat_context(cfg: dict) -> str:
 
     lines.append('\n--- 目前持倉（未實現損益）---')
     if snap['rows']:
+        if snap.get('missing_quotes'):
+            lines.append(f"（註：有 {snap['missing_quotes']} 檔即時報價暫時取不到，已用成本價估值，"
+                         f"其市值/損益僅供參考，勿據此說「持倉為 0」。）")
         for r in snap['rows']:
             rz = _realized_summary_for(cfg, r['code'])
             extra = f"；此檔過去已實現 {rz['pnl']:+,.0f} 元（{rz['pct']:+.1f}%，{rz['count']} 筆）" if rz else ''
+            q = '（報價暫取不到，以成本估）' if r.get('no_quote') else ''
             lines.append(
-                f"{r['name']}（{r['code']}）{r['shares']:g} 股，成本 {r['buy_price']} 現價 {r['price']}，"
+                f"{r['name']}（{r['code']}）{r['shares']:g} 股，成本 {r['buy_price']} 現價 {r['price']}{q}，"
                 f"市值 {r['value']:,.0f}，未實現 {r['pnl_pct']:+.1f}%{extra}")
     else:
         lines.append('（目前無持倉）')
