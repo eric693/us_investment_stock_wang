@@ -316,6 +316,9 @@ def _monitor_ai_advice(code, result, holding, price=None):
         if live > 0:
             data['price'] = round(live, 2)
         ctx = _agent_recommendation_text(data, holding)
+        # 大盤體質＋進場品質：個股才附（ETF 偏中長期、不套短線進場守門）
+        if not data.get('is_etf'):
+            ctx += '\n\n' + _entry_context_block(data)
         sig_line = (f"系統訊號：{result.get('actionCn','')}（信心 {result.get('confidence','-')}）"
                     f"— {result.get('reason','')}")
         ask = ('你是使用者的操盤顧問。請用繁體中文給精簡可執行的綜合建議，必須包含：'
@@ -422,9 +425,15 @@ def _run_server_scan():
                 # 賣出/轉弱(SELL/AVOID)是風險警示，照原本去重＋冷卻規則照常推，不被信心過濾漏掉。
                 conf_ok = (action != 'BUY'
                            or str(result.get('confidence', '-')).strip() in ('高', '中'))
+                # 大盤濾網（只擋買進）：大盤體質偏空時，買進訊號靜音，少在下跌段接刀；
+                # 台股以外（如美股 ticker）不套用台股大盤濾網。賣出/轉弱不受影響照常推。
+                regime_ok = True
+                if action == 'BUY' and ticker.upper().endswith(('.TW', '.TWO')):
+                    regime_ok = _market_regime().get('allow_buy', True)
                 # 只在該標的所屬市場的交易時段內推播（避免半夜/收盤後狂發）；
                 # 買進與賣出/轉弱（SELL、AVOID）都通知，讓使用者有賣有買。
                 if (action in ('BUY', 'SELL', 'AVOID') and action_changed and cooldown_ok and conf_ok
+                        and regime_ok
                         and line_token and line_user_id and _ticker_session_open(ticker)):
                     cfg2['tickers'][ticker]['last_notify_time']   = now_str
                     cfg2['tickers'][ticker]['last_notify_action'] = action
@@ -6983,7 +6992,8 @@ def _run_agent_scan(cfg: dict) -> list:
                 results.append(r)
 
     results.sort(key=lambda x: (-grade_order.get(x['grade'], 0), -x['score']))
-    return results[:20]
+    # 回測驗證：前段候選附歷史勝率，淘汰「選股漂亮但實戰勝率太低」的（治選股≠會賺）
+    return _validate_candidates(results[:20])
 
 
 def _news_digest(query: str, n: int = 3) -> str:
@@ -7014,9 +7024,19 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
         code = h.get('code', '').strip().upper()
         data = _fetch_predict_data(code)
         ctx  = _agent_recommendation_text(data, h)   # 已含市場總經背景＋個股新聞
+        # 個股才附「大盤體質＋進場品質」把關（ETF 偏中長期，不套短線進場守門）
+        if not data.get('is_etf'):
+            ctx += '\n\n' + _entry_context_block(data)
         # 經驗回顧：附上「上次建議＋至今實際漲跌」，要求 AI 先檢討再給今天建議
         prior = _recent_rec_for(cfg, code, today)
         cur_p = safe_float(data.get('price', 0))
+        # 移動停利：更新買進以來波段高點，判斷是否該鎖利（獲利部位回落過深/跌破 MA5）
+        _trailing_peak_update(h, cur_p)
+        trail = _trailing_stop_check(h, cur_p, data.get('ma5'))
+        if trail.get('hit'):
+            ctx += (f"\n\n### 【移動停利觸發】\n{trail['reason']}"
+                    f"（波段高 {trail['peak']} 元、回落 {trail['drop_pct']}%、目前仍獲利 {trail['lock_pct']:+.1f}%）"
+                    f" 請把這點納入今天建議，傾向「停利減碼或全出鎖住獲利」。")
         if prior and safe_float(prior.get('price', 0)) > 0:
             realized = (cur_p - prior['price']) / prior['price'] * 100
             ctx += (f"\n\n### 【上次建議回顧】\n{prior['date']} 你曾建議「{prior['action']}」，"
@@ -7043,6 +7063,10 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
         buy_p = h.get('buy_price', 0)
         price = data.get('price', 0)
         pnl   = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
+        # 技術面急迫訊號；移動停利觸發時，至少升級到「減碼」讓盤中主動推播鎖利
+        action_signal = _holding_action_signal(data)
+        if trail.get('hit') and action_signal != '賣出':
+            action_signal = '減碼'
         return {
             'code':       code,
             'name':       data.get('name', code),
@@ -7050,7 +7074,9 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
             'buy_price':  buy_p,
             'pnl_pct':    pnl,
             'score':      _score_breakout(data),
-            'action_signal': _holding_action_signal(data),
+            'action_signal': action_signal,
+            'trailing':   trail if trail.get('hit') else None,
+            'peak_price': h.get('peak_price'),
             'recommendation': rec_text,
         }
 
@@ -7071,12 +7097,17 @@ def _run_agent_scan_with_ai(cfg: dict, claude_client, us_context: str = '') -> s
         summary_lines.append(us_context + '（台股開盤常跟隨昨夜美股，請把此偏向納入挑選與進場節奏）')
         summary_lines.append('')
     for c in candidates[:10]:
+        bt = c.get('backtest') or {}
+        bt_txt = (f" 回測勝率:{bt['win_rate']}%(訊號{bt['signal']}/{bt['trades']}次)"
+                  if bt.get('win_rate') is not None else ' 回測:樣本不足')
         summary_lines.append(
             f"{c['name']}（{c['code']}） 現價:{c['price']} 得分:{c['score']}/5 "
             f"乖離:{c.get('bias20','?')}% 反彈:{c.get('rebound','?'):.1f}% "
             f"{c.get('kd','')} 月線:{c.get('ma20_trend','')[:4]} "
-            f"量能:{c.get('vol_structure','')[:4]}"
+            f"量能:{c.get('vol_structure','')[:4]}{bt_txt}"
         )
+    summary_lines.append('\n（回測勝率＝該檔過去出現起漲訊號後實際獲利的比率，勝率高者較可信；'
+                         '請優先挑回測勝率高且當前不過熱的標的。）')
 
     try:
         resp = claude_client.messages.create(
@@ -7208,6 +7239,218 @@ def _us_overnight_snapshot() -> dict:
     out = {'data': data, 'bias': bias, 'score': round(score, 2), 'summary': summary}
     _cache_set('us_overnight', out, ttl=600)
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  操盤強化層：大盤濾網 / 進場品質 / 移動停利 / 個人化檢討 / 建議命中率
+#  全是純函式，供監測迴圈、晨報/盤後總結與 API 端點共用。
+# ════════════════════════════════════════════════════════════════════════════
+
+def _market_regime() -> dict:
+    """大盤體質濾網：用加權指數位置（站上/跌破 MA20 月線、MA60 季線、月線方向）
+    ＋隔夜美股偏向，綜合判斷現在適不適合積極作多。
+    回 {'regime':'多頭/震盪/空頭', 'allow_buy':bool, 'score':int, 'reason':str}。
+    用途：空頭時自動把買進訊號靜音/降級，少在下跌段接刀（買隔天跌的主因之一）。"""
+    cached = _cache_get('market_regime')
+    if cached is not None:
+        return cached
+    score = 0
+    parts = []
+    try:
+        h = yf.Ticker('^TWII').history(period='5mo', interval='1d')
+        c = h['Close'].dropna()
+        if len(c) >= 60:
+            price = float(c.iloc[-1])
+            ma20  = float(c.rolling(20).mean().iloc[-1])
+            ma60  = float(c.rolling(60).mean().iloc[-1])
+            ma20_prev = float(c.rolling(20).mean().iloc[-6])   # 約一週前的月線值，看月線方向
+            score += 1 if price > ma20 else -1
+            score += 1 if price > ma60 else -1
+            score += 1 if ma20 > ma20_prev else -1
+            parts.append(f"加權 {price:,.0f}（{'站上' if price > ma20 else '跌破'}月線、"
+                         f"{'站上' if price > ma60 else '跌破'}季線、月線{'走揚' if ma20 > ma20_prev else '下彎'}）")
+    except Exception as e:
+        print(f'[Regime] TWII: {e}')
+    try:
+        b = _us_overnight_snapshot().get('bias', '中性')
+        score += 1 if b == '偏多' else (-1 if b == '偏空' else 0)
+        parts.append(f"隔夜美股{b}")
+    except Exception:
+        pass
+    if score >= 2:
+        regime, allow = '多頭', True
+    elif score <= -2:
+        regime, allow = '空頭', False
+    else:
+        regime, allow = '震盪', True
+    out = {'regime': regime, 'allow_buy': allow, 'score': score,
+           'reason': '；'.join(parts) or '大盤資料暫時取不到'}
+    _cache_set('market_regime', out, ttl=1800)
+    return out
+
+
+def _entry_quality(data: dict) -> dict:
+    """判斷「現在這個價位」是不是好買點（治追高、買隔天跌）。
+    依乖離、自低點反彈幅度、RSI、KD 高檔判斷過熱程度，並給「等回檔目標價」與停損。
+    回 {'verdict','hot','wait_price','stop','reasons'}。"""
+    price   = safe_float(data.get('price'))
+    ma5     = safe_float(data.get('ma5'))
+    ma20    = safe_float(data.get('ma20'))
+    bias    = safe_float(data.get('bias20'))
+    rebound = safe_float(data.get('rebound_pct'))
+    rsi     = safe_float(data.get('rsi'))
+    k       = safe_float(data.get('k'))
+    hot, reasons = 0, []
+    if bias >= 6:     hot += 1; reasons.append(f'乖離 {bias:.1f}% 偏大（追高風險）')
+    if rebound >= 15: hot += 1; reasons.append(f'已自近期低點反彈 {rebound:.1f}%')
+    if rsi >= 70:     hot += 1; reasons.append(f'RSI {rsi:.0f} 偏高')
+    if k >= 80:       hot += 1; reasons.append(f'KD K={k:.0f} 高檔')
+    # 等回檔目標價：回到 5 日線、或把乖離壓回 +3% 內，取兩者較低者較安全
+    cands = [v for v in (ma5, ma20 * 1.03 if ma20 else 0) if v > 0]
+    wait_price = round(min(cands), 2) if cands else None
+    stop = round(ma20 * 0.97, 2) if ma20 else None
+    if hot == 0:
+        verdict = '可進場'
+    elif hot <= 2:
+        verdict = '可分批（偏熱）'
+    else:
+        verdict = '偏熱，建議等回檔'
+    return {'verdict': verdict, 'hot': hot, 'wait_price': wait_price,
+            'stop': stop, 'reasons': reasons}
+
+
+def _entry_context_block(data: dict) -> str:
+    """組「大盤體質 + 進場品質」文字，附在個股 AI context 後，要求 AI 在偏熱時
+    明講『等回檔到 X 元再進』而非叫人追高（治買隔天跌）。"""
+    reg = _market_regime()
+    eq  = _entry_quality(data)
+    lines = ['### 【進場時機把關（系統量化）】']
+    lines.append(f"大盤體質：{reg['regime']}（{reg['reason']}）"
+                 + ('；目前不利積極作多，買進請更保守、降低部位或等回檔。'
+                    if not reg['allow_buy'] else '。'))
+    lines.append(f"此價進場品質：{eq['verdict']}"
+                 + (f"（{'；'.join(eq['reasons'])}）" if eq['reasons'] else '（位置不熱，相對安全）'))
+    if eq['hot'] >= 1 and eq['wait_price']:
+        lines.append(f"建議等回檔參考價：約 {eq['wait_price']} 元（回到 5 日線/壓低乖離），停損參考 {eq['stop']} 元。")
+    lines.append('指示：若這是買進機會但上面顯示偏熱或大盤偏空，請「不要叫我現在追高」，'
+                 '改明確給「等回到 X 元再分批進場」與停損價；若位置不熱且大盤站得住，才給可進場價位。')
+    return '\n'.join(lines)
+
+
+def _trailing_peak_update(holding: dict, price: float) -> float:
+    """更新某持倉「買進以來的波段最高價」（移動停利的高水位）。就地寫回 holding，回傳新高。"""
+    p = safe_float(price)
+    buy = safe_float(holding.get('buy_price', 0))
+    peak = max(safe_float(holding.get('peak_price', 0)), p, buy)
+    if peak > 0:
+        holding['peak_price'] = round(peak, 2)
+    return peak
+
+
+def _trailing_stop_check(holding: dict, price: float, ma5: float = 0) -> dict:
+    """移動停利判斷：獲利部位從波段高點回落過深、或跌破 5 日線，提示鎖利。
+    回 {'hit':bool, 'reason':str, 'peak':float, 'drop_pct':float, 'lock_pct':float}。
+    停利鬆緊隨獲利放大而收緊（賺越多越要守住果實）。"""
+    p   = safe_float(price)
+    buy = safe_float(holding.get('buy_price', 0))
+    peak = safe_float(holding.get('peak_price', 0))
+    if p <= 0 or buy <= 0 or peak <= 0:
+        return {'hit': False}
+    gain_at_peak = (peak - buy) / buy
+    # 只有「曾經獲利」的部位才談移動停利；尚未獲利的由停損機制負責
+    if gain_at_peak < 0.05:
+        return {'hit': False, 'peak': peak}
+    trail = 8 if gain_at_peak >= 0.30 else (10 if gain_at_peak >= 0.15 else 12)
+    drop = (peak - p) / peak * 100
+    cur_gain = (p - buy) / buy * 100
+    ma5 = safe_float(ma5)
+    broke_ma5 = ma5 > 0 and p < ma5
+    hit = (drop >= trail and cur_gain > 0) or (broke_ma5 and drop >= trail * 0.6 and cur_gain > 0)
+    reason = ''
+    if hit:
+        why = []
+        if drop >= trail:
+            why.append(f'自波段高 {peak:g} 回落 {drop:.1f}%（觸發 {trail:.0f}% 移動停利）')
+        if broke_ma5:
+            why.append(f'跌破 5 日線 {ma5:g}')
+        reason = f"目前仍獲利 {cur_gain:+.1f}%，但{'、'.join(why)}，建議鎖利出場或停利減碼。"
+    return {'hit': hit, 'reason': reason, 'peak': peak,
+            'drop_pct': round(drop, 1), 'lock_pct': round(cur_gain, 1)}
+
+
+def _trading_review_stats(cfg: dict) -> dict:
+    """用已實現帳本（sells）算出個人交易體質：勝率、平均賺/賠、賺賠比、獲利因子，
+    並抓出可量化的壞習慣（賺小賠大、勝率偏低、追高致虧）。回 dict；無資料回 {}。"""
+    sells = cfg.get('sells', [])
+    if not sells:
+        return {}
+    wins   = [s for s in sells if safe_float(s.get('realized_pnl', 0)) > 0]
+    losses = [s for s in sells if safe_float(s.get('realized_pnl', 0)) < 0]
+    n = len(sells)
+    win_rate = round(len(wins) / n * 100, 1)
+    avg_win  = round(sum(safe_float(s.get('realized_pct', 0)) for s in wins) / len(wins), 1) if wins else 0.0
+    avg_loss = round(sum(safe_float(s.get('realized_pct', 0)) for s in losses) / len(losses), 1) if losses else 0.0
+    gross_win  = sum(safe_float(s.get('realized_pnl', 0)) for s in wins)
+    gross_loss = abs(sum(safe_float(s.get('realized_pnl', 0)) for s in losses))
+    profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else None
+    total_pnl = round(sum(safe_float(s.get('realized_pnl', 0)) for s in sells), 0)
+    rr = round(avg_win / abs(avg_loss), 2) if avg_loss else None   # 賺賠比
+    habits = []
+    if avg_loss and avg_win and abs(avg_loss) > avg_win:
+        habits.append(f'賺小賠大：平均賺 {avg_win:+.1f}%、平均賠 {avg_loss:+.1f}%，'
+                      f'單筆虧損比獲利大，停損常設太鬆或抱虧太久。')
+    if win_rate < 45 and n >= 5:
+        habits.append(f'勝率偏低（{win_rate}%）：進場點品質待加強，建議多等訊號確認、別追高。')
+    if rr is not None and rr < 1 and win_rate < 55:
+        habits.append('賺賠比 <1 且勝率不高：長期難為正，務必先把「停損紀律」與「不追高」做好。')
+    big_loss = [s for s in losses if safe_float(s.get('realized_pct', 0)) <= -10]
+    if big_loss:
+        habits.append(f'出現 {len(big_loss)} 筆 -10% 以上大賠：代表停損沒執行，'
+                      f'最該優先修正（每筆進場都先定好停損價）。')
+    return {
+        'count': n, 'win': len(wins), 'loss': len(losses),
+        'win_rate': win_rate, 'avg_win': avg_win, 'avg_loss': avg_loss,
+        'reward_risk': rr, 'profit_factor': profit_factor,
+        'total_pnl': total_pnl, 'habits': habits,
+    }
+
+
+def _rec_accuracy(cfg: dict) -> dict:
+    """AI 建議命中率：回看 rec_history 裡每筆「買進/加碼」建議，與之後的價格比對，
+    算出方向命中率（喊買後有沒有漲）。用同一檔『更晚一筆 rec 的價』或目前持倉現價當對照，
+    不額外發網路請求。回 {'buy_total','buy_hit','buy_rate','samples':[...]} 或 {}。"""
+    hist = sorted(cfg.get('rec_history', []), key=lambda h: h.get('date', ''))
+    if len(hist) < 2:
+        return {}
+    # 用「同檔、日期更晚一筆 rec 的價」當作建議後的對照價，算方向命中率，不額外發網路請求
+    buy_total = buy_hit = 0
+    samples = []
+    for i, r in enumerate(hist):
+        act = str(r.get('action', ''))
+        if '買' not in act and '加碼' not in act:
+            continue
+        code = r.get('code', '')
+        p0 = safe_float(r.get('price', 0))
+        if p0 <= 0:
+            continue
+        # 找同檔、日期更晚的下一筆價格
+        nxt = next((x for x in hist[i + 1:]
+                    if x.get('code') == code and safe_float(x.get('price', 0)) > 0
+                    and x.get('date', '') > r.get('date', '')), None)
+        p1 = safe_float(nxt.get('price', 0)) if nxt else 0
+        if p1 <= 0:
+            continue
+        chg = (p1 - p0) / p0 * 100
+        buy_total += 1
+        if chg > 0:
+            buy_hit += 1
+        samples.append({'date': r.get('date'), 'code': code, 'name': r.get('name', code),
+                        'p0': round(p0, 2), 'p1': round(p1, 2), 'chg': round(chg, 1)})
+    if buy_total == 0:
+        return {}
+    return {'buy_total': buy_total, 'buy_hit': buy_hit,
+            'buy_rate': round(buy_hit / buy_total * 100, 1),
+            'samples': samples[-20:]}
 
 
 def _us_session_phase() -> str:
@@ -7436,6 +7679,18 @@ def _run_goal_review(cfg: dict, client) -> dict:
         lines.append('\n--- 你的工作台自選策略今日觸發 ---')
         lines.append(names)
 
+    # 個人化交易體質：用實際已實現帳本提醒壞習慣＋AI 建議命中率，讓總結更扣回「如何進步」
+    rv = _trading_review_stats(cfg)
+    if rv:
+        lines.append('\n--- 我的交易體質（已實現帳本）---')
+        lines.append(f"共 {rv['count']} 筆、勝率 {rv['win_rate']}%、平均賺 {rv['avg_win']:+.1f}%／"
+                     f"平均賠 {rv['avg_loss']:+.1f}%、賺賠比 {rv['reward_risk']}、累計 {rv['total_pnl']:+,.0f} 元。")
+        if rv['habits']:
+            lines.append('需修正：' + '；'.join(rv['habits']))
+    ra = _rec_accuracy(cfg)
+    if ra:
+        lines.append(f"（AI 過去買進建議命中率 {ra['buy_rate']}%，樣本 {ra['buy_total']} 筆，僅供校準信心）")
+
     lines.append(
         '\n請用繁體中文、不要 emoji，輸出以下四段：'
         '\n1) 進度評估：一句話講現在達標機率與該偏積極或保守。'
@@ -7443,6 +7698,8 @@ def _run_goal_review(cfg: dict, client) -> dict:
         '每檔給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
         '\n3) 該賣出/減碼：列出持倉中該獲利了結或停損的，講明理由與價位；沒有就說「持倉續抱」。'
         '\n4) 一句總結。'
+        '\n5) 體質提醒：若上面有「我的交易體質／需修正」，用一句話點出我今天最該守住的紀律'
+        '（例如先設好停損、別追高、賺賠比要 >1）；沒有資料就略過這段。'
         '\n\n注意：持倉中若為 ETF（代碼多以 00 開頭），請以中長期角度（淨值溢折價、配息、總經方向）判斷去留，'
         '不要因為短線技術指標就建議賣出 ETF；個股才適合用技術面做積極進出。'
     )
@@ -7898,6 +8155,97 @@ def agent_sells_api():
     total_pct  = round(total_pnl / total_cost * 100, 2) if total_cost else 0
     return jsonify({'sells': sells, 'total_pnl': total_pnl,
                     'total_pct': total_pct, 'count': len(sells)})
+
+
+@app.route('/api/agent/review')
+def agent_review_api():
+    """個人化交易檢討：用已實現帳本算勝率/賺賠比/獲利因子＋抓壞習慣。
+    帶 ?ai=1 時再請 Opus 用這些數字給一段直白的改進建議。"""
+    cfg   = _load_agent_cfg()
+    stats = _trading_review_stats(cfg)
+    if not stats:
+        return jsonify({'ok': True, 'stats': {}, 'advice': '',
+                        'note': '尚無已實現買賣紀錄，先用「賣出」功能登錄幾筆後才能檢討。'})
+    advice = ''
+    if request.args.get('ai') == '1':
+        try:
+            api_key = _agent_api_key(cfg)
+            if api_key:
+                import anthropic
+                hb = '；'.join(stats['habits']) or '無明顯壞習慣'
+                prompt = (
+                    f"這是我的實際已實現交易統計：共 {stats['count']} 筆、勝率 {stats['win_rate']}%、"
+                    f"平均獲利 {stats['avg_win']:+.1f}%、平均虧損 {stats['avg_loss']:+.1f}%、"
+                    f"賺賠比 {stats['reward_risk']}、獲利因子 {stats['profit_factor']}、"
+                    f"累計實現損益 {stats['total_pnl']:+,.0f} 元。系統偵測到的傾向：{hb}。"
+                    "請用繁體中文、不要 emoji，給我 3 點最該優先改的具體做法（聚焦停損紀律、"
+                    "不追高、賺賠比），每點一句話、可立刻執行。")
+                resp = anthropic.Anthropic(api_key=api_key).messages.create(
+                    model='claude-opus-4-8', max_tokens=600,
+                    messages=[{'role': 'user', 'content': prompt}])
+                advice = _strip_emoji(resp.content[0].text or '').strip()
+        except Exception as e:
+            advice = f'（AI 檢討產生失敗：{e}）'
+    return jsonify({'ok': True, 'stats': stats, 'advice': advice})
+
+
+@app.route('/api/agent/rec_accuracy')
+def agent_rec_accuracy_api():
+    """AI 建議命中率：統計過去「買進/加碼」建議之後股價的漲跌方向命中率。"""
+    acc = _rec_accuracy(_load_agent_cfg())
+    if not acc:
+        return jsonify({'ok': True, 'accuracy': {},
+                        'note': '建議樣本還不夠（需累積數天的建議紀錄）才能算命中率。'})
+    return jsonify({'ok': True, 'accuracy': acc})
+
+
+@app.route('/api/agent/entry_check/<code>')
+def agent_entry_check_api(code):
+    """進場守門員：買進前最後確認。回「現在是不是好買點／該等什麼價／停損設哪」。
+    結合大盤體質＋此價進場品質（乖離/反彈/RSI/KD），可帶 ?ai=1 讓 Opus 給一句總結。"""
+    code = code.strip().upper().replace('.TW', '').replace('.TWO', '')
+    data = _fetch_predict_data(code)
+    if data.get('error'):
+        return jsonify({'error': data['error']}), 404
+    if data.get('is_etf'):
+        return jsonify({'ok': True, 'is_etf': True,
+                        'verdict': 'ETF 不適用短線進場守門',
+                        'note': 'ETF 偏中長期定期定額／分批，請改看淨值溢折價與配息，不需要抓短線買點。'})
+    reg = _market_regime()
+    eq  = _entry_quality(data)
+    price = safe_float(data.get('price'))
+    # 結論：大盤偏空一律保守；否則依過熱程度給可進場/分批/等回檔
+    if not reg['allow_buy']:
+        verdict = '大盤偏空，先不建議買進'
+    elif eq['hot'] == 0:
+        verdict = '相對好買點，可進場'
+    elif eq['hot'] <= 2:
+        verdict = '位置偏熱，建議分批/小量'
+    else:
+        verdict = '追高風險大，建議等回檔'
+    advice = ''
+    if request.args.get('ai') == '1':
+        try:
+            api_key = _agent_api_key(cfg=_load_agent_cfg())
+            if api_key:
+                import anthropic
+                ctx = _agent_recommendation_text(data, None) + '\n\n' + _entry_context_block(data)
+                prompt = ('我正考慮買進這檔，請用繁體中文、不要 emoji，只回三行：'
+                          '1) 現在是不是好買點（一句結論）；2) 若該等，明確等回到幾元再進、為什麼；'
+                          '3) 進場後停損價設哪。務必依下列數據，別叫我追高：\n\n' + ctx)
+                resp = anthropic.Anthropic(api_key=api_key).messages.create(
+                    model='claude-opus-4-8', max_tokens=500,
+                    system=_agent_system_prompt(data),
+                    messages=[{'role': 'user', 'content': prompt}])
+                advice = _strip_emoji(resp.content[0].text or '').strip()
+        except Exception as e:
+            advice = f'（AI 產生失敗：{e}）'
+    return jsonify({
+        'ok': True, 'code': code, 'name': data.get('name', code), 'price': price,
+        'verdict': verdict, 'regime': reg, 'entry': eq,
+        'wait_price': eq['wait_price'], 'stop': eq['stop'],
+        'reasons': eq['reasons'], 'advice': advice,
+    })
 
 
 @app.route('/api/agent/scan', methods=['POST'])
@@ -8848,6 +9196,58 @@ def _run_backtest(ticker, signal='kd_gc', period='3y'):
         'best':        results[0] if results else None,
         'results':     results,
     }
+
+
+#  代表性「起漲」訊號，用來回測驗證一檔候選是否真有歷史勝率（治「選股漂亮、實戰會賠」）
+_VALIDATE_SIGNALS = ['ma20_turn_up', 'kd_low_gc', 'breakout_ma20']
+
+
+def _quick_winrate(code: str, period: str = '3y') -> dict:
+    """快速回測驗證：用幾個代表性『起漲』訊號回測這檔，取『勝率最高且樣本足夠』的一組，
+    證明這檔出現起漲訊號後歷史上實際會賺。回 {win_rate, avg_ret, trades, signal} 或 {}。
+    結果當日快取（同一檔一天只算一次），避免盤中重複掃描重算。"""
+    ck = f'winrate_{code}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    best = {}
+    try:
+        hist, c, name = _bt_load_history(code, period)
+        if hist is not None and len(hist) >= 120:
+            grid = _exit_strategy_grid()
+            for sig in _VALIDATE_SIGNALS:
+                mask = _compute_entry_mask(hist, sig)
+                if int(mask.sum()) < 3:
+                    continue
+                for cfg in grid:
+                    summ = _summarize(_simulate_trades(hist, mask, cfg))
+                    if summ['trades'] < 3:
+                        continue
+                    if (not best or summ['win_rate'] > best['win_rate']
+                            or (summ['win_rate'] == best['win_rate'] and summ['avg_ret'] > best['avg_ret'])):
+                        best = {'win_rate': summ['win_rate'], 'avg_ret': summ['avg_ret'],
+                                'trades': summ['trades'], 'signal': ENTRY_SIGNALS.get(sig, sig)}
+    except Exception as e:
+        print(f'[Winrate] {code}: {e}')
+    _cache_set(ck, best, ttl=21600)   # 6 小時
+    return best
+
+
+def _validate_candidates(results: list, top_n: int = 10, min_win: float = 40.0) -> list:
+    """對選股候選的前 top_n 名做回測驗證，附上歷史勝率；勝率明顯偏低（樣本足夠卻 <min_win）
+    的直接淘汰，落實「只推回測證明有效的」。樣本不足者保留但標註。回過濾後清單。"""
+    head, tail = results[:top_n], results[top_n:]
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(head)))) as ex:
+        wrs = list(ex.map(lambda r: _quick_winrate(r['code']), head))
+    kept = []
+    for r, wr in zip(head, wrs):
+        r['backtest'] = wr or None
+        if wr and wr.get('trades', 0) >= 5 and wr.get('win_rate', 0) < min_win:
+            continue   # 樣本足夠且歷史勝率太低 → 淘汰，不推給使用者
+        kept.append(r)
+    # 有回測勝率的排前面（高→低），其餘維持原順序在後
+    kept.sort(key=lambda r: (r.get('backtest') or {}).get('win_rate', -1), reverse=True)
+    return kept + tail
 
 
 def _optimize_backtest(ticker, period='3y', min_trades=4):

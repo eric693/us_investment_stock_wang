@@ -590,9 +590,14 @@ select.scan-input { width: 120px; }
       <div class="import-paste" style="margin-top:6px">同代碼再次「新增」＝自動加碼（累加股數＋算加權平均成本）；表格內「買入價／股數」可<b>雙擊直接修改</b>（Enter 存、Esc 取消）。</div>
 
       <!-- 損益彙總（未實現＋已實現＋報酬率）-->
-      <div id="pnlSummary" style="display:none;gap:18px;flex-wrap:wrap;margin:10px 0;font-size:.82rem;">
+      <div id="pnlSummary" style="display:none;gap:18px;flex-wrap:wrap;margin:10px 0;font-size:.82rem;align-items:center;">
         <span>未實現損益：<b id="sumUnrealized">--</b></span>
         <span>已實現損益：<b id="sumRealizedAgent">--</b></span>
+        <button class="analyze-row-btn" onclick="loadReview()">交易體質檢討</button>
+      </div>
+      <div class="rec-box" id="reviewBox" style="display:none;margin:6px 0 12px">
+        <h4>我的交易體質（用實際買賣帳本）</h4>
+        <div id="reviewContent"></div>
       </div>
 
       <div id="holdingsLoading" style="color:var(--text-dim);font-size:.8rem;padding:8px 0">載入中...</div>
@@ -680,6 +685,22 @@ select.scan-input { width: 120px; }
           </select>
         </div>
         <button class="scan-btn" id="scanBtn" onclick="runScan()">開始掃描</button>
+      </div>
+
+      <!-- 進場守門員：買進前最後確認 -->
+      <div class="scan-controls" style="margin-top:12px;border:1px solid #1d3050;border-radius:10px;padding:12px">
+        <div class="scan-field" style="flex:0 0 auto">
+          <label>進場守門員</label>
+          <input type="text" class="scan-input" id="ecCode" placeholder="股票代碼 例 2330" style="width:140px">
+        </div>
+        <button class="scan-btn" id="ecBtn" onclick="entryCheck()" style="align-self:flex-end">買進前確認</button>
+        <div style="flex:1 1 100%;color:var(--text-dim);font-size:.78rem;margin-top:2px">
+          結合大盤體質＋此價過熱程度，回「好買點／分批／等回檔到 X 元」與停損，治追高、買隔天跌。
+        </div>
+      </div>
+      <div class="rec-box" id="ecBox" style="margin-top:10px;display:none">
+        <h4>進場守門員結果</h4>
+        <div id="ecContent"></div>
       </div>
 
       <div id="scanLoading" style="display:none;color:var(--text-dim);font-size:.82rem;padding:8px">
@@ -1117,6 +1138,67 @@ function restoreAgentReports() {
 }
 
 // ── Scanner ───────────────────────────────────────────────────────────────
+async function loadReview() {
+  const box = document.getElementById('reviewBox');
+  const out = document.getElementById('reviewContent');
+  box.style.display = 'block';
+  out.innerHTML = '統計中（含 AI 建議，約 5-10 秒）...';
+  try {
+    const [rv, ra] = await Promise.all([
+      fetch('/api/agent/review?ai=1').then(r => r.json()),
+      fetch('/api/agent/rec_accuracy').then(r => r.json()),
+    ]);
+    if (!rv.stats || !rv.stats.count) { out.innerHTML = rv.note || '尚無已實現買賣紀錄。'; return; }
+    const s = rv.stats;
+    let html = `<div style="font-size:.86rem;line-height:1.7">`;
+    html += `共 <b>${s.count}</b> 筆，勝率 <b>${s.win_rate}%</b>（${s.win} 勝 / ${s.loss} 敗）<br>`;
+    html += `平均賺 <b>${s.avg_win >= 0 ? '+' : ''}${s.avg_win}%</b>　平均賠 <b>${s.avg_loss}%</b>　賺賠比 <b>${s.reward_risk ?? '—'}</b><br>`;
+    html += `獲利因子 <b>${s.profit_factor ?? '—'}</b>　累計實現損益 <b>${s.total_pnl >= 0 ? '+' : ''}${s.total_pnl.toLocaleString()}</b> 元`;
+    if (ra.accuracy && ra.accuracy.buy_total) {
+      html += `<br>AI 買進建議命中率 <b>${ra.accuracy.buy_rate}%</b>（樣本 ${ra.accuracy.buy_total} 筆）`;
+    }
+    html += `</div>`;
+    if (s.habits && s.habits.length) {
+      html += `<div style="margin-top:8px;color:#e0a04a;font-size:.83rem">需修正：<br>` +
+              s.habits.map(h => '・' + h).join('<br>') + `</div>`;
+    }
+    if (rv.advice) html += `<div style="white-space:pre-wrap;border-top:1px solid #1d3050;margin-top:8px;padding-top:8px;font-size:.85rem">${rv.advice}</div>`;
+    out.innerHTML = html;
+  } catch(e) {
+    out.innerHTML = `統計失敗：${e.message}`;
+  }
+}
+
+async function entryCheck() {
+  const code = (document.getElementById('ecCode').value || '').trim().toUpperCase();
+  if (!code) { alert('請先輸入股票代碼'); return; }
+  const btn = document.getElementById('ecBtn');
+  const box = document.getElementById('ecBox');
+  const out = document.getElementById('ecContent');
+  btn.disabled = true; box.style.display = 'block';
+  out.innerHTML = '查詢中（含 AI 判讀，約 5-10 秒）...';
+  try {
+    const r = await fetch(`/api/agent/entry_check/${code}?ai=1`);
+    const d = await r.json();
+    if (d.error) { out.innerHTML = `查詢失敗：${d.error}`; return; }
+    if (d.is_etf) { out.innerHTML = `${d.verdict}<br><span style="color:var(--text-dim)">${d.note}</span>`; return; }
+    const reasons = (d.reasons && d.reasons.length) ? d.reasons.join('；') : '位置不熱，相對安全';
+    const wait = d.wait_price ? `${d.wait_price} 元` : '—';
+    const stop = d.stop ? `${d.stop} 元` : '—';
+    let html = `<div style="font-size:1rem;font-weight:700;margin-bottom:6px">${d.name}（${d.code}） 現價 ${d.price} 元</div>`;
+    html += `<div style="margin-bottom:4px">結論：<b>${d.verdict}</b></div>`;
+    html += `<div style="color:var(--text-dim);font-size:.82rem;margin-bottom:4px">大盤體質：${d.regime.regime}（${d.regime.reason}）</div>`;
+    html += `<div style="font-size:.85rem;margin-bottom:4px">過熱判斷：${reasons}</div>`;
+    html += `<div style="font-size:.85rem;margin-bottom:8px">等回檔參考：${wait}　停損參考：${stop}</div>`;
+    if (d.advice) html += `<div style="white-space:pre-wrap;border-top:1px solid #1d3050;padding-top:8px">${d.advice}</div>`;
+    out.innerHTML = html;
+  } catch(e) {
+    out.innerHTML = `查詢失敗：${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function runScan() {
   const btn = document.getElementById('scanBtn');
   const loading = document.getElementById('scanLoading');
@@ -1190,6 +1272,9 @@ function renderCandidates(candidates) {
           <span class="cand-tag ${biasCls}">乖離${c.bias20 !== null ? c.bias20.toFixed(1) : '?'}%</span>
           <span class="cand-tag ${rebCls}">反彈${c.rebound !== null ? c.rebound.toFixed(1) : '?'}%</span>
           <span class="cand-tag ${volRCls}">量比${c.vol_ratio ? c.vol_ratio.toFixed(1) : '?'}x</span>
+          ${c.backtest && c.backtest.win_rate !== undefined && c.backtest.win_rate !== null
+            ? `<span class="cand-tag ${c.backtest.win_rate >= 60 ? 'tag-green' : c.backtest.win_rate >= 45 ? 'tag-blue' : 'tag-yellow'}" title="過去出現起漲訊號(${c.backtest.signal})後實際獲利比率，${c.backtest.trades} 次">回測勝率${c.backtest.win_rate}%</span>`
+            : ''}
           ${c.rsi !== undefined ? `<span class="cand-tag ${c.rsi < 30 ? 'tag-green' : c.rsi > 65 ? 'tag-red' : 'tag-gray'}">RSI${c.rsi}</span>` : ''}
           ${c.inst_total !== null && c.inst_total !== undefined
             ? `<span class="cand-tag ${c.inst_total > 0 ? 'tag-green' : 'tag-red'}">法人${c.inst_total > 0 ? '+' : ''}${c.inst_total}</span>`
