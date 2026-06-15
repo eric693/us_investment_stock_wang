@@ -9932,15 +9932,24 @@ def ai_chat():
             convo  = list(messages)
             all_cards = []
 
+            # 工具型 agent 每輪「Opus + 工具」可能各跑數十秒，期間若無資料流出，
+            # nginx(proxy_read_timeout)會把 SSE 連線切掉 → 前端顯示「network error」。
+            # 故把阻塞呼叫丟背景執行緒，等待時每 15 秒送一次心跳 status，連線不中斷又顯示進度。
             for _ in range(6):  # 最多 6 輪工具呼叫，防止無限迴圈
-                resp = client.messages.create(
-                    model='claude-opus-4-8',
-                    max_tokens=2000,
-                    system=[{'type': 'text', 'text': system_prompt,
-                             'cache_control': {'type': 'ephemeral'}}],
-                    tools=_AI_TOOLS,
-                    messages=convo,
-                )
+                resp = None
+                with ThreadPoolExecutor(max_workers=1) as _tex:
+                    _fut = _tex.submit(lambda: client.messages.create(
+                        model='claude-opus-4-8', max_tokens=2000,
+                        system=[{'type': 'text', 'text': system_prompt,
+                                 'cache_control': {'type': 'ephemeral'}}],
+                        tools=_AI_TOOLS, messages=convo))
+                    _waited = 0
+                    while resp is None:
+                        try:
+                            resp = _fut.result(timeout=15)
+                        except FuturesTimeout:
+                            _waited += 15
+                            yield f"data: {json.dumps({'status': f'AI 思考中（已 {_waited} 秒）'})}\n\n"
 
                 # 串流輸出本輪的文字內容（去除 emoji 以符合使用者偏好）
                 text_blocks = [b for b in resp.content if b.type == 'text']
@@ -9962,7 +9971,17 @@ def ai_chat():
                     status = _tool_status_msg(block.name, block.input)
                     yield f"data: {json.dumps({'status': status})}\n\n"
 
-                    result = _dispatch_tool(block.name, block.input)
+                    # 工具可能跑數十秒，背景執行＋每 15 秒心跳，避免連線逾時被切
+                    with ThreadPoolExecutor(max_workers=1) as _tex:
+                        _fut = _tex.submit(_dispatch_tool, block.name, block.input)
+                        _waited, _done = 0, False
+                        while not _done:
+                            try:
+                                result = _fut.result(timeout=15)
+                                _done = True
+                            except FuturesTimeout:
+                                _waited += 15
+                                yield f"data: {json.dumps({'status': f'{status}（已 {_waited} 秒，請稍候）'})}\n\n"
 
                     # 收集股票卡片給前端渲染
                     if block.name == 'screen_stocks' and result.get('matches'):
