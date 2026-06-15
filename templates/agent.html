@@ -1200,6 +1200,7 @@ function renderPlans(d) {
         <span style="color:var(--text-dim)">現價 ${p.price}</span>
       </div>
       <div style="font-size:.85rem;margin-top:3px">買點 <b>${p.buy_low}–${p.buy_high}</b> 元　停損 ${p.stop}　目標 ${p.target}　（${p.regime}・${p.verdict}）</div>
+      ${(p.patterns && p.patterns.length) ? `<div style="margin-top:3px">${p.patterns.map(x => `<span class="cand-tag tag-green">${x}</span>`).join(' ')}</div>` : ''}
       ${p.note ? `<div style="font-size:.82rem;color:var(--text-dim);margin-top:2px">研判：${p.note}</div>` : ''}
     </div>`;
   }).join('');

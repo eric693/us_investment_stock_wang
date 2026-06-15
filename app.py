@@ -3412,6 +3412,36 @@ def _get_tw_foreign_holding(code: str):
     return res
 
 
+_tw_dispersion_code_cache: dict = {}   # code -> (ts, dict|None) 外資持股比例（散戶/法人結構代理）
+
+def _get_tw_dispersion(code: str):
+    """散戶/法人籌碼結構代理指標。集保股權分散表(TDCC)在 FinMind 屬付費級、免費 token
+    取不到，改用『外資持股比例』(TaiwanStockShareholding，免費可取) 的趨勢當代理：
+    外資持股比例上升＝法人加碼、散戶相對減少（偏多）；下降＝外資調節、散戶接手（偏空）。
+    搭配 margin（融資餘額）一起看更完整。回 {big_pct(外資持股%), big_pct_prev,
+    chg(近約一週變化), date}。逐檔快取 6 小時。"""
+    code = str(code).strip().replace('.TW', '').replace('.TWO', '')
+    now  = time.time()
+    with _tw_margin_lock:
+        ent = _tw_dispersion_code_cache.get(code)
+    if ent and now - ent[0] < 21600:
+        return ent[1]
+    rows = _finmind_fetch('TaiwanStockShareholding', code, days=40)
+    res = None
+    rows = [r for r in (rows or []) if safe_float(r.get('ForeignInvestmentSharesRatio', 0)) > 0]
+    if rows:
+        rows.sort(key=lambda r: r.get('date', ''))
+        cur      = safe_float(rows[-1].get('ForeignInvestmentSharesRatio', 0))
+        prev_row = rows[-6] if len(rows) >= 6 else rows[0]     # 約一週前
+        prev     = safe_float(prev_row.get('ForeignInvestmentSharesRatio', 0))
+        res = {'big_pct': round(cur, 2), 'big_pct_prev': round(prev, 2),
+               'chg': round(cur - prev, 2), 'date': rows[-1].get('date', ''),
+               'kind': 'foreign'}
+    with _tw_margin_lock:
+        _tw_dispersion_code_cache[code] = (now, res)
+    return res
+
+
 def _get_tw_daytrade(code: str):
     """當沖量（FinMind TaiwanStockDayTrading，回最近有量的一日 {date, volume}，逐檔快取 1 小時）。
     當沖比由呼叫端用『當沖量 / 該日總量』算（總量取自價量歷史）。"""
@@ -5775,6 +5805,12 @@ def _fetch_predict_data(code: str) -> dict:
         except Exception:
             result['lending'] = None
 
+        # ── 集保股權分散：大戶/散戶結構（散戶持股比例的代理指標）──
+        try:
+            result['dispersion'] = _get_tw_dispersion(code) if not result.get('is_etf') else None
+        except Exception:
+            result['dispersion'] = None
+
         # ── 法人連續買賣超序列（最新在前，供基本面/籌碼面評估）──
         try:
             result['inst_hist'] = _get_tw_inst_hist(code)
@@ -6832,6 +6868,15 @@ def _agent_recommendation_text(data: dict, holding: dict = None) -> str:
         trend = '增加（空方加碼）' if chg > 0 else ('減少（空方回補）' if chg < 0 else '持平')
         lines.append(f"借券賣出餘額：{bal:,.0f} 股（較前日{trend} {abs(chg):,.0f}）")
 
+    # 外資持股比例趨勢：法人/散戶結構代理（散戶持股比例與外資持股比例約略相反）
+    disp = data.get('dispersion')
+    if disp and disp.get('big_pct') is not None:
+        d_chg = safe_float(disp.get('chg', 0))
+        d_trend = ('外資加碼、散戶相對減少（偏多）' if d_chg > 0.3 else
+                   '外資調節、散戶接手（偏空）' if d_chg < -0.3 else '變化不大')
+        lines.append(f"外資持股比例：{disp['big_pct']:.1f}%"
+                     f"（近週 {d_chg:+.2f}%，{d_trend}）；散戶持股比例約略與此相反，可搭配融資餘額一起看。")
+
     # 法人連續買賣超天數（籌碼連續性）
     ih = data.get('inst_hist')
     if ih and ih.get('foreign'):
@@ -7436,6 +7481,11 @@ def _distribution_signal(data: dict) -> dict:
     bal, prev = safe_float(ld.get('lending_balance', 0)), safe_float(ld.get('lending_balance_prev', 0))
     if prev > 0 and bal > prev * 1.1:
         score += 1; reasons.append('借券賣出餘額明顯增加，空方加碼')
+    # 8. 外資持股比例下降（法人調節、散戶接手＝籌碼轉壞）
+    disp = data.get('dispersion') or {}
+    if safe_float(disp.get('chg', 0)) <= -0.5:
+        score += 1; reasons.append(f"外資持股比例近週降 {abs(safe_float(disp.get('chg',0))):.2f}%"
+                                   f"（法人調節、散戶接手）")
     level = 'high' if score >= 4 else ('med' if score >= 2 else None)
     return {'level': level, 'reasons': reasons, 'score': score}
 
@@ -7585,8 +7635,10 @@ def _generate_entry_plans(cfg: dict, client) -> int:
             # 疑似主力出貨的檔不出買進計畫（不叫人買在出貨段）
             if _distribution_signal(data).get('level') == 'high':
                 return None
-            eq  = _entry_quality(data)
-            reg = _market_regime()
+            eq   = _entry_quality(data)
+            reg  = _market_regime()
+            pats = _detect_patterns(code)
+            pat_labels = [p['label'] for p in pats]
             # 買點參考價：偏熱用「等回檔目標價」，不熱就現價附近可進
             entry_ref = eq['wait_price'] if (eq['hot'] >= 1 and eq['wait_price']) else price
             buy_low  = round(entry_ref * 0.98, 2)
@@ -7596,8 +7648,10 @@ def _generate_entry_plans(cfg: dict, client) -> int:
             conf, note = '中', ''
             try:
                 ctx = _agent_recommendation_text(data, None) + '\n\n' + _entry_context_block(data)
+                pat_hint = ('；今日 K 線型態：' + '、'.join(pat_labels)) if pat_labels else ''
                 prompt = (f"請判斷『明日是否值得進場』，只回兩行，不要 emoji：\n"
-                          f"研判：（一句話，結合技術面/籌碼/大盤，說明明日可不可考慮進場、理由）\n"
+                          f"研判：（一句話，務必先點出今日是哪個 K 線型態/技術訊號代表買點（若有），"
+                          f"再結合籌碼/大盤說明明日可不可考慮進場、理由）{pat_hint}\n"
                           f"信心：高 或 中 或 低\n"
                           f"（系統設定買點區間 {buy_low}-{buy_high} 元、停損 {stop}、目標 {target}）\n\n{ctx}")
                 resp = client.messages.create(
@@ -7620,7 +7674,7 @@ def _generate_entry_plans(cfg: dict, client) -> int:
                 'buy_low': buy_low, 'buy_high': buy_high, 'stop': stop,
                 'target': round(target, 2), 'confidence': conf, 'hot': eq['hot'],
                 'regime': reg['regime'], 'verdict': eq['verdict'], 'note': note,
-                'triggered': False, 'triggered_at': '',
+                'patterns': pat_labels, 'triggered': False, 'triggered_at': '',
             })
         except Exception as e:
             print(f'[EntryPlan] {code}: {e}')
