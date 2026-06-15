@@ -387,6 +387,22 @@ def _run_server_scan():
             info = stock.info
             price = safe_float(info.get('currentPrice', info.get('regularMarketPrice', 0)))
             if price <= 0:
+                # 上櫃股若以 .TW 存入會永遠 404、每輪重打。偵測到就改存成 .TWO，
+                # 下一輪起正常監測（本輪先略過，避免迴圈中改鍵造成狀態錯位）。
+                if ticker.upper().endswith('.TW'):
+                    alt = ticker[:-3] + '.TWO'
+                    try:
+                        ainfo = yf.Ticker(alt).info
+                        ap = safe_float(ainfo.get('currentPrice', ainfo.get('regularMarketPrice', 0)))
+                    except Exception:
+                        ap = 0
+                    if ap > 0:
+                        with _monitor_lock:
+                            c = _load_monitor_cfg()
+                            if ticker in c.get('tickers', {}) and alt not in c.get('tickers', {}):
+                                c['tickers'][alt] = c['tickers'].pop(ticker)
+                                _save_monitor_cfg(c)
+                        print(f'[Monitor] 上櫃代碼修正 {ticker} → {alt}')
                 continue
             name = tw_cn_name(ticker, info.get('shortName', info.get('longName', ticker)))
             if profile == 'strategy':
