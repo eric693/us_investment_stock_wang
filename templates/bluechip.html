@@ -66,9 +66,12 @@
 .summary-pill{padding:5px 12px;border-radius:20px;font-size:0.74rem;font-weight:700;background:#0d1828;border:1px solid var(--card-bd);color:var(--text-mid);}
 .summary-pill b{color:var(--text);}
 
-.result-table-wrap{overflow-x:auto;}
+/* 有界高度的捲動容器：表身在框內捲動，sticky 表頭才會固定在框頂不被整頁捲走 */
+.result-table-wrap{overflow:auto;max-height:calc(100vh - 210px);}
 .result-table{width:100%;border-collapse:collapse;font-size:0.81rem;}
-.result-table th{padding:8px 9px;background:#0d1828;color:var(--text-dim);font-size:0.7rem;font-weight:700;letter-spacing:.3px;border-bottom:1px solid var(--card-bd);white-space:nowrap;text-align:right;position:sticky;top:0;}
+.result-table th{padding:8px 9px;background:#0d1828;color:var(--text-dim);font-size:0.7rem;font-weight:700;letter-spacing:.3px;border-bottom:1px solid var(--card-bd);white-space:nowrap;text-align:right;position:sticky;top:0;z-index:2;cursor:pointer;user-select:none;}
+.result-table th:hover{color:var(--text);background:#13233a;}
+.result-table th .r-sort{color:var(--accent,#3d8ef8);font-size:.68rem;margin-left:2px;}
 .result-table th:first-child,.result-table th:nth-child(2){text-align:left;}
 .result-table td{padding:9px 9px;border-bottom:1px solid rgba(21,32,48,.6);text-align:right;vertical-align:middle;white-space:nowrap;}
 .result-table td:first-child,.result-table td:nth-child(2){text-align:left;}
@@ -335,30 +338,68 @@ function renderResults(data) {
     <span class="summary-pill">財報不全略過 <b>${ex.noData||0}</b></span>
     <span class="summary-pill">現金流下滑剔除 <b>${ex.declining||0}</b></span>`;
 
-  const rows = data.results || [];
+  _blRows  = data.results || [];
+  _blIsTw  = _market === 'tw';
+  _blSortKey = 'rank';     // 預設依綜合排名
+  _blSortDir = 1;          // 1=由小到大, -1=由大到小
+  renderBlTable();
+}
+
+// 欄位定義：key 對應資料欄、type 決定數值或文字排序、sub 為小字副標
+const _BL_COLS = [
+  {key:'rank',       label:'#',        type:'num'},
+  {key:'display',    label:'股票',     type:'str'},
+  {key:'totalScore', label:'綜合分數', type:'num'},
+  {key:'price',      label:'股價',     type:'num'},
+  {key:'fcfRate',    label:'FCF報酬率', sub:'最新/前年', type:'num'},
+  {key:'fcfAvg3',    label:'3年平均',  type:'num'},
+  {key:'pb',         label:'P/B',      sub:'排名', type:'num'},
+  {key:'pe',         label:'P/E',      sub:'排名', type:'num'},
+  {key:'divYield',   label:'殖利率',   sub:'排名', type:'num'},
+];
+let _blRows = [], _blIsTw = true, _blSortKey = 'rank', _blSortDir = 1;
+
+function sortBl(key) {
+  if (_blSortKey === key) {
+    _blSortDir = -_blSortDir;                 // 再點同欄 → 反向
+  } else {
+    _blSortKey = key;
+    const col = _BL_COLS.find(c => c.key === key);
+    _blSortDir = (col && col.type === 'str') ? 1 : -1;  // 數值首點由大到小、文字 A→Z
+  }
+  renderBlTable();
+}
+
+function renderBlTable() {
   const area = document.getElementById('resultArea');
-  if (!rows.length) {
+  if (!_blRows.length) {
     area.innerHTML = '<div class="empty-hint">沒有符合條件的公司。<br>可試著放寬「自由現金流取前 %」或取消「排除下滑」，並確認股票池財報資料齊全。</div>';
     return;
   }
+  const col = _BL_COLS.find(c => c.key === _blSortKey) || _BL_COLS[0];
+  const rows = _blRows.slice().sort((a, b) => {
+    let va = a[col.key], vb = b[col.key];
+    if (col.type === 'str') return String(va||'').localeCompare(String(vb||'')) * _blSortDir;
+    va = (va == null || va === '') ? -Infinity : Number(va);
+    vb = (vb == null || vb === '') ? -Infinity : Number(vb);
+    if (isNaN(va)) va = -Infinity;  if (isNaN(vb)) vb = -Infinity;
+    return (va - vb) * _blSortDir;
+  });
 
-  const isTw = _market === 'tw';
-  let html = '<div class="result-table-wrap"><table class="result-table"><thead><tr>'
-    + '<th>#</th><th>股票</th><th>綜合分數</th>'
-    + '<th>股價</th>'
-    + '<th>FCF報酬率<div class="r-sub">最新/前年</div></th>'
-    + '<th>3年平均</th>'
-    + '<th>P/B<div class="r-sub">排名</div></th>'
-    + '<th>P/E<div class="r-sub">排名</div></th>'
-    + '<th>殖利率<div class="r-sub">排名</div></th>'
-    + '</tr></thead><tbody>';
+  let html = '<div class="result-table-wrap"><table class="result-table"><thead><tr>';
+  _BL_COLS.forEach(c => {
+    const arrow = _blSortKey === c.key ? `<span class="r-sort">${_blSortDir === 1 ? '▲' : '▼'}</span>` : '';
+    html += `<th onclick="sortBl('${c.key}')" title="點擊排序（再點反向）">${c.label}${arrow}`
+          + (c.sub ? `<div class="r-sub">${c.sub}</div>` : '') + '</th>';
+  });
+  html += '</tr></thead><tbody>';
 
   rows.forEach(r => {
     const fcfTrend = (r.fcfRate!=null && r.fcfPrev!=null && r.fcfRate < r.fcfPrev) ? 'color:var(--red)' : 'color:var(--green)';
     html += `<tr>
       <td class="r-rank">${r.rank}</td>
       <td>
-        <span class="r-sym" onclick="openStockDetail('${r.display}', ${isTw})">${r.display}</span>
+        <span class="r-sym" onclick="openStockDetail('${r.display}', ${_blIsTw})">${r.display}</span>
         <div class="r-name">${r.name||''}</div>
       </td>
       <td class="r-score">${r.totalScore}</td>
