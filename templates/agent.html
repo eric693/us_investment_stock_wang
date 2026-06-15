@@ -1250,6 +1250,10 @@ async function entryCheck() {
     let html = `<div style="font-size:1rem;font-weight:700;margin-bottom:6px">${d.name}（${d.code}） 現價 ${d.price} 元</div>`;
     html += `<div style="margin-bottom:4px">結論：<b>${d.verdict}</b></div>`;
     html += `<div style="color:var(--text-dim);font-size:.82rem;margin-bottom:4px">大盤體質：${d.regime.regime}（${d.regime.reason}）</div>`;
+    if (d.patterns && d.patterns.length)
+      html += `<div style="font-size:.85rem;margin-bottom:4px">今日 K 線型態：${d.patterns.map(p => `<span class="cand-tag tag-green">${p}</span>`).join(' ')}</div>`;
+    if (d.distribution && d.distribution.level)
+      html += `<div style="font-size:.85rem;margin-bottom:4px;color:#e0a04a">出貨/籌碼警示（${d.distribution.level}）：${d.distribution.reasons.join('；')}</div>`;
     html += `<div style="font-size:.85rem;margin-bottom:4px">過熱判斷：${reasons}</div>`;
     html += `<div style="font-size:.85rem;margin-bottom:8px">等回檔參考：${wait}　停損參考：${stop}</div>`;
     if (d.advice) html += `<div style="white-space:pre-wrap;border-top:1px solid #1d3050;padding-top:8px">${d.advice}</div>`;

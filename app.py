@@ -7046,6 +7046,12 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
             ctx += (f"\n\n### 【移動停利觸發】\n{trail['reason']}"
                     f"（波段高 {trail['peak']} 元、回落 {trail['drop_pct']}%、目前仍獲利 {trail['lock_pct']:+.1f}%）"
                     f" 請把這點納入今天建議，傾向「停利減碼或全出鎖住獲利」。")
+        # 主力出貨／快逃偵測：個股才做（ETF 籌碼邏輯不同）
+        dist = _distribution_signal(data) if not data.get('is_etf') else {'level': None, 'reasons': []}
+        if dist['level']:
+            ctx += (f"\n\n### 【主力出貨／籌碼警示（{dist['level']}）】\n"
+                    f"偵測到：{'；'.join(dist['reasons'])}。"
+                    f"{'這是強烈出貨/轉弱訊號，請傾向「儘快減碼或出場」並給明確價位。' if dist['level']=='high' else '籌碼轉弱，請提高警覺、收緊停利並給觀察點。'}")
         if prior and safe_float(prior.get('price', 0)) > 0:
             realized = (cur_p - prior['price']) / prior['price'] * 100
             ctx += (f"\n\n### 【上次建議回顧】\n{prior['date']} 你曾建議「{prior['action']}」，"
@@ -7072,9 +7078,13 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
         buy_p = h.get('buy_price', 0)
         price = data.get('price', 0)
         pnl   = round((price - buy_p) / buy_p * 100, 2) if buy_p else 0
-        # 技術面急迫訊號；移動停利觸發時，至少升級到「減碼」讓盤中主動推播鎖利
+        # 技術面急迫訊號；移動停利或主力出貨偵測都會升級訊號，讓盤中主動推播快逃/鎖利
         action_signal = _holding_action_signal(data)
         if trail.get('hit') and action_signal != '賣出':
+            action_signal = '減碼'
+        if dist.get('level') == 'high':
+            action_signal = '賣出'        # 疑似主力出貨 → 最高級警示，盤中立即推
+        elif dist.get('level') == 'med' and action_signal != '賣出':
             action_signal = '減碼'
         return {
             'code':       code,
@@ -7085,6 +7095,7 @@ def _run_agent_holdings_analysis(cfg: dict, claude_client) -> list:
             'score':      _score_breakout(data),
             'action_signal': action_signal,
             'trailing':   trail if trail.get('hit') else None,
+            'distribution': dist if dist.get('level') else None,
             'peak_price': h.get('peak_price'),
             'recommendation': rec_text,
         }
@@ -7341,9 +7352,92 @@ def _entry_context_block(data: dict) -> str:
                  + (f"（{'；'.join(eq['reasons'])}）" if eq['reasons'] else '（位置不熱，相對安全）'))
     if eq['hot'] >= 1 and eq['wait_price']:
         lines.append(f"建議等回檔參考價：約 {eq['wait_price']} 元（回到 5 日線/壓低乖離），停損參考 {eq['stop']} 元。")
+    # K 線型態自動辨識：標出今天觸發了哪些「買方型態」，讓 AI 直接據此說明為何是買點
+    pats = _detect_patterns(data.get('code', ''))
+    if pats:
+        lines.append('今日觸發技術型態（買方）：' + '、'.join(f"{p['label']}" for p in pats[:8])
+                     + '。請結合這些型態說明「為何現在/回檔到買點是合理進場」。')
+    # 主力出貨偵測：偏空訊號，避免叫人買在出貨段
+    dist = _distribution_signal(data)
+    if dist['level']:
+        lines.append(f"出貨/籌碼警示（{dist['level']}）：{'；'.join(dist['reasons'])}。"
+                     '若警示為 high，請明確「不建議現在買進」。')
     lines.append('指示：若這是買進機會但上面顯示偏熱或大盤偏空，請「不要叫我現在追高」，'
                  '改明確給「等回到 X 元再分批進場」與停損價；若位置不熱且大盤站得住，才給可進場價位。')
     return '\n'.join(lines)
+
+
+def _detect_patterns(code: str) -> list:
+    """辨識某檔『最新一根 K 線當天觸發了哪些技術型態/買方訊號』，沿用回測引擎的型態函式。
+    回 [{'code','label','group'}]，當日快取。讓系統能主動講「今天出現鎚子線/多頭吞噬/帶量
+    突破…＝買點」，而不必使用者自己看圖。"""
+    if not code:
+        return []
+    ck = f'patterns_{code}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = []
+    try:
+        hist, c, name = _bt_load_history(code, '1y')
+        if hist is not None and len(hist) >= 60:
+            ctx = _bt_indicators(hist)
+            for group, items in _SIGNAL_DEFS:
+                for sig_code, label, fn in items:
+                    try:
+                        if bool(fn(ctx).fillna(False).iloc[-1]):
+                            out.append({'code': sig_code, 'label': label, 'group': group})
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f'[Patterns] {code}: {e}')
+    _cache_set(ck, out, ttl=7200)
+    return out
+
+
+def _distribution_signal(data: dict) -> dict:
+    """主力出貨／快逃偵測：從量價、法人、當沖、融資、借券綜合判斷是否疑似出貨／籌碼轉壞。
+    回 {'level':'high'/'med'/None, 'reasons':[...], 'score':int}。給盤中持倉警示與進場避雷用。"""
+    if not data or data.get('error'):
+        return {'level': None, 'reasons': [], 'score': 0}
+    reasons, score = [], 0
+    price  = safe_float(data.get('price'))
+    ma20   = safe_float(data.get('ma20'))
+    volr   = safe_float(data.get('vol_ratio'))
+    candle = data.get('last_candle')
+    dtr    = data.get('day_trade_ratio')
+    # 1. 爆量收黑（量增價跌＝典型出貨型態）
+    if volr >= 1.5 and candle == 'black':
+        score += 2; reasons.append(f'爆量收黑（量比 {volr:.1f}x），疑似量價背離出貨')
+    # 2. 跌破月線且月線下彎（趨勢轉弱）
+    if price > 0 and ma20 > 0 and price < ma20 and '下彎' in str(data.get('ma20_trend', '')):
+        score += 2; reasons.append('跌破月線且月線下彎，趨勢轉弱')
+    # 3. 外資連續賣超
+    fseq = (data.get('inst_hist') or {}).get('foreign') or []
+    nsell = 0
+    for v in fseq:
+        if safe_float(v) < 0: nsell += 1
+        else: break
+    if nsell >= 2:
+        score += 1; reasons.append(f'外資連 {nsell} 日賣超')
+    # 4. 今外資、投信同步賣超
+    inst = data.get('inst') or {}
+    if safe_float(inst.get('foreign_net', 0)) < 0 and safe_float(inst.get('trust_net', 0)) < 0:
+        score += 1; reasons.append('今外資、投信同步賣超')
+    # 5. 當沖比飆高（籌碼浮動易甩轎）
+    if dtr is not None and safe_float(dtr) >= 50:
+        score += 1; reasons.append(f'當沖比 {dtr}% 偏高，籌碼浮動')
+    # 6. 融資增加（散戶接刀）但法人在賣
+    mg = data.get('margin') or {}
+    if safe_float(mg.get('margin_chg', 0)) > 0 and safe_float(inst.get('foreign_net', 0)) < 0:
+        score += 1; reasons.append('融資增加（散戶接手）但外資在賣，籌碼轉壞')
+    # 7. 借券賣出餘額明顯增加（空方加碼）
+    ld = data.get('lending') or {}
+    bal, prev = safe_float(ld.get('lending_balance', 0)), safe_float(ld.get('lending_balance_prev', 0))
+    if prev > 0 and bal > prev * 1.1:
+        score += 1; reasons.append('借券賣出餘額明顯增加，空方加碼')
+    level = 'high' if score >= 4 else ('med' if score >= 2 else None)
+    return {'level': level, 'reasons': reasons, 'score': score}
 
 
 def _trailing_peak_update(holding: dict, price: float) -> float:
@@ -7487,6 +7581,9 @@ def _generate_entry_plans(cfg: dict, client) -> int:
                 return None
             price = safe_float(data.get('price'))
             if price <= 0:
+                return None
+            # 疑似主力出貨的檔不出買進計畫（不叫人買在出貨段）
+            if _distribution_signal(data).get('level') == 'high':
                 return None
             eq  = _entry_quality(data)
             reg = _market_regime()
@@ -8344,11 +8441,15 @@ def agent_entry_check_api(code):
         return jsonify({'ok': True, 'is_etf': True,
                         'verdict': 'ETF 不適用短線進場守門',
                         'note': 'ETF 偏中長期定期定額／分批，請改看淨值溢折價與配息，不需要抓短線買點。'})
-    reg = _market_regime()
-    eq  = _entry_quality(data)
+    reg  = _market_regime()
+    eq   = _entry_quality(data)
+    pats = _detect_patterns(code)
+    dist = _distribution_signal(data)
     price = safe_float(data.get('price'))
-    # 結論：大盤偏空一律保守；否則依過熱程度給可進場/分批/等回檔
-    if not reg['allow_buy']:
+    # 結論：出貨警示或大盤偏空一律保守；否則依過熱程度給可進場/分批/等回檔
+    if dist['level'] == 'high':
+        verdict = '偵測到疑似主力出貨，不建議買進'
+    elif not reg['allow_buy']:
         verdict = '大盤偏空，先不建議買進'
     elif eq['hot'] == 0:
         verdict = '相對好買點，可進場'
@@ -8378,6 +8479,8 @@ def agent_entry_check_api(code):
         'verdict': verdict, 'regime': reg, 'entry': eq,
         'wait_price': eq['wait_price'], 'stop': eq['stop'],
         'reasons': eq['reasons'], 'advice': advice,
+        'patterns': [p['label'] for p in pats],
+        'distribution': dist if dist['level'] else None,
     })
 
 
