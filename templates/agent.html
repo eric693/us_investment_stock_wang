@@ -703,6 +703,15 @@ select.scan-input { width: 120px; }
         <div id="ecContent"></div>
       </div>
 
+      <!-- 明日進場計畫：盤後自動產，隔日盤中到價就 LINE 通知 -->
+      <div class="rec-box" id="planBox" style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h4 style="margin:0">明日進場計畫（盤後自動產，隔日到價自動 LINE 通知）</h4>
+          <button class="analyze-row-btn" id="planBtn" onclick="genEntryPlans()">立即產生</button>
+        </div>
+        <div id="planContent" style="margin-top:8px;color:var(--text-dim);font-size:.82rem">載入中...</div>
+      </div>
+
       <div id="scanLoading" style="display:none;color:var(--text-dim);font-size:.82rem;padding:8px">
         掃描中，請稍候（約 30-60 秒）...
       </div>
@@ -784,6 +793,7 @@ function switchTab(name) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
   if (name === 'logs') loadNotifications();
+  if (name === 'scanner') loadEntryPlans();
 }
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -1166,6 +1176,58 @@ async function loadReview() {
     out.innerHTML = html;
   } catch(e) {
     out.innerHTML = `統計失敗：${e.message}`;
+  }
+}
+
+function renderPlans(d) {
+  const box = document.getElementById('planContent');
+  const plans = (d && d.plans) || [];
+  if (!plans.length) {
+    box.innerHTML = '尚無計畫。把想買的股票加入監測清單後，盤後（15:00 後）會自動產生明日進場計畫；也可按「立即產生」。';
+    return;
+  }
+  let html = `<div style="margin-bottom:6px">計畫日 ${d.date || '-'}　共 ${plans.length} 檔（隔日盤中即時價進入買點區間會自動 LINE 通知你）</div>`;
+  html += plans.map(p => {
+    const tag = p.triggered
+      ? `<span class="cand-tag tag-green">已到價 ${p.triggered_at || ''}</span>`
+      : `<span class="cand-tag tag-gray">待觸發</span>`;
+    const cf = p.confidence === '高' ? 'tag-green' : (p.confidence === '低' ? 'tag-yellow' : 'tag-blue');
+    return `<div style="border-top:1px solid #1d3050;padding:8px 0">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <b>${p.name}（${p.code}）</b>
+        <span class="cand-tag ${cf}">信心 ${p.confidence}</span>
+        ${tag}
+        <span style="color:var(--text-dim)">現價 ${p.price}</span>
+      </div>
+      <div style="font-size:.85rem;margin-top:3px">買點 <b>${p.buy_low}–${p.buy_high}</b> 元　停損 ${p.stop}　目標 ${p.target}　（${p.regime}・${p.verdict}）</div>
+      ${p.note ? `<div style="font-size:.82rem;color:var(--text-dim);margin-top:2px">研判：${p.note}</div>` : ''}
+    </div>`;
+  }).join('');
+  box.innerHTML = html;
+}
+
+async function loadEntryPlans() {
+  try {
+    const d = await fetch('/api/agent/entry_plans').then(r => r.json());
+    renderPlans(d);
+  } catch(e) {
+    document.getElementById('planContent').innerHTML = '載入失敗：' + e.message;
+  }
+}
+
+async function genEntryPlans() {
+  const btn = document.getElementById('planBtn');
+  const box = document.getElementById('planContent');
+  btn.disabled = true;
+  box.innerHTML = '產生中（AI 逐檔研判，視監測檔數約 10-40 秒）...';
+  try {
+    const d = await fetch('/api/agent/entry_plans', { method: 'POST' }).then(r => r.json());
+    if (d.error) { box.innerHTML = '產生失敗：' + d.error; return; }
+    renderPlans(d);
+  } catch(e) {
+    box.innerHTML = '產生失敗：' + e.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 

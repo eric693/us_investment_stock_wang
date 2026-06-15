@@ -443,6 +443,13 @@ def _run_server_scan():
             if should_notify:
                 msg = _build_monitor_message(ticker, result, price)
                 _push_line_msg(line_token, line_user_id, msg)
+            # 進場計畫到價觸發（獨立於系統訊號）：AI 昨晚訂的買點，今天即時價一進入區間就通知一次
+            if (line_token and line_user_id
+                    and ticker.upper().endswith(('.TW', '.TWO'))
+                    and _ticker_session_open(ticker)):
+                plan_msg = _entry_plan_trigger(ticker, price)
+                if plan_msg:
+                    _push_line_msg(line_token, line_user_id, plan_msg)
         except Exception as e:
             print(f'[Monitor] scan {ticker}: {e}')
 
@@ -6515,6 +6522,8 @@ def _default_agent_cfg() -> dict:
         'last_morning': '',
         'last_close': '',
         'last_close_reminder': '',   # 最近一次「請登錄今日買賣」收盤提醒日期
+        'entry_plans': {},           # 明日進場計畫 {code: {買點區間/停損/目標/信心/triggered...}}
+        'last_entry_plans': '',      # 最近一次產生進場計畫的日期
     }
 
 
@@ -7453,6 +7462,122 @@ def _rec_accuracy(cfg: dict) -> dict:
             'samples': samples[-20:]}
 
 
+# ── 每日進場計畫 → 隔日到價觸發通知 ─────────────────────────────────────────
+#  盤後：對「監測中但尚未持有」的個股，AI 研判明日是否值得進場，並用技術面定出
+#  「買點區間／停損／停利」。隔日盤中（沿用 5 分鐘監測迴圈），即時價一進入買點區間
+#  就 LINE 通知一次——就是「老師昨晚給功課、今天到點提醒下單」。買點區間用技術面決定
+#  （可靠、可盯價），AI 只負責研判與信心，避免解析 AI 文字數字出錯。
+
+def _generate_entry_plans(cfg: dict, client) -> int:
+    """為『監測清單中、但目前沒持有』的個股產生明日進場計畫。回產生筆數。"""
+    mon  = _load_monitor_cfg().get('tickers', {})
+    held = {str(h.get('code', '')).upper() for h in cfg.get('holdings', [])}
+    codes = []
+    for tk in mon:
+        c = tk.upper().replace('.TWO', '').replace('.TW', '')
+        if c and c not in held and not c.startswith('00'):   # ETF 不做短線進場計畫
+            codes.append(c)
+    codes = codes[:12]                                        # 控成本，最多 12 檔
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+
+    def _one(code):
+        try:
+            data = _fetch_predict_data(code)
+            if data.get('error'):
+                return None
+            price = safe_float(data.get('price'))
+            if price <= 0:
+                return None
+            eq  = _entry_quality(data)
+            reg = _market_regime()
+            # 買點參考價：偏熱用「等回檔目標價」，不熱就現價附近可進
+            entry_ref = eq['wait_price'] if (eq['hot'] >= 1 and eq['wait_price']) else price
+            buy_low  = round(entry_ref * 0.98, 2)
+            buy_high = round(entry_ref * 1.01, 2)
+            stop     = eq['stop'] or round(price * 0.93, 2)
+            target   = safe_float(data.get('high_20d')) or round(price * 1.08, 2)
+            conf, note = '中', ''
+            try:
+                ctx = _agent_recommendation_text(data, None) + '\n\n' + _entry_context_block(data)
+                prompt = (f"請判斷『明日是否值得進場』，只回兩行，不要 emoji：\n"
+                          f"研判：（一句話，結合技術面/籌碼/大盤，說明明日可不可考慮進場、理由）\n"
+                          f"信心：高 或 中 或 低\n"
+                          f"（系統設定買點區間 {buy_low}-{buy_high} 元、停損 {stop}、目標 {target}）\n\n{ctx}")
+                resp = client.messages.create(
+                    model='claude-opus-4-8', max_tokens=300,
+                    system=_agent_system_prompt(data),
+                    messages=[{'role': 'user', 'content': prompt}])
+                txt = _strip_emoji(resp.content[0].text or '')
+                for ln in txt.splitlines():
+                    s = ln.strip()
+                    if s.startswith('研判'):
+                        note = s.split('：', 1)[-1].split(':', 1)[-1].strip()
+                    elif s.startswith('信心'):
+                        v = s.split('：', 1)[-1].split(':', 1)[-1]
+                        conf = '高' if '高' in v else ('低' if '低' in v else '中')
+            except Exception as e:
+                print(f'[EntryPlan] ai {code}: {e}')
+            return (code, {
+                'date': today, 'code': code, 'name': data.get('name', code),
+                'price': round(price, 2), 'entry_ref': round(entry_ref, 2),
+                'buy_low': buy_low, 'buy_high': buy_high, 'stop': stop,
+                'target': round(target, 2), 'confidence': conf, 'hot': eq['hot'],
+                'regime': reg['regime'], 'verdict': eq['verdict'], 'note': note,
+                'triggered': False, 'triggered_at': '',
+            })
+        except Exception as e:
+            print(f'[EntryPlan] {code}: {e}')
+            return None
+
+    plans = {}
+    if codes:
+        with ThreadPoolExecutor(max_workers=min(5, len(codes))) as ex:
+            for r in ex.map(_one, codes):
+                if r:
+                    plans[r[0]] = r[1]
+    cfg = _load_agent_cfg()
+    cfg['entry_plans']      = plans
+    cfg['last_entry_plans'] = today
+    _save_agent_cfg(cfg)
+    return len(plans)
+
+
+def _entry_plan_trigger(ticker: str, price: float):
+    """盤中即時價進入今日進場計畫的買點區間 → 標記並回一則通知訊息（只觸發一次）；否則 None。
+    直接在 _agent_lock 下讀寫檔，不呼叫 _load/_save（_agent_lock 非重入，避免死鎖）。
+    寫入只發生在排程 worker（_run_server_scan），無跨行程競態。"""
+    code  = ticker.upper().replace('.TWO', '').replace('.TW', '')
+    today = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d')
+    p = safe_float(price)
+    if p <= 0:
+        return None
+    with _agent_lock:
+        try:
+            with open(AGENT_FILE) as f:
+                cfg = json.load(f)
+        except Exception:
+            return None
+        plan = (cfg.get('entry_plans') or {}).get(code)
+        if not plan or plan.get('date') != today or plan.get('triggered'):
+            return None
+        if any(str(h.get('code', '')).upper() == code for h in cfg.get('holdings', [])):
+            return None   # 已持有就不再喊進
+        if not (safe_float(plan.get('buy_low')) <= p <= safe_float(plan.get('buy_high'))):
+            return None
+        plan['triggered']    = True
+        plan['triggered_at'] = pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M')
+        cfg['entry_plans'][code] = plan
+        try:
+            with open(AGENT_FILE, 'w') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:
+            return None
+    return (f"[進場計畫到價] {plan['name']}（{code}）\n"
+            f"現價 {p:.2f} 進入計畫買點 {plan['buy_low']}–{plan['buy_high']} 元，可考慮進場。\n"
+            f"停損 {plan['stop']} 元 / 目標 {plan['target']} 元 / 信心 {plan['confidence']}。\n"
+            f"研判：{plan.get('note', '')}".rstrip())
+
+
 def _us_session_phase() -> str:
     """以台北時間粗略判斷美股時段：'open'＝今夜盤中 / 'closed'＝非盤中。
     美股常規盤約台北 21:30–04:00（夏令）/22:30–05:00（冬令），這裡用寬鬆 21:00–05:00。
@@ -7881,6 +8006,14 @@ def _agent_loop():
                 except Exception as e:
                     print(f'[Agent] workbench scan error: {e}')
 
+            # 明日進場計畫（盤後，每日一次）：對監測中未持有的個股訂好明日買點，隔日盤中盯價觸發
+            elif now.hour >= 15 and cfg.get('last_entry_plans', '') != today:
+                try:
+                    n = _generate_entry_plans(_load_agent_cfg(), client)
+                    print(f'[Agent] entry plans generated: {n}')
+                except Exception as e:
+                    print(f'[Agent] entry plan error: {e}')
+
         except Exception as e:
             print(f'[Agent] loop error: {e}')
 
@@ -8246,6 +8379,28 @@ def agent_entry_check_api(code):
         'wait_price': eq['wait_price'], 'stop': eq['stop'],
         'reasons': eq['reasons'], 'advice': advice,
     })
+
+
+@app.route('/api/agent/entry_plans', methods=['GET', 'POST'])
+def agent_entry_plans_api():
+    """明日進場計畫：GET 回傳目前計畫；POST 立即重算（盤後也會每日自動產一次）。"""
+    cfg = _load_agent_cfg()
+    if request.method == 'POST':
+        api_key = _agent_api_key(cfg)
+        if not api_key:
+            return jsonify({'error': '未設定 Claude API Key'}), 400
+        import anthropic
+        try:
+            n = _generate_entry_plans(cfg, anthropic.Anthropic(api_key=api_key))
+        except Exception as e:
+            return jsonify({'error': f'產生失敗：{e}'}), 500
+        cfg = _load_agent_cfg()
+    plans = list((cfg.get('entry_plans') or {}).values())
+    # 信心高→中→低、未觸發在前排序，方便使用者一眼看重點
+    conf_order = {'高': 0, '中': 1, '低': 2}
+    plans.sort(key=lambda p: (p.get('triggered', False), conf_order.get(p.get('confidence', '中'), 1)))
+    return jsonify({'ok': True, 'plans': plans, 'date': cfg.get('last_entry_plans', ''),
+                    'count': len(plans)})
 
 
 @app.route('/api/agent/scan', methods=['POST'])
