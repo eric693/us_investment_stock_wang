@@ -2205,7 +2205,24 @@ function renderInvestValue(d) {
   }
   const scoreBar  = Math.min(iv.score, 100);
   const barColor  = iv.score >= 75 ? 'var(--green)' : iv.score >= 55 ? 'var(--blue)' : iv.score >= 40 ? 'var(--yellow)' : 'var(--red)';
-  setHTML('investValuePanel', `
+  // 雙軸並陳：短線進場時機（技術，與目標操盤/AI預測同一套）vs 中長期投資價值（基本面，本頁）
+  const et = d.entryTiming;
+  const etColor = !et ? '' : (et.cls === 'green' ? 'var(--green)' : et.cls === 'yellow' ? 'var(--yellow)' : 'var(--red)');
+  const dualBanner = !et ? '' : `
+    <div style="display:flex;gap:14px;align-items:stretch;margin-bottom:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px;border:1px solid var(--border,#333);border-radius:10px;padding:12px 14px">
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px">短線進場時機</div>
+        <div style="font-size:20px;font-weight:700;color:${etColor}">${et.cn}</div>
+        <div style="font-size:11px;opacity:.6;margin-top:4px">技術評分 ${et.score}／${et.grade} 級・回答「現在進不進場」（與目標操盤、AI預測同一套）</div>
+      </div>
+      <div style="flex:1;min-width:180px;border:1px solid var(--border,#333);border-radius:10px;padding:12px 14px">
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px">中長期投資價值</div>
+        <div style="font-size:20px;font-weight:700;color:${barColor}">${iv.signalCn}</div>
+        <div style="font-size:11px;opacity:.6;margin-top:4px">基本面 ${iv.score} 分・回答「值不值得中長期投資」（本頁）</div>
+      </div>
+    </div>
+    <div style="font-size:12px;opacity:.65;margin-bottom:14px;line-height:1.5">兩軸用途不同，不同調是正常現象——例如可能「短線可進場操作，但中長期基本面普通」。請依你的操作天期取捨：做短線看左軸並嚴設停損，要長抱看右軸。以下為中長期投資價值的細項。</div>`;
+  setHTML('investValuePanel', dualBanner + `
     <div class="iv-layout">
       <div class="iv-signal-col">
         <div class="iv-signal ${iv.signalCls}">
@@ -2213,7 +2230,7 @@ function renderInvestValue(d) {
           <div class="iv-signal-cn">${iv.signalCn}</div>
         </div>
         <div class="iv-score-wrap">
-          <div class="iv-score-label">綜合評分</div>
+          <div class="iv-score-label">中長期價值評分</div>
           <div class="iv-score-num" style="color:${barColor}">${iv.score}</div>
           <div class="iv-score-track"><div class="iv-score-fill" style="width:${scoreBar}%;background:${barColor}"></div></div>
         </div>

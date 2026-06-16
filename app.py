@@ -2333,6 +2333,9 @@ def get_tw_stock(ticker):
             'levels': levels, 'conclusions': conclusions, 'catalysts': catalysts,
             'risks': risks, 'strategy': strategy, 'returns': returns,
             'investValue': invest_val, 'quarterly': quarterly,
+            # 雙軸並陳：個股加上「短線進場時機」軸（與目標操盤候選、AI預測同一套 15 因子技術評分），
+            # 讓本頁的「中長期投資價值(investValue)」與短線時機並列，化解「操盤說買、這裡說觀望」的表面矛盾。
+            'entryTiming': (None if is_etf else _entry_timing_axis(ticker.replace('.TW', '').replace('.TWO', ''))),
             'isEtf': is_etf, 'etfData': etf_data,
             'dates': dates,
             'ohlcv': {
@@ -5527,6 +5530,11 @@ _PREDICT_SYSTEM_PROMPT = """你是一位精通台股技術分析、籌碼追蹤�
 - 系統性下殺（大盤/費半連動）造成的下跌，與個股基本面轉壞要分開看；若只是大盤連動且基本面未壞，
   在預測裡點明「屬系統性、非個股問題」，不要把短期情緒寫成結構性利空。
 - 提到「美股大跌」「題材」「利空」時，務必引用我提供的實際數據或新聞標題，不要憑空想像。
+- 【數字零捏造，最高優先】只能引用「系統實際提供給你的數據」中的數字。嚴禁自行生成或推估任何具體數字，
+  特別是外資/投信/自營商買賣超張數、累計買超張數、營收金額、YoY/MoM%、EPS、目標價。
+  注意單位：法人買賣超我已換算成「張」並標明今日單日與「連續N日」天數——我「沒有」提供任何「累計N張」的數字，
+  因此你絕對不可以說「外資累計買進X萬張」這類話；要談連續性只能用我給的「連N日買/賣超」天數描述。
+  若某項數據顯示「未取得」或我根本沒提供，就直說「資料未取得」，不要填上任何數字。寧可不講，也不可編造。
 
 回應請使用繁體中文，語氣專業簡潔，全程不要使用任何 emoji 或表情符號。若使用者沒有提供股票代碼，請主動詢問並引導使用者輸入台股代碼（如 2330、0050 等）。"""
 
@@ -5938,6 +5946,83 @@ def _fetch_predict_data(code: str) -> dict:
     return result
 
 
+# ── 雙軸並陳：短線進場時機(技術) vs 中長期投資價值(基本面)──────────────────────
+# 全站三處 AI/評分頁面（目標操盤、AI預測、台股分析）原本各用不同引擎，
+# 同一檔常出現「操盤建議買進、台股分析卻觀望」的表面矛盾。實情是它們在回答
+# 不同問題：技術評分看「現在進不進場」、估值評分看「這家公司值不值得中長期投資」。
+# 以下兩個共用函式把兩條軸線標準化，讓三頁都能同時並陳、互補而非互相打架。
+def _entry_timing_label(pct: float):
+    """15 因子技術評分 → 短線進場時機標籤。門檻與選股/操盤候選一致（≥58≈B 以上才算佳）。"""
+    if pct >= 58:   return '進場時機佳', 'green'
+    if pct >= 42:   return '尚可，宜分批試單', 'yellow'
+    return '時機未到', 'red'
+
+
+def _entry_timing_axis(code: str):
+    """短線進場時機軸（與目標操盤候選、AI預測同一套 15 因子 _multi_factor_score）。
+    回 {score, grade, cn, cls, total, max} 或 None。供台股分析頁雙軸並陳。"""
+    try:
+        d = _fetch_predict_data(code)
+        if d.get('error'):
+            return None
+        mf = d.get('mf_score') or {}
+        pct = safe_float(mf.get('pct', 0))
+        cn, cls = _entry_timing_label(pct)
+        return {'score': round(pct), 'grade': mf.get('grade', 'F'),
+                'cn': cn, 'cls': cls, 'total': mf.get('total'), 'max': mf.get('max')}
+    except Exception:
+        return None
+
+
+def _value_axis(code: str):
+    """中長期投資價值軸（與台股分析頁同一套 gen_investment_value 基本面估值）。
+    回 {score, signalCn, signalCls, grades} 或 None。供 AI 預測頁雙軸並陳。
+    ETF 與本益比/成長性無關，回 None（預測頁本就另有 ETF 專屬資料）。"""
+    code = (code or '').strip().upper().replace('.TW', '').replace('.TWO', '')
+    if code.startswith('00'):
+        return None
+    ck = f'valueaxis:{code}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = None
+    try:
+        ticker = tw_normalize(code)
+        stock = yf.Ticker(ticker); info = stock.info; hist = stock.history(period='1y')
+        if hist.empty and ticker.endswith('.TW'):
+            ticker = ticker.replace('.TW', '.TWO')
+            stock = yf.Ticker(ticker); info = stock.info; hist = stock.history(period='1y')
+        if not hist.empty:
+            c = hist['Close']
+            ma5  = float(c.rolling(5).mean().iloc[-1])
+            ma20 = float(c.rolling(20).mean().iloc[-1])
+            ma60 = float(c.rolling(60).mean().iloc[-1])
+            price = float(c.iloc[-1])
+            m_s, sg_s, _ = calc_macd(c)
+            macd_v = float(m_s.iloc[-1]); dea_v = float(sg_s.iloc[-1])
+            rsi_v = float(calc_rsi(c).iloc[-1])
+            vol = hist['Volume']
+            mv20 = float(vol.rolling(20, min_periods=1).mean().iloc[-1])
+            vol_ratio = round(float(vol.iloc[-1]) / mv20, 2) if mv20 > 0 else 1.0
+            iv = gen_investment_value(
+                price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
+                pe=safe_float(info.get('trailingPE', 0)),
+                fwd_pe=safe_float(info.get('forwardPE', 0)),
+                roe=round(safe_float(info.get('returnOnEquity', 0)) * 100, 1),
+                profit_margin=round(safe_float(info.get('profitMargins', 0)) * 100, 1),
+                rev_growth=round(safe_float(info.get('revenueGrowth', 0)) * 100, 1),
+                eps_growth=round(safe_float(info.get('earningsGrowth', 0)) * 100, 1),
+                beta=safe_float(info.get('beta', 1)),
+                debt_equity=round(safe_float(info.get('debtToEquity', 0)), 1),
+                vol_ratio=vol_ratio)
+            out = {'score': iv['score'], 'signalCn': iv['signalCn'],
+                   'signalCls': iv['signalCls'], 'grades': iv.get('grades')}
+    except Exception:
+        out = None
+    _cache_set(ck, out, ttl=1800)
+    return out
+
+
 def _build_analysis_context(data: dict) -> str:
     """將股票數據轉成給 Claude 的分析文字"""
     if data.get('error'):
@@ -5947,6 +6032,25 @@ def _build_analysis_context(data: dict) -> str:
     name  = data.get('name', code)
     price = data.get('price', 0)
     lines = [f"## {name}（{code}）股票分析數據", f"最新收盤價：{price}"]
+
+    # ── 雙軸並陳（最重要，先講）：本系統「目標操盤／本預測」看的是【短線進場時機】，
+    #    「台股分析」頁看的是【中長期投資價值（基本面）】。同一檔兩軸可能不同調，
+    #    這不是矛盾，請在結論明確分軸表述，避免使用者以為系統自相矛盾。
+    mf = data.get('mf_score') or {}
+    tech_pct = safe_float(mf.get('pct', 0))
+    tech_cn, _tc = _entry_timing_label(tech_pct)
+    va = data.get('value_axis')
+    if va is None:
+        va = _value_axis(code)
+    lines.append(f"\n### 【雙軸定位（務必在結論分軸說明）】")
+    lines.append(f"- 短線進場時機（15 因子技術，本預測與目標操盤同一套）：{round(tech_pct)} 分／{mf.get('grade','?')} 級 → {tech_cn}")
+    if va:
+        lines.append(f"- 中長期投資價值（基本面估值，台股分析頁同一套）：{va.get('score')} 分 → {va.get('signalCn')}")
+        lines.append(f"  注意：若兩軸不同調（例如技術『進場時機佳』但價值『觀望』），正確說法是"
+                     f"『短線可進場操作、但中長期基本面普通，宜嚴設停損、不宜重押長抱』，不要寫成自相矛盾，"
+                     f"也不要因為其中一軸就全盤否定另一軸。")
+    else:
+        lines.append(f"- 中長期投資價值：基本面資料未取得（無法評估估值軸，請僅就技術面研判並提醒使用者自行查證基本面）")
 
     # 月線扣抵
     lines.append(f"\n### 【月線扣抵環境】")
@@ -6095,6 +6199,9 @@ def predict_analyze(code):
     """取得股票分析數據（JSON）"""
     code = code.strip().upper().replace('.TW', '').replace('.TWO', '')
     data = _fetch_predict_data(code)
+    # 雙軸並陳：附上中長期投資價值軸（前端與台股分析頁顯示一致），供使用者交叉對照
+    if not data.get('error'):
+        data['value_axis'] = _value_axis(code)
     return jsonify(data)
 
 
@@ -6466,6 +6573,12 @@ _AGENT_SYSTEM_PROMPT = """你是一位專業台股投資 AI 助理，負責分�
 
 經驗檢討（若有提供「上次建議回顧」）：
 - 請先用一句話誠實檢討上次判斷對不對（例如：上次叫減碼後卻又漲了 8%，代表當時對過熱的判斷過早），再給今天的建議；別重複犯同樣的錯。
+
+數字零捏造（最高優先，攸關使用者真實下單）：
+- 只能引用我在數據中實際提供的數字。嚴禁自行生成或推估任何具體數字——尤其外資/投信/自營商買賣超張數、「累計買超X萬張」、營收金額、YoY/MoM%、EPS、目標價。
+- 法人籌碼我只會提供「連續N日買/賣超天數」與（個股分析時）今日單日張數，我「沒有」提供任何「累計N張」的數字，因此絕對不可以說「外資累計買進X萬張」這類話；要講籌碼連續性只能用我給的「連N日買/賣超」天數。
+- 注意單位：股 ÷1000 才是「張」（差 1000 倍），不可把以「股」為單位的數字當成「張」。
+- 若某欄位顯示「未取得」或我根本沒提供，就直說「資料未取得」，不要填數字。寧可不講，也不可編造。
 
 回應使用繁體中文，語氣直接果斷，不要模糊建議，全程不要使用任何 emoji 或表情符號。"""
 
@@ -7861,6 +7974,8 @@ _GOAL_CHAT_SYSTEM_PROMPT = """你是使用者的「目標導向操盤」討論�
 3. 隨時把建議扣回「達標」這個總目標：落後計畫曲線時可略積極、領先時可保守落袋。
 4. 持倉中的 ETF（代碼多以 00 開頭）以中長期角度（淨值溢折價、配息、總經）判斷，不要因短線技術指標就叫賣。
 
+數字零捏造（最高優先，攸關使用者真實下單）：只能引用【目前狀況】裡實際出現的數字。嚴禁自行生成或推估外資/法人買賣超張數、「累計買進X萬張」、營收、EPS、目標價等任何具體數字——這裡的脈絡並沒有提供個股的法人籌碼數字，所以不要憑記憶或想像講出任何籌碼張數。若使用者問到你手上沒有的數據，就誠實說「這裡沒有這項資料，建議到個股分析頁查證」，絕不可編造。
+
 回應使用繁體中文，語氣直接務實，全程不要使用任何 emoji 或表情符號。"""
 
 
@@ -7979,11 +8094,13 @@ def _run_goal_review(cfg: dict, client) -> dict:
     else:
         lines.append('（無持倉）')
 
-    lines.append('\n--- 今日篩出的買進候選（15 因子評分）---')
+    lines.append('\n--- 今日篩出的買進候選（左軸＝短線進場時機/15因子技術；右軸＝中長期投資價值/基本面）---')
     if candidates:
         for c in candidates:
-            lines.append(f"{c['name']}（{c['code']}）現價 {c['price']} 評等 {c['grade']}（{c['score']}/{c['max_score']}）"
-                         f" 乖離 {c.get('bias20','?')}% {c.get('kd','')}")
+            va = _value_axis(c['code'])   # 中長期投資價值軸（已快取 30 分，與台股分析頁一致）
+            va_txt = f"；中長期投資價值 {va['signalCn']}（基本面{va['score']}分）" if va else "；中長期投資價值 資料未取得"
+            lines.append(f"{c['name']}（{c['code']}）現價 {c['price']} 短線進場時機 評等 {c['grade']}（{c['score']}/{c['max_score']}）"
+                         f" 乖離 {c.get('bias20','?')}% {c.get('kd','')}{va_txt}")
     else:
         lines.append('（今日無符合條件候選）')
 
@@ -8019,7 +8136,11 @@ def _run_goal_review(cfg: dict, client) -> dict:
         '\n請用繁體中文、不要 emoji，輸出以下四段：'
         '\n1) 進度評估：一句話講現在達標機率與該偏積極或保守。'
         '\n2) 明日買進清單：從上面「買進候選／盤後策略優化／工作台觸發」綜合挑 1-3 檔，'
-        '每檔給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
+        '每檔務必「雙軸並陳」：直接照抄候選清單該檔的【短線進場時機評等/分數】與【中長期投資價值】兩個結論，'
+        '再給「建議投入金額或張數（用可投入現金估算）＋進場價位區間＋停損價」。'
+        '重要：這兩軸是不同問題（時機 vs 價值），不同調是正常、不是矛盾。若某檔「短線進場時機佳、但中長期投資價值只到觀望」，'
+        '正確寫法是「短線可進場操作，但基本面普通、不宜長抱，務必嚴設停損、小量分批」，不要寫成自相矛盾，也不要因為價值軸觀望就否定它是短線進場機會。'
+        '不要推薦短線評等 D/F 的標的。'
         '\n3) 該賣出/減碼：列出持倉中該獲利了結或停損的，講明理由與價位；沒有就說「持倉續抱」。'
         '\n4) 一句總結。'
         '\n5) 體質提醒：若上面有「我的交易體質／需修正」，用一句話點出我今天最該守住的紀律'
@@ -9023,6 +9144,7 @@ _AI_SYSTEM_PROMPT = f"""你是一位專業的台股 AI 投資總管，能主動�
 - 全程不要使用任何 emoji 或表情符號（包括星號、警示、圖釘等各類符號），改用文字標示重點
 - 推薦個股時務必說明「為什麼是這檔」與「關鍵價位」
 - 若使用者問持倉，先呼叫 get_holdings 取得實際部位再分析
+- 數字零捏造（最高優先，攸關使用者真實下單）：只能引用工具實際回傳的數字。嚴禁自行生成或推估外資/法人買賣超張數、「累計買進X萬張」、營收、EPS、目標價等具體數字。需要籌碼/基本面數字時，先呼叫 analyze_stock 取得；工具沒回傳的就說「資料未取得」，不要填數字。注意單位：股 ÷1000 才是「張」，不可混用。寧可不講，也不可編造。
 - 所有建議僅供參考，最後可附簡短風險提醒"""
 
 

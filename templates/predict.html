@@ -832,7 +832,33 @@ function renderMetrics(d) {
     rows.push(['三大法人', `${total > 0 ? '+' : ''}${total.toLocaleString()}張`, total > 0 ? 'red' : 'green']);
   }
 
-  cont.innerHTML = rows.map(([label, val, cls]) => `
+  // 雙軸並陳：短線進場時機（技術，本頁/目標操盤同一套）vs 中長期投資價值（基本面，台股分析頁同一套）
+  let dualBanner = '';
+  const mf = d.mf_score;
+  if (mf) {
+    const tp = mf.pct || 0;
+    const tcn = tp >= 58 ? '進場時機佳' : tp >= 42 ? '尚可，宜分批試單' : '時機未到';
+    const tcol = tp >= 58 ? 'green' : tp >= 42 ? 'yellow' : 'red';
+    const va = d.value_axis;
+    const vcss = { 'sv-strong-buy':'green','sv-buy':'green','sv-hold':'yellow','sv-caution':'yellow','sv-avoid':'red' };
+    const vcol = va ? (vcss[va.signalCls] || '') : '';
+    dualBanner = `
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:130px;border:1px solid var(--border,#333);border-radius:8px;padding:9px 11px">
+          <div style="font-size:11px;opacity:.7">短線進場時機</div>
+          <div class="metric-val ${tcol}" style="font-size:17px;font-weight:700">${tcn}</div>
+          <div style="font-size:10px;opacity:.6;margin-top:2px">技術 ${Math.round(tp)}／${mf.grade} 級</div>
+        </div>
+        <div style="flex:1;min-width:130px;border:1px solid var(--border,#333);border-radius:8px;padding:9px 11px">
+          <div style="font-size:11px;opacity:.7">中長期投資價值</div>
+          <div class="metric-val ${vcol}" style="font-size:17px;font-weight:700">${va ? va.signalCn : '資料未取得'}</div>
+          <div style="font-size:10px;opacity:.6;margin-top:2px">${va ? '基本面 ' + va.score + ' 分' : '無基本面資料'}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;opacity:.65;line-height:1.5;margin-bottom:12px">兩軸用途不同，不同調屬正常：可能「短線可進場、長期普通」。做短線看左軸並嚴設停損，要長抱看右軸。</div>`;
+  }
+
+  cont.innerHTML = dualBanner + rows.map(([label, val, cls]) => `
     <div class="metric-row">
       <span class="metric-label">${label}</span>
       <span class="metric-val ${cls}">${val}</span>
