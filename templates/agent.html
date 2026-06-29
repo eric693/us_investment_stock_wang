@@ -1230,6 +1230,7 @@ function renderPlans(d) {
         <span style="color:var(--text-dim)">現價 ${p.price}</span>
       </div>
       <div style="font-size:.85rem;margin-top:3px">買點 <b>${p.buy_low}–${p.buy_high}</b> 元　停損 ${p.stop}　目標 ${p.target}　（${p.regime}・${p.verdict}）</div>
+      ${(p.accumulation && p.accumulation.level) ? `<div style="font-size:.82rem;margin-top:3px;color:#26d96b">主力/外資進場（${p.accumulation.level}）：${p.accumulation.reasons.slice(0,3).join('；')}</div>` : ''}
       ${(p.patterns && p.patterns.length) ? `<div style="margin-top:3px">${p.patterns.map(x => `<span class="cand-tag tag-green">${x}</span>`).join(' ')}</div>` : ''}
       ${p.note ? `<div style="font-size:.82rem;color:var(--text-dim);margin-top:2px">研判：${p.note}</div>` : ''}
     </div>`;
@@ -1283,6 +1284,8 @@ async function entryCheck() {
     html += `<div style="color:var(--text-dim);font-size:.82rem;margin-bottom:4px">大盤體質：${d.regime.regime}（${d.regime.reason}）</div>`;
     if (d.patterns && d.patterns.length)
       html += `<div style="font-size:.85rem;margin-bottom:4px">今日 K 線型態：${d.patterns.map(p => `<span class="cand-tag tag-green">${p}</span>`).join(' ')}</div>`;
+    if (d.accumulation && d.accumulation.level)
+      html += `<div style="font-size:.85rem;margin-bottom:4px;color:#26d96b">主力/外資進場（${d.accumulation.level}）：${d.accumulation.reasons.join('；')}</div>`;
     if (d.distribution && d.distribution.level)
       html += `<div style="font-size:.85rem;margin-bottom:4px;color:#e0a04a">出貨/籌碼警示（${d.distribution.level}）：${d.distribution.reasons.join('；')}</div>`;
     html += `<div style="font-size:.85rem;margin-bottom:4px">過熱判斷：${reasons}</div>`;

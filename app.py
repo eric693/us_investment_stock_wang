@@ -7570,6 +7570,11 @@ def _entry_context_block(data: dict) -> str:
     if pats:
         lines.append('今日觸發技術型態（買方）：' + '、'.join(f"{p['label']}" for p in pats[:8])
                      + '。請結合這些型態說明「為何現在/回檔到買點是合理進場」。')
+    # 主力／外資進場偵測：偏多籌碼訊號，作為「值得進場」的正面佐證
+    acc = _accumulation_signal(data)
+    if acc['level']:
+        lines.append(f"主力/外資進場跡象（{acc['level']}）：{'；'.join(acc['reasons'])}。"
+                     '若為 strong 且位置不過熱，可視為法人進場、相對有撐的買進機會。')
     # 主力出貨偵測：偏空訊號，避免叫人買在出貨段
     dist = _distribution_signal(data)
     if dist['level']:
@@ -7655,6 +7660,59 @@ def _distribution_signal(data: dict) -> dict:
         score += 1; reasons.append(f"外資持股比例近週降 {abs(safe_float(disp.get('chg',0))):.2f}%"
                                    f"（法人調節、散戶接手）")
     level = 'high' if score >= 4 else ('med' if score >= 2 else None)
+    return {'level': level, 'reasons': reasons, 'score': score}
+
+
+def _accumulation_signal(data: dict) -> dict:
+    """主力／外資進場（吸籌）偵測：出貨偵測的反面。綜合量價、法人連續買超、籌碼換手、
+    借券回補、外資持股上升，判斷是否疑似法人進場。回 {'level':'strong'/'mild'/None,
+    'reasons':[...], 'score':int}。籌碼來源為 FinMind，免費額度用罄時部分條件會略過。"""
+    if not data or data.get('error'):
+        return {'level': None, 'reasons': [], 'score': 0}
+    reasons, score = [], 0
+    price  = safe_float(data.get('price'))
+    ma20   = safe_float(data.get('ma20'))
+    volr   = safe_float(data.get('vol_ratio'))
+    candle = data.get('last_candle')
+    inst   = data.get('inst') or {}
+    ih     = data.get('inst_hist') or {}
+    def _streak_buy(seq):
+        n = 0
+        for v in (seq or []):
+            if safe_float(v) > 0: n += 1
+            else: break
+        return n
+    # 1. 帶量收紅（量增價漲＝資金進場）
+    if volr >= 1.5 and candle == 'red':
+        score += 2; reasons.append(f'帶量收紅（量比 {volr:.1f}x），資金進場')
+    # 2. 站上月線且月線上揚（趨勢轉強）
+    if price > 0 and ma20 > 0 and price > ma20 and '上揚' in str(data.get('ma20_trend', '')):
+        score += 2; reasons.append('站上月線且月線上揚，趨勢轉強')
+    # 3. 外資連續買超
+    fbuy = _streak_buy(ih.get('foreign'))
+    if fbuy >= 2:
+        score += 1; reasons.append(f'外資連 {fbuy} 日買超')
+    # 4. 投信連續買超（投信認養常是主升段前兆）
+    tbuy = _streak_buy(ih.get('trust'))
+    if tbuy >= 2:
+        score += 1; reasons.append(f'投信連 {tbuy} 日買超（認養）')
+    # 5. 今外資、投信同步買超
+    if safe_float(inst.get('foreign_net', 0)) > 0 and safe_float(inst.get('trust_net', 0)) > 0:
+        score += 1; reasons.append('今外資、投信同步買超')
+    # 6. 融資減少但法人買（籌碼由散戶換手到法人手中）
+    mg = data.get('margin') or {}
+    if safe_float(mg.get('margin_chg', 0)) < 0 and safe_float(inst.get('foreign_net', 0)) > 0:
+        score += 1; reasons.append('融資減少但法人買，籌碼換手到法人')
+    # 7. 借券賣出餘額明顯減少（空方回補）
+    ld = data.get('lending') or {}
+    bal, prev = safe_float(ld.get('lending_balance', 0)), safe_float(ld.get('lending_balance_prev', 0))
+    if prev > 0 and bal < prev * 0.9:
+        score += 1; reasons.append('借券賣出餘額明顯減少，空方回補')
+    # 8. 外資持股比例上升（法人加碼）
+    disp = data.get('dispersion') or {}
+    if safe_float(disp.get('chg', 0)) >= 0.5:
+        score += 1; reasons.append(f"外資持股比例近週升 {safe_float(disp.get('chg',0)):.2f}%（法人加碼）")
+    level = 'strong' if score >= 4 else ('mild' if score >= 2 else None)
     return {'level': level, 'reasons': reasons, 'score': score}
 
 
@@ -7807,6 +7865,7 @@ def _generate_entry_plans(cfg: dict, client) -> int:
             reg  = _market_regime()
             pats = _detect_patterns(code)
             pat_labels = [p['label'] for p in pats]
+            acc  = _accumulation_signal(data)   # 主力/外資進場跡象
             # 買點參考價：偏熱用「等回檔目標價」，不熱就現價附近可進
             entry_ref = eq['wait_price'] if (eq['hot'] >= 1 and eq['wait_price']) else price
             buy_low  = round(entry_ref * 0.98, 2)
@@ -7836,13 +7895,18 @@ def _generate_entry_plans(cfg: dict, client) -> int:
                         conf = '高' if '高' in v else ('低' if '低' in v else '中')
             except Exception as e:
                 print(f'[EntryPlan] ai {code}: {e}')
+            # 偵測到法人強力進場且位置不過熱 → 至少給「中」、strong 直接拉「高」
+            if acc['level'] == 'strong' and eq['hot'] <= 2:
+                conf = '高'
             return (code, {
                 'date': today, 'code': code, 'name': data.get('name', code),
                 'price': round(price, 2), 'entry_ref': round(entry_ref, 2),
                 'buy_low': buy_low, 'buy_high': buy_high, 'stop': stop,
                 'target': round(target, 2), 'confidence': conf, 'hot': eq['hot'],
                 'regime': reg['regime'], 'verdict': eq['verdict'], 'note': note,
-                'patterns': pat_labels, 'triggered': False, 'triggered_at': '',
+                'patterns': pat_labels,
+                'accumulation': acc if acc['level'] else None,
+                'triggered': False, 'triggered_at': '',
             })
         except Exception as e:
             print(f'[EntryPlan] {code}: {e}')
@@ -7858,6 +7922,21 @@ def _generate_entry_plans(cfg: dict, client) -> int:
     cfg['entry_plans']      = plans
     cfg['last_entry_plans'] = today
     _save_agent_cfg(cfg)
+
+    # 偵測到主力/外資進場的監測標的 → 主動推一則 LINE，讓使用者不必自己盯籌碼
+    accs = [p for p in plans.values() if (p.get('accumulation') or {}).get('level')]
+    if accs:
+        accs.sort(key=lambda p: 0 if p['accumulation']['level'] == 'strong' else 1)
+        lines = [f'[{today}] 主力/外資進場觀察（監測清單）',
+                 '以下監測標的偵測到法人進場跡象，可留意是否進場（買點/停損見明日進場計畫）：']
+        for p in accs[:8]:
+            lv = '強' if p['accumulation']['level'] == 'strong' else '初步'
+            lines.append(f"[{lv}] {p['name']}（{p['code']}）現價 {p['price']}："
+                         + '、'.join(p['accumulation']['reasons'][:3]))
+        try:
+            _agent_notify(cfg, '主力/外資進場觀察', '\n'.join(lines))
+        except Exception as e:
+            print(f'[EntryPlan] accum notify: {e}')
     return len(plans)
 
 
@@ -8698,12 +8777,15 @@ def agent_entry_check_api(code):
     eq   = _entry_quality(data)
     pats = _detect_patterns(code)
     dist = _distribution_signal(data)
+    acc  = _accumulation_signal(data)
     price = safe_float(data.get('price'))
     # 結論：出貨警示或大盤偏空一律保守；否則依過熱程度給可進場/分批/等回檔
     if dist['level'] == 'high':
         verdict = '偵測到疑似主力出貨，不建議買進'
     elif not reg['allow_buy']:
         verdict = '大盤偏空，先不建議買進'
+    elif acc['level'] == 'strong' and eq['hot'] <= 2:
+        verdict = '偵測到法人進場、位置不過熱，可進場'
     elif eq['hot'] == 0:
         verdict = '相對好買點，可進場'
     elif eq['hot'] <= 2:
@@ -8734,6 +8816,7 @@ def agent_entry_check_api(code):
         'reasons': eq['reasons'], 'advice': advice,
         'patterns': [p['label'] for p in pats],
         'distribution': dist if dist['level'] else None,
+        'accumulation': acc if acc['level'] else None,
     })
 
 
