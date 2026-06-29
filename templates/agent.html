@@ -847,13 +847,43 @@ function updateStatusBar(enabled, lastScan) {
 }
 
 // ── Holdings ──────────────────────────────────────────────────────────────
-async function loadHoldings() {
-  document.getElementById('holdingsLoading').style.display = 'block';
-  document.getElementById('holdingsTable').style.display   = 'none';
-  const r = await fetch('/api/agent/holdings');
-  const holdings = await r.json();
-  document.getElementById('holdingsLoading').style.display = 'none';
+function _fetchTimeout(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
 
+async function loadHoldings() {
+  const loadingEl = document.getElementById('holdingsLoading');
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = '載入中...';
+  document.getElementById('holdingsTable').style.display = 'none';
+
+  // 先用 raw（不打報價，毫秒回應）立即顯示持倉清單，保證持倉一定先出得來、不卡載入
+  let holdings = [];
+  try {
+    const rr = await _fetchTimeout('/api/agent/holdings?raw=1', 8000);
+    if (rr.status === 401) { loadingEl.innerHTML = '登入已過期，請<a href="/login" style="color:var(--accent,#3d8ef8)">重新登入</a>'; return; }
+    const j = await rr.json();
+    holdings = Array.isArray(j) ? j : [];
+  } catch (e) {
+    loadingEl.textContent = '載入持倉失敗（' + (e.name === 'AbortError' ? '逾時' : e.message) + '），請重新整理。';
+    return;
+  }
+  renderHoldings(holdings);
+  loadingEl.style.display = 'none';
+
+  // 背景再抓即時報價補上現價/損益；失敗或逾時都不影響上面已顯示的持倉清單
+  try {
+    const r = await _fetchTimeout('/api/agent/holdings', 15000);
+    if (r.ok) {
+      const enriched = await r.json();
+      if (Array.isArray(enriched) && enriched.length) renderHoldings(enriched);
+    }
+  } catch (e) { /* 報價暫時抓不到 → 維持只有清單，不卡住 */ }
+}
+
+function renderHoldings(holdings) {
   const tbody = document.getElementById('holdingsTbody');
   tbody.innerHTML = '';
 
