@@ -10226,6 +10226,19 @@ def goal_page():
     return render_template('goal.html')
 
 
+@app.route('/manual')
+@app.route('/manual.pdf')
+def manual_pdf():
+    """平台功能說明手冊 PDF（在瀏覽器開啟，可再下載）。檔由 gen_doc.py 產生。"""
+    from flask import send_file
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
+                                        '智能投資分析平台_模組功能與操作手冊.pdf'))
+    if not os.path.exists(path):
+        return '手冊尚未產生（請執行 gen_doc.py）', 404
+    return send_file(path, mimetype='application/pdf',
+                     as_attachment=False, download_name='智能投資分析平台手冊.pdf')
+
+
 @app.route('/history')
 def history_page():
     return render_template('history.html')
