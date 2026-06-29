@@ -3253,7 +3253,7 @@ def _get_tw_inst(code: str):
     now  = time.time()
     with _tw_inst_lock:
         ent = _tw_inst_cache.get(code)
-    if ent and now - ent[0] < 3600:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 成功快取4h(籌碼日更)、失敗只15分
         return ent[1]
     rows = _finmind_fetch('TaiwanStockInstitutionalInvestorsBuySell', code, days=14)
     res = None
@@ -3327,7 +3327,7 @@ def _get_tw_inst_hist(code: str):
     now  = time.time()
     with _tw_inst_hist_lock:
         ent = _tw_inst_hist_code_cache.get(code)
-    if ent and now - ent[0] < 14400:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 失敗只快取15分,額度恢復快速重試
         return ent[1]
     rows = _finmind_fetch('TaiwanStockInstitutionalInvestorsBuySell', code, days=16)
     res = None
@@ -3387,7 +3387,7 @@ def _get_tw_margin(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_margin_code_cache.get(code)
-    if ent and now - ent[0] < 3600:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 成功快取4h(籌碼日更)、失敗只15分
         return ent[1]
     rows = _finmind_fetch('TaiwanStockMarginPurchaseShortSale', code, days=12)
     res = None
@@ -3414,7 +3414,7 @@ def _get_tw_lending(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_lending_code_cache.get(code)
-    if ent and now - ent[0] < 3600:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 成功快取4h(籌碼日更)、失敗只15分
         return ent[1]
     rows = _finmind_fetch('TaiwanDailyShortSaleBalances', code, days=12)
     res = None
@@ -3440,7 +3440,7 @@ def _get_tw_foreign_holding(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_holding_code_cache.get(code)
-    if ent and now - ent[0] < 14400:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 失敗只快取15分,額度恢復快速重試
         return ent[1]
     rows = _finmind_fetch('TaiwanStockShareholding', code, days=20)
     res = None
@@ -3464,7 +3464,7 @@ def _get_tw_dispersion(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_dispersion_code_cache.get(code)
-    if ent and now - ent[0] < 21600:
+    if ent and now - ent[0] < (21600 if ent[1] else 900):   # 失敗只快取15分,額度恢復快速重試
         return ent[1]
     rows = _finmind_fetch('TaiwanStockShareholding', code, days=40)
     res = None
@@ -3489,7 +3489,7 @@ def _get_tw_daytrade(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_daytrade_code_cache.get(code)
-    if ent and now - ent[0] < 3600:
+    if ent and now - ent[0] < (14400 if ent[1] else 900):   # 成功快取4h(籌碼日更)、失敗只15分
         return ent[1]
     rows = _finmind_fetch('TaiwanStockDayTrading', code, days=12)
     res = None
@@ -3513,7 +3513,7 @@ def _get_tw_month_revenue(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_monthrev_code_cache.get(code)
-    if ent and now - ent[0] < 21600:
+    if ent and now - ent[0] < (21600 if ent[1] else 900):   # 失敗只快取15分,額度恢復快速重試
         return ent[1]
     # 取近 400 天涵蓋至少 13 個月，才能算 YoY（去年同月）
     rows = _finmind_fetch('TaiwanStockMonthRevenue', code, days=420)
@@ -3551,7 +3551,7 @@ def _get_tw_eps(code: str):
     now  = time.time()
     with _tw_margin_lock:
         ent = _tw_eps_code_cache.get(code)
-    if ent and now - ent[0] < 43200:
+    if ent and now - ent[0] < (43200 if ent[1] else 900):   # 失敗只快取15分,額度恢復快速重試
         return ent[1]
     # 涵蓋約 5 季
     rows = _finmind_fetch('TaiwanStockFinancialStatements', code, days=500)
