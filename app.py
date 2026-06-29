@@ -16,6 +16,27 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
+# ── 全域 JSON 清理：把 NaN/Inf 一律輸出成 null ───────────────────────────────
+# Python json 預設會輸出 NaN/Infinity，但那不是合法 JSON，瀏覽器 JSON.parse 會炸
+# （例：{"bb_lower":NaN} → Unexpected token N is not valid JSON）。覆寫 Flask 的
+# JSON provider，序列化前遞迴把非有限的 float 轉成 None，一次保護所有端點。
+from flask.json.provider import DefaultJSONProvider
+
+def _json_sanitize(o):
+    if isinstance(o, float):
+        return o if (o == o and o not in (float('inf'), float('-inf'))) else None
+    if isinstance(o, dict):
+        return {k: _json_sanitize(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_sanitize(v) for v in o]
+    return o
+
+class _SafeJSONProvider(DefaultJSONProvider):
+    def dumps(self, obj, **kwargs):
+        return super().dumps(_json_sanitize(obj), **kwargs)
+
+app.json = _SafeJSONProvider(app)
+
 # ── 全站登入保護 ─────────────────────────────────────────────────────────
 # 進站前需先輸入密碼，驗證後存於 session（多 worker 共用同一把 secret key，
 # 故 secret 取自環境變數並提供固定預設值，避免重啟後 session 失效）。
@@ -5878,14 +5899,18 @@ def _fetch_predict_data(code: str) -> dict:
         except Exception:
             result['rsi'] = 50
 
-        # 布林通道
+        # 布林通道（資料不足時 iloc[-1] 可能是 NaN，用 safe_float 收斂避免 NaN 進 JSON）
         try:
             bb_u, bb_m, bb_l = calc_bollinger(close)
-            bbu = float(bb_u.iloc[-1]); bbl = float(bb_l.iloc[-1]); bbm = float(bb_m.iloc[-1])
-            result['bb_upper'] = round(bbu, 2)
-            result['bb_lower'] = round(bbl, 2)
-            result['bb_mid']   = round(bbm, 2)
-            result['bb_pct']   = round((price - bbl) / max(bbu - bbl, 0.01) * 100, 1)
+            bbu = safe_float(bb_u.iloc[-1]); bbl = safe_float(bb_l.iloc[-1]); bbm = safe_float(bb_m.iloc[-1])
+            if bbu > 0 and bbl > 0:
+                result['bb_upper'] = round(bbu, 2)
+                result['bb_lower'] = round(bbl, 2)
+                result['bb_mid']   = round(bbm, 2)
+                result['bb_pct']   = round((price - bbl) / max(bbu - bbl, 0.01) * 100, 1)
+            else:
+                result['bb_upper'] = result['bb_lower'] = result['bb_mid'] = 0
+                result['bb_pct'] = 50
         except Exception:
             result['bb_upper'] = result['bb_lower'] = result['bb_mid'] = 0
             result['bb_pct'] = 50
