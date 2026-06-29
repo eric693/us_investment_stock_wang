@@ -3694,27 +3694,30 @@ def _eval_condition(hist, info, cond, extra=None):
 
         # ── MACD 指標 ─────────────────────────────────────
         elif ctype == 'macd_bullish':
-            macd_s, sig_s, _ = calc_macd(close)
+            f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
+            macd_s, sig_s, _ = calc_macd(close, f, s, g)
             mv, sv = safe_float(macd_s.iloc[-1]), safe_float(sig_s.iloc[-1])
-            return mv > sv, f'DIF {mv:.4f} > DEA {sv:.4f}'
+            return mv > sv, f'MACD({f},{s},{g}) DIF {mv:.4f} > DEA {sv:.4f}'
 
         elif ctype == 'macd_golden_cross':
             within = int(params.get('within_days', 3))
-            macd_s, sig_s, _ = calc_macd(close)
+            f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
+            macd_s, sig_s, _ = calc_macd(close, f, s, g)
             passed = False
             for i in range(-within, 0):
                 if (i-1) >= -n and macd_s.iloc[i] > sig_s.iloc[i] and macd_s.iloc[i-1] <= sig_s.iloc[i-1]:
                     passed = True; break
-            return passed, f'MACD 近{within}天金叉'
+            return passed, f'MACD({f},{s},{g}) 近{within}天金叉'
 
         elif ctype == 'macd_death_cross':
             within = int(params.get('within_days', 3))
-            macd_s, sig_s, _ = calc_macd(close)
+            f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
+            macd_s, sig_s, _ = calc_macd(close, f, s, g)
             passed = False
             for i in range(-within, 0):
                 if (i-1) >= -n and macd_s.iloc[i] < sig_s.iloc[i] and macd_s.iloc[i-1] >= sig_s.iloc[i-1]:
                     passed = True; break
-            return passed, f'MACD 近{within}天死叉'
+            return passed, f'MACD({f},{s},{g}) 近{within}天死叉'
 
         # ── RSI ────────────────────────────────────────────
         elif ctype == 'rsi_above':
@@ -3749,17 +3752,19 @@ def _eval_condition(hist, info, cond, extra=None):
         # ── 布林通道 ───────────────────────────────────────
         elif ctype == 'price_near_bb_lower':
             pct = float(params.get('pct', 5))
-            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bp  = int(params.get('bb_period', 20)); bs = float(params.get('bb_std', 2))
+            bb_u, bb_m, bb_l = calc_bollinger(close, bp, bs)
             bbl = safe_float(bb_l.iloc[-1])
             dist = (price - bbl) / bbl * 100 if bbl > 0 else 999
-            return dist <= pct, f'距布林下軌 {dist:.1f}% ≤ {pct}%'
+            return dist <= pct, f'距布林({bp},{bs:g})下軌 {dist:.1f}% ≤ {pct}%'
 
         elif ctype == 'price_near_bb_upper':
             pct = float(params.get('pct', 3))
-            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bp  = int(params.get('bb_period', 20)); bs = float(params.get('bb_std', 2))
+            bb_u, bb_m, bb_l = calc_bollinger(close, bp, bs)
             bbu = safe_float(bb_u.iloc[-1])
             dist = (bbu - price) / bbu * 100 if bbu > 0 else 999
-            return dist <= pct, f'距布林上軌 {dist:.1f}% ≤ {pct}%'
+            return dist <= pct, f'距布林({bp},{bs:g})上軌 {dist:.1f}% ≤ {pct}%'
 
         # ── 機構籌碼 ───────────────────────────────────────
         elif ctype == 'inst_pct_above':

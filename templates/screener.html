@@ -322,9 +322,9 @@ const COND_DEFS = {
   kd_low_golden_cross:      { label:'KD 低檔金叉（起漲）',     badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'threshold',label:'K值上限',default:30,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   // MACD
-  macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[] },
-  macd_golden_cross:        { label:'MACD 金叉',              badge:'tech', params:[{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
-  macd_death_cross:         { label:'MACD 死叉（退出警示）',   badge:'exit', params:[{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[{key:'fast',label:'快線EMA',default:12,type:'number'},{key:'slow',label:'慢線EMA',default:26,type:'number'},{key:'signal',label:'訊號線',default:9,type:'number'}] },
+  macd_golden_cross:        { label:'MACD 金叉',              badge:'tech', params:[{key:'fast',label:'快線EMA',default:12,type:'number'},{key:'slow',label:'慢線EMA',default:26,type:'number'},{key:'signal',label:'訊號線',default:9,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  macd_death_cross:         { label:'MACD 死叉（退出警示）',   badge:'exit', params:[{key:'fast',label:'快線EMA',default:12,type:'number'},{key:'slow',label:'慢線EMA',default:26,type:'number'},{key:'signal',label:'訊號線',default:9,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   // RSI
   rsi_above:                { label:'RSI > 閾值',             badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:50,type:'number'}] },
   rsi_below:                { label:'RSI < 閾值（超賣）',      badge:'tech', params:[{key:'period',label:'RSI週期',default:14,type:'number'},{key:'threshold',label:'閾值',default:30,type:'number'}] },
@@ -333,8 +333,8 @@ const COND_DEFS = {
   vol_5_above_20:           { label:'5日均量站上20日均量',     badge:'tech', params:[] },
   volume_shrinking:         { label:'量縮（打底訊號）',         badge:'tech', params:[{key:'avg_days',label:'均量天數',default:20,type:'number'},{key:'recent_days',label:'近期天數',default:5,type:'number'}] },
   // 布林
-  price_near_bb_lower:      { label:'股價接近布林下軌',         badge:'tech', params:[{key:'pct',label:'距離%以內',default:5,type:'number'}] },
-  price_near_bb_upper:      { label:'股價接近布林上軌（壓力）', badge:'exit', params:[{key:'pct',label:'距離%以內',default:3,type:'number'}] },
+  price_near_bb_lower:      { label:'股價接近布林下軌',         badge:'tech', params:[{key:'bb_period',label:'布林週期',default:20,type:'number'},{key:'bb_std',label:'標準差倍數',default:2,type:'number'},{key:'pct',label:'距離%以內',default:5,type:'number'}] },
+  price_near_bb_upper:      { label:'股價接近布林上軌（壓力）', badge:'exit', params:[{key:'bb_period',label:'布林週期',default:20,type:'number'},{key:'bb_std',label:'標準差倍數',default:2,type:'number'},{key:'pct',label:'距離%以內',default:3,type:'number'}] },
   // 籌碼
   inst_pct_above:           { label:'機構持股% > 閾值',         badge:'chip', params:[{key:'threshold',label:'持股%',default:40,type:'number'}] },
   // 其他
