@@ -647,6 +647,27 @@ def calc_macd(close, fast=12, slow=26, sig=9):
     signal = macd.ewm(span=sig, adjust=False).mean()
     return macd, signal, macd - signal
 
+def macd_zero_cross_note(macd_series, dea_series, lookback=5):
+    """偵測近 lookback 根內，快線(DIF)/慢線(DEA)由負翻正上穿零軸的事件。
+    回傳一條結論 dict，無事件則回傳 None。"""
+    try:
+        dif = macd_series.dropna()
+        dea = dea_series.dropna()
+        if len(dif) < 2:
+            return None
+        n = min(lookback, len(dif) - 1)
+        dif_cross = any(dif.iloc[-i-1] <= 0 < dif.iloc[-i] for i in range(1, n + 1))
+        dea_cross = any(dea.iloc[-i-1] <= 0 < dea.iloc[-i] for i in range(1, n + 1)) if len(dea) >= 2 else False
+        if dif_cross and dea_cross:
+            return {'type': 'star',     'text': 'MACD 快線與慢線雙雙上穿零軸，多頭趨勢確立，動能轉強'}
+        if dif_cross:
+            return {'type': 'positive', 'text': 'MACD 快線(DIF)上穿零軸（水上金叉），趨勢由空翻多'}
+        if dea_cross:
+            return {'type': 'positive', 'text': 'MACD 慢線(DEA)上穿零軸，中期動能確認轉多'}
+    except Exception:
+        pass
+    return None
+
 def calc_rsi(close, period=14):
     d = close.diff()
     gain = d.clip(lower=0).rolling(period).mean()
@@ -1531,6 +1552,10 @@ def get_stock(ticker):
 
         levels      = get_levels(hist)
         conclusions = gen_conclusions(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v, vol_ratio)
+        zc_note     = macd_zero_cross_note(hist['MACD'], hist['Signal'])
+        if zc_note:
+            conclusions.insert(1, zc_note)
+            conclusions = conclusions[:6]
         catalysts   = gen_catalysts(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v, vol_ratio, week52h, info)
         risks       = gen_risks(price, ma20, rsi_v, vol_ratio, week52h,
                                 pe=safe_float(info.get('trailingPE',0)),
@@ -2231,6 +2256,10 @@ def get_tw_stock(ticker):
 
         levels      = get_levels(hist)
         conclusions = gen_conclusions(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v, vol_ratio)
+        zc_note     = macd_zero_cross_note(hist['MACD'], hist['Signal'])
+        if zc_note:
+            conclusions.insert(1, zc_note)
+            conclusions = conclusions[:6]
         catalysts   = gen_tw_catalysts(price, ma5, ma20, ma60, macd_v, dea_v, rsi_v,
                                        vol_ratio, week52h, info, is_etf)
         risks       = gen_tw_risks(price, ma20, rsi_v, vol_ratio, week52h,
@@ -9531,7 +9560,13 @@ def _sig_kd_gc(c):         return _cross_up(c['k'], c['d'])
 def _sig_kd_low_gc(c):     return _cross_up(c['k'], c['d']) & (c['k'] < 35)
 def _sig_kd_os_up(c):      return _cross_up(c['k'], 20)
 def _sig_macd_gc(c):       return _cross_up(c['macd'], c['macd_sig'])
-def _sig_macd_zero(c):     return _cross_up(c['macd'], 0)
+def _sig_macd_zero(c):     return _cross_up(c['macd'], 0)            # 快線 DIF 上穿 0 軸
+def _sig_dea_zero(c):      return _cross_up(c['macd_sig'], 0)        # 慢線 DEA 上穿 0 軸
+def _sig_macd_both_zero(c):
+    # 快慢線雙雙站上 0 軸的那一刻（任一條剛上穿、且另一條已在 0 軸上方）
+    dif, dea = c['macd'], c['macd_sig']
+    dif_up = _cross_up(dif, 0); dea_up = _cross_up(dea, 0)
+    return (dif_up & (dea > 0)) | (dea_up & (dif > 0))
 def _sig_rsi_recover(c):   return (c['rsi'].shift(1) <= 30) & (c['rsi'] > 30)
 def _sig_rsi_cross50(c):   return _cross_up(c['rsi'], 50)
 def _sig_mtm_up(c):        return _cross_up(c['close'] - c['close'].shift(10), 0)
@@ -9583,7 +9618,9 @@ _SIGNAL_DEFS = [
         ('kd_low_gc',   'KD 低檔黃金交叉（K<35，起漲更準）',  _sig_kd_low_gc),
         ('kd_os_up',    'KD 的 K 值由超賣(20)回升',           _sig_kd_os_up),
         ('macd_gc',     'MACD 黃金交叉',                      _sig_macd_gc),
-        ('macd_zero',   'MACD 由負翻正（穿越 0 軸）',         _sig_macd_zero),
+        ('macd_zero',   'MACD 快線(DIF)上穿 0 軸（由負翻正）', _sig_macd_zero),
+        ('dea_zero',    'MACD 慢線(DEA)上穿 0 軸',            _sig_dea_zero),
+        ('macd_both_zero', 'MACD 快慢線雙雙站上 0 軸（趨勢轉多）', _sig_macd_both_zero),
         ('rsi_recover', 'RSI 由 30 以下回升',                 _sig_rsi_recover),
         ('rsi_cross50', 'RSI 向上突破 50（轉強）',            _sig_rsi_cross50),
         ('mtm_up',      '動量 MTM 由負翻正',                  _sig_mtm_up),

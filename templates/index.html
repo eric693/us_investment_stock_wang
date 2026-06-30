@@ -1061,10 +1061,28 @@ function renderCharts(d) {
 
   // ── MACD Chart ──
   const hc = d.macd.hist.map(v => v===null?'#333':(v>=0?'rgba(232,70,70,0.8)':'rgba(0,214,143,0.8)'));
+  // 零軸上穿偵測：快線(DIF)/慢線(DEA)由負翻正的瞬間（水上金叉/趨勢轉多）
+  const zeroCrossUp = arr => {
+    const xs = [], ys = [];
+    for (let i = 1; i < arr.length; i++) {
+      const a = arr[i-1], b = arr[i];
+      if (a === null || b === null) continue;
+      if (a <= 0 && b > 0) { xs.push(dates[i]); ys.push(0); }
+    }
+    return { xs, ys };
+  };
+  const difUp = zeroCrossUp(d.macd.dif);
+  const deaUp = zeroCrossUp(d.macd.dea);
   Plotly.newPlot('macdChart', [
     {type:'bar',     x:dates, y:d.macd.hist, name:'MACD', marker:{color:hc}},
     {type:'scatter', mode:'lines', x:dates, y:d.macd.dif, name:'DIF', line:{color:'#3d8ef8',width:1.5}, connectgaps:false},
     {type:'scatter', mode:'lines', x:dates, y:d.macd.dea, name:'DEA', line:{color:'#e8a020',width:1.5}, connectgaps:false},
+    {type:'scatter', mode:'markers', x:difUp.xs, y:difUp.ys, name:'DIF 上穿0軸',
+     marker:{symbol:'triangle-up',size:11,color:'#3d8ef8',line:{color:'#fff',width:1}},
+     hovertemplate:'快線 DIF 上穿零軸<extra></extra>'},
+    {type:'scatter', mode:'markers', x:deaUp.xs, y:deaUp.ys, name:'DEA 上穿0軸',
+     marker:{symbol:'triangle-up',size:9,color:'#e8a020',line:{color:'#fff',width:1}},
+     hovertemplate:'慢線 DEA 上穿零軸<extra></extra>'},
   ], {
     paper_bgcolor:BG, plot_bgcolor:BG,
     font:{color:'#6888a0',size:10},
@@ -1313,12 +1331,28 @@ function renderBiz(d) {
 
 // ── Tech Stats ────────────────────────────────────────────────────────
 function renderTechStats(d) {
+  // 零軸狀態：近 5 根內由負翻正＝剛上穿；否則看當前在零軸上/下
+  const crossedUp = (arr, lb = 5) => {
+    if (!arr) return false;
+    const n = Math.min(lb, arr.length - 1);
+    for (let i = 1; i <= n; i++) {
+      const a = arr[arr.length-1-i], b = arr[arr.length-i];
+      if (a === null || b === null) continue;
+      if (a <= 0 && b > 0) return true;
+    }
+    return false;
+  };
+  const difUp = crossedUp(d.macd && d.macd.dif), deaUp = crossedUp(d.macd && d.macd.dea);
+  const zeroTxt = (difUp && deaUp) ? '快慢線剛上穿' : difUp ? '快線剛上穿' : deaUp ? '慢線剛上穿'
+                : d.macdVal > 0 ? '雙線零軸上' : '零軸下方';
+  const zeroCls = (difUp || deaUp || d.macdVal > 0) ? 'red' : 'green';
   const rows = [
     ['MA5',   '$'+d.ma5,              d.price > d.ma5  ? 'red':'green',    d.price > d.ma5  ? '站上':'跌破'],
     ['MA20',  '$'+d.ma20,             d.price > d.ma20 ? 'red':'green',    d.price > d.ma20 ? '站上':'跌破'],
     ['MA60',  '$'+d.ma60,             d.price > d.ma60 ? 'red':'green',    d.price > d.ma60 ? '站上':'跌破'],
     ['DIF',   d.macdVal.toFixed(2),   d.macdVal > 0    ? 'red':'green',    d.macdVal > 0    ? '零軸上':'零軸下'],
     ['DEA',   d.deaVal.toFixed(2),    d.macdVal > d.deaVal ? 'red':'green', d.macdVal > d.deaVal ? '金叉':'死叉'],
+    ['零軸',  d.macdVal.toFixed(2),   zeroCls,                             zeroTxt],
     ['量比',  d.volRatio.toFixed(2)+'x', d.volRatio >= 1.5 ? 'green':'dim', d.volRatio >= 1.5 ? '放量':'縮量'],
   ];
   setHTML('techStats',
