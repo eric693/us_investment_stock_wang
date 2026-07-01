@@ -263,6 +263,36 @@
   <div class="mb-time" id="mbTime"></div>
 </div>
 
+<style>
+.mkt-forecast{max-width:1180px;margin:10px auto 0;background:rgba(20,28,44,.6);border:1px solid rgba(79,118,173,.25);border-radius:10px;padding:12px 16px}
+.mf-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mf-title{font-size:.9rem;font-weight:700;color:var(--gold)}
+.mf-btn{font-size:.78rem;font-weight:700;color:#fff;background:linear-gradient(135deg,#2563a8,#173a6b);border:none;border-radius:6px;padding:5px 14px;cursor:pointer}
+.mf-btn:disabled{opacity:.6;cursor:default}
+.mf-body{margin-top:8px}
+.mf-hint{font-size:.76rem;color:var(--text-dim);line-height:1.6}
+.mf-top{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+.mf-dir{font-size:1.15rem;font-weight:800}
+.mf-kv{font-size:.82rem;color:var(--text-dim)}
+.mf-kv b{color:var(--text);font-size:.9rem}
+.mf-reason{font-size:.76rem;color:var(--text-dim);margin-bottom:4px}
+.mf-summary{font-size:.84rem;line-height:1.7;margin:6px 0;color:var(--text)}
+.mf-sub{font-size:.76rem;font-weight:700;color:var(--gold);margin-top:8px}
+.mf-list{margin:4px 0 0;padding-left:18px}
+.mf-list li{font-size:.8rem;line-height:1.6;color:var(--text)}
+.mf-foot{font-size:.68rem;color:var(--text-dim);margin-top:10px;border-top:1px solid rgba(79,118,173,.15);padding-top:6px}
+.mf-foot a{color:#7ba6db;margin-left:8px}
+</style>
+<div id="mktForecast" class="mkt-forecast">
+  <div class="mf-head">
+    <span class="mf-title">明日大盤 AI 研判</span>
+    <button id="mfBtn" class="mf-btn" onclick="loadMarketForecast(false)">AI 研判</button>
+  </div>
+  <div id="mfBody" class="mf-body">
+    <div class="mf-hint">整合隔夜美股、美股期指、大盤體質與新聞，由 AI 研判明日加權指數方向、預估區間與信心度。點右上「AI 研判」產生（會使用 Claude API）。</div>
+  </div>
+</div>
+
 <!-- Welcome -->
 <div id="welcome" class="welcome-screen">
   <div class="hero-bg"></div>
@@ -886,6 +916,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('heroInput').addEventListener('keypress', e => { if (e.key === 'Enter') searchFromHero(); });
   _loadLineConfigFromServer();
   loadMarket();
+  prefetchMarketForecast();
   renderWatchlist();
   updateAlertBadge();
   loadTwWelcomeCards();
@@ -994,6 +1025,54 @@ async function loadMarket() {
     $('mbTime').textContent = new Date().toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit'}) + ' 更新';
   } catch(e) {}
   setTimeout(loadMarket, 60000);
+}
+
+// ── 明日大盤 AI 研判 ────────────────────────────────────────────────
+function _mfDirColor(dir){ if(/多/.test(dir||'')) return 'var(--red)'; if(/空/.test(dir||'')) return 'var(--green)'; return 'var(--text-dim)'; }
+function _mfConfColor(c){ return c==='高'?'var(--red)':(c==='低'?'var(--text-dim)':'var(--gold)'); }
+
+// 載入時免費讀快取（GET，不呼叫 AI），有結果才顯示
+async function prefetchMarketForecast(){
+  try{
+    const r = await fetch('/api/market/forecast');   // GET 讀快取
+    const d = await r.json();
+    if(!d.error && d.direction) renderMarketForecast(d);
+  }catch(e){}
+}
+
+async function loadMarketForecast(force){
+  const body = $('mfBody'), btn = $('mfBtn');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '研判中...';
+  body.innerHTML = '<div class="mf-hint">AI 研判中，約需 10~20 秒...</div>';
+  try{
+    const r = await fetch('/api/market/forecast' + (force ? '?force=1' : ''), {method:'POST'});
+    const d = await r.json();
+    if(d.error){ body.innerHTML = '<div class="mf-hint" style="color:var(--red)">' + d.error + '</div>'; return; }
+    renderMarketForecast(d);
+  }catch(e){
+    body.innerHTML = '<div class="mf-hint" style="color:var(--red)">研判失敗，請稍後再試</div>';
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+function renderMarketForecast(d){
+  const drivers = (d.drivers||[]).map(x=>'<li>'+x+'</li>').join('');
+  const watch   = (d.watch||[]).map(x=>'<li>'+x+'</li>').join('');
+  const inp = d.inputs || {};
+  $('mfBody').innerHTML = `
+    <div class="mf-top">
+      <div class="mf-dir" style="color:${_mfDirColor(d.direction)}">${d.direction||'--'}</div>
+      <div class="mf-kv">預估區間 <b>${d.range_pct||'--'}</b>${d.range_points?'（'+d.range_points+'）':''}</div>
+      <div class="mf-kv">信心度 <b style="color:${_mfConfColor(d.confidence)}">${d.confidence||'--'}</b></div>
+    </div>
+    ${d.confidence_reason?`<div class="mf-reason">${d.confidence_reason}</div>`:''}
+    ${d.summary?`<div class="mf-summary">${d.summary}</div>`:''}
+    ${drivers?`<div class="mf-sub">關鍵驅動</div><ul class="mf-list">${drivers}</ul>`:''}
+    ${watch?`<div class="mf-sub">明日觀察</div><ul class="mf-list">${watch}</ul>`:''}
+    <div class="mf-foot">依據：${[inp.futures,inp.us].filter(Boolean).join('　')||'—'}　·　${d.ts||''}<a href="#" onclick="loadMarketForecast(true);return false;">重新研判</a></div>
+  `;
 }
 
 // ── Load Stock ──────────────────────────────────────────────────────

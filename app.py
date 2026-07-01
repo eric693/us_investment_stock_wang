@@ -3748,6 +3748,28 @@ def _eval_condition(hist, info, cond, extra=None):
                     passed = True; break
             return passed, f'MACD({f},{s},{g}) 近{within}天死叉'
 
+        elif ctype == 'macd_dif_cross_zero':
+            # 快線 DIF 由負翻正上穿零軸（水上金叉，趨勢由空翻多）
+            within = int(params.get('within_days', 3))
+            f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
+            macd_s, sig_s, _ = calc_macd(close, f, s, g)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and macd_s.iloc[i] > 0 and macd_s.iloc[i-1] <= 0:
+                    passed = True; break
+            return passed, f'MACD({f},{s},{g}) 快線DIF 近{within}天上穿零軸（水上金叉）'
+
+        elif ctype == 'macd_dea_cross_zero':
+            # 慢線 DEA 由負翻正上穿零軸（中期動能確認轉多）
+            within = int(params.get('within_days', 3))
+            f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
+            macd_s, sig_s, _ = calc_macd(close, f, s, g)
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and sig_s.iloc[i] > 0 and sig_s.iloc[i-1] <= 0:
+                    passed = True; break
+            return passed, f'MACD({f},{s},{g}) 慢線DEA 近{within}天上穿零軸'
+
         # ── RSI ────────────────────────────────────────────
         elif ctype == 'rsi_above':
             period = int(params.get('period', 14))
@@ -3978,6 +4000,12 @@ def _eval_condition(hist, info, cond, extra=None):
             bb_u, bb_m, bb_l = calc_bollinger(close)
             bbu = safe_float(bb_u.iloc[-1])
             return price >= bbu, f'股價 {price:.2f} ≥ 布林上軌 {bbu:.2f}'
+
+        elif ctype == 'bb_breakout_mid':
+            # 股價站上布林中軌（MA20）；突破上軌常已過熱易拉回，中軌是較早的轉強點
+            bb_u, bb_m, bb_l = calc_bollinger(close)
+            bbm = safe_float(bb_m.iloc[-1])
+            return price >= bbm, f'股價 {price:.2f} ≥ 布林中軌 {bbm:.2f}'
 
         elif ctype == 'bb_true_breakout':
             # 收盤價突破布林上軌，且須同時滿足：先前布林帶收窄（盤整蓄勢）、
@@ -7551,6 +7579,139 @@ def _market_regime() -> dict:
     return out
 
 
+_INDEX_FUTURES_SET = [
+    ('es', 'ES=F', '標普期'),
+    ('nq', 'NQ=F', '那期'),
+    ('ym', 'YM=F', '道期'),
+]
+
+
+def _index_futures_snapshot() -> dict:
+    """美股主要期指即時概況（供台股盤前研判「盤前變數」）。
+    期貨近乎全天交易，台股早盤時能反映最新美股情緒，比昨夜收盤更即時。快取 5 分鐘。"""
+    cached = _cache_get('index_futures')
+    if cached:
+        return cached
+    data = {}
+    for key, sym, label in _INDEX_FUTURES_SET:
+        try:
+            t = yf.Ticker(sym)
+            d = t.history(period='5d', interval='1d')['Close'].dropna()
+            if len(d) < 2:
+                continue
+            base = float(d.iloc[-2])   # 前一交易日結算價
+            last = float(d.iloc[-1])
+            # 盤前若期指仍在交易，用即時分鐘價更新最新值
+            try:
+                m = t.history(period='1d', interval='5m')['Close'].dropna()
+                if len(m):
+                    last = float(m.iloc[-1])
+            except Exception:
+                pass
+            if base:
+                data[key] = {'label': label, 'v': round(last, 1),
+                             'pct': round((last / base - 1) * 100, 2)}
+        except Exception:
+            pass
+    parts = [f"{data[k]['label']} {data[k]['pct']:+.2f}%" for k in ('es', 'nq', 'ym') if k in data]
+    summary = ('美股期指：' + '、'.join(parts)) if parts else ''
+    out = {'data': data, 'summary': summary}
+    _cache_set('index_futures', out, ttl=300)
+    return out
+
+
+def _market_news_headlines(max_n: int = 6) -> list:
+    """大盤層級新聞標題（Google News）：抓台股/加權/台積電相關，供大盤研判當催化劑線索。"""
+    cached = _cache_get('market_news')
+    if cached is not None:
+        return cached
+    items  = _fetch_gnews('台股 加權指數 台積電 大盤', max_results=max_n)
+    titles = [it['title'] for it in items][:max_n]
+    _cache_set('market_news', titles, ttl=1800)
+    return titles
+
+
+def _market_ai_forecast(force: bool = False, client=None) -> dict:
+    """明日大盤 AI 研判：整合隔夜美股＋美股期指＋大盤體質＋大盤新聞，
+    請 Claude 產生 明日方向／預估區間／信心度／關鍵驅動／觀察點。
+    on-demand（按鈕觸發），結果快取 30 分鐘以控管 API 花費。"""
+    if not force:
+        cached = _cache_get('market_forecast')
+        if cached:
+            return cached
+
+    key = _agent_api_key()
+    if not key:
+        return {'error': '尚未設定 Claude API Key，請先到 AI Agent 頁設定金鑰'}
+
+    us   = _us_overnight_snapshot()
+    fut  = _index_futures_snapshot()
+    reg  = _market_regime()
+    news = _market_news_headlines()
+
+    ctx = [
+        '【隔夜美股（收盤）】' + (us.get('summary') or '資料暫缺'),
+        '【美股期指（即時，反映最新情緒）】' + (fut.get('summary') or '資料暫缺'),
+        '【台股大盤體質（技術位置）】' + (reg.get('reason') or '資料暫缺'),
+        '【大盤相關新聞標題】' + ('；'.join(news) if news else '暫無'),
+    ]
+    prompt = (
+        '你是資深台股大盤分析師。根據以下即時資料，研判「下一個台股交易日」加權指數的可能走勢。\n'
+        '費城半導體與台積電 ADR 對台股電子權值影響最大，美股期指反映最新盤前情緒，'
+        '請把「隔夜收盤 vs 期指即時」的落差納入判斷（例如收盤漲但期指翻黑，代表情緒轉弱）。\n'
+        '資料不足或矛盾時要誠實在信心度反映，切勿捏造新聞或事件。\n\n'
+        + '\n'.join(ctx) +
+        '\n\n只回傳 JSON（不要多餘文字），格式：\n'
+        '{"direction":"偏多/偏空/中性/震盪偏多/震盪偏空 擇一",'
+        '"range_pct":"預估漲跌幅區間，例如 -0.5% ~ +1.2%",'
+        '"range_points":"換算成加權指數點數區間（用大盤體質裡的加權點位推算），例如 +100 ~ +250 點",'
+        '"confidence":"高/中/低",'
+        '"confidence_reason":"一句話說明為何是這個信心度",'
+        '"drivers":["2~4 條關鍵驅動因素，引用實際數據/新聞"],'
+        '"watch":["2~3 個明日盤中觀察點/風險"],'
+        '"summary":"2~3 句白話總結"}'
+    )
+
+    try:
+        import anthropic
+        if client is None:
+            client = anthropic.Anthropic(api_key=key)
+        resp = client.messages.create(
+            model='claude-opus-4-8', max_tokens=900,
+            messages=[{'role': 'user', 'content': prompt}])
+        text = resp.content[0].text.strip()
+        m = _re.search(r'\{.*\}', text, _re.DOTALL)
+        parsed = json.loads(m.group(0)) if m else {}
+    except Exception as e:
+        return {'error': f'AI 研判失敗：{e}'}
+
+    out = {
+        'direction':         parsed.get('direction', ''),
+        'range_pct':         parsed.get('range_pct', ''),
+        'range_points':      parsed.get('range_points', ''),
+        'confidence':        parsed.get('confidence', ''),
+        'confidence_reason': parsed.get('confidence_reason', ''),
+        'drivers':           parsed.get('drivers', []) or [],
+        'watch':             parsed.get('watch', []) or [],
+        'summary':           parsed.get('summary', ''),
+        'inputs': {'us': us.get('summary', ''), 'futures': fut.get('summary', ''),
+                   'regime': reg.get('reason', ''), 'news': news},
+        'ts': pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y-%m-%d %H:%M'),
+    }
+    _cache_set('market_forecast', out, ttl=1800)
+    return out
+
+
+@app.route('/api/market/forecast', methods=['POST', 'GET'])
+def market_forecast():
+    """明日大盤 AI 研判端點。POST 觸發（可帶 force=1 強制重算），GET 讀快取。"""
+    force = request.method == 'POST' and request.args.get('force') != '0'
+    if request.method == 'GET':
+        cached = _cache_get('market_forecast')
+        return jsonify(cached or {'error': 'no-cache'})
+    return jsonify(_market_ai_forecast(force=force))
+
+
 def _entry_quality(data: dict) -> dict:
     """判斷「現在這個價位」是不是好買點（治追高、買隔天跌）。
     依乖離、自低點反彈幅度、RSI、KD 高檔判斷過熱程度，並給「等回檔目標價」與停損。
@@ -8355,6 +8516,17 @@ def _agent_loop():
                 lines = [f'[{today}] 早盤前分析報告', '']
                 if us.get('summary'):
                     lines.append(us['summary'])
+                    lines.append('')
+                # 明日大盤 AI 研判（方向＋區間＋信心度），沿用同一個 client 省連線
+                mf = _market_ai_forecast(force=True, client=client)
+                if not mf.get('error'):
+                    lines.append('--- 明日大盤研判 ---')
+                    lines.append(f"方向：{mf.get('direction','')}　信心度：{mf.get('confidence','')}")
+                    if mf.get('range_pct'):
+                        lines.append(f"預估區間：{mf['range_pct']}"
+                                     + (f"（{mf['range_points']}）" if mf.get('range_points') else ''))
+                    if mf.get('summary'):
+                        lines.append(mf['summary'])
                     lines.append('')
                 if holdings_analysis:
                     lines.append('--- 持倉建議 ---')
@@ -9196,6 +9368,8 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 - kd_k_below {threshold:20} KD 的 K 值低檔（超賣）
 - macd_golden_cross MACD 黃金交叉
 - macd_bullish MACD 多頭（DIF>MACD）
+- macd_dif_cross_zero MACD 快線DIF 上穿零軸（水上金叉，趨勢由空翻多）
+- macd_dea_cross_zero MACD 慢線DEA 上穿零軸（中期動能確認轉多）
 - rsi_below {threshold:30} RSI 超賣
 - rsi_cross_above {threshold:50} RSI 向上突破
 - william_r_oversold 威廉指標超賣
@@ -9215,6 +9389,7 @@ CONDITION_CATALOG = """可用的篩選條件（type 為條件代碼，params 為
 - price_consolidation_break 突破盤整區
 - bb_squeeze 布林通道收口（變盤前）
 - bb_breakout_up 突破布林上軌
+- bb_breakout_mid 站上布林中軌（MA20，較早的轉強點，突破上軌常已過熱易拉回）
 - bb_true_breakout 布林真突破（突破上軌＋前期窄通道蓄勢＋帶量＋RSI>門檻，過濾假突破）
 - price_near_bb_lower 接近布林下軌（低接）
 - bb_oversold 布林超賣
