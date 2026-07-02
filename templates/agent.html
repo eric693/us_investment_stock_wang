@@ -1318,11 +1318,19 @@ async function runScan() {
         scan_universe:  document.getElementById('sc-universe').value,
       }),
     });
+    if (!r.ok) {
+      // 逾時/伺服器忙碌時代理常回 HTML（非 JSON），避免 JSON.parse 爆「Unexpected token '<'」
+      const msg = r.status === 504 || r.status === 502
+        ? '掃描耗時較久被伺服器逾時中斷，請稍後再試，或縮小掃描範圍（例如改 Top 50）。'
+        : `伺服器回應異常（HTTP ${r.status}），請稍後再試。`;
+      document.getElementById('candidatesGrid').innerHTML = `<div class="empty-state"><h3>掃描失敗</h3>${msg}</div>`;
+      return;
+    }
     const results = await r.json();
     renderCandidates(results);
     if (Array.isArray(results) && results.length) _saveReport('agentCandidates', { results });
   } catch(e) {
-    document.getElementById('candidatesGrid').innerHTML = `<div class="empty-state"><h3>掃描失敗</h3>${e.message}</div>`;
+    document.getElementById('candidatesGrid').innerHTML = `<div class="empty-state"><h3>掃描失敗</h3>網路或連線中斷，請稍後再試（${e.message}）</div>`;
   } finally {
     btn.disabled = false;
     loading.style.display = 'none';

@@ -4587,6 +4587,24 @@ def _eval_condition(hist, info, cond, extra=None):
                 ssum = sum(sseq)
                 return ssum >= thr, f'近{days}日累計買超 {ssum/1000:.0f}千股 {"≥" if ssum>=thr else "<"} {params.get("threshold",5000)}千股'
 
+        elif ctype == 'chip_concentration':
+            # 籌碼集中度：近N日三大法人淨買超股數 ÷ 近N日總成交量 ×100%。
+            # 越高代表這段期間成交量越多是被法人淨吸收（吸籌），籌碼往大戶手中集中。
+            ih = (extra or {}).get('inst_hist')
+            if ih is None:
+                return False, '非台股或無多日法人資料'
+            days = int(params.get('days', 5))
+            thr  = float(params.get('threshold', 10))
+            sseq = ih.get('total', [])[:days]   # 最新在前
+            if len(sseq) < days:
+                return False, f'法人資料不足{days}日'
+            net_sum = sum(sseq)                            # 近N日三大法人淨買超（股）
+            vol_sum = float(vol.iloc[-days:].sum())        # 近N日總成交量（股）
+            conc = (net_sum / vol_sum * 100) if vol_sum > 0 else 0
+            return conc >= thr, (f'近{days}日籌碼集中度 {conc:.1f}%'
+                                 f'（法人淨買{net_sum/1000:,.0f}千股／量{vol_sum/1000:,.0f}千股）'
+                                 f' {"≥" if conc >= thr else "<"} {thr:g}%')
+
         # ── 多週期指標 ────────────────────────────────────────────────────
         elif ctype in ('weekly_kd_golden_cross', 'weekly_macd_golden_cross',
                        'weekly_rsi_cross_above', 'monthly_kd_oversold',
@@ -4747,7 +4765,7 @@ _MARGIN_TYPES  = {'margin_increase','margin_decrease','short_decrease',
 _INST_TYPES    = {'inst_foreign_buy','inst_foreign_sell','inst_trust_buy','inst_trust_sell',
                   'inst_dealer_buy','inst_3_buy','inst_total_above','inst_foreign_dominant'}
 _INST_HIST_TYPES = {'inst_foreign_buy_ndays','inst_trust_buy_ndays','inst_3_buy_ndays',
-                    'inst_net_sum_above','inst_foreign_sell_ndays'}
+                    'inst_net_sum_above','inst_foreign_sell_ndays','chip_concentration'}
 _LENDING_TYPES   = {'lending_decrease','lending_increase'}
 _HOLDING_TYPES   = {'foreign_holding_above'}
 _DAYTRADE_TYPES  = {'day_trade_ratio_above'}
