@@ -321,6 +321,10 @@ const COND_DEFS = {
   kd_golden_cross:          { label:'KD 金叉',                badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   kd_low_golden_cross:      { label:'KD 低檔金叉（起漲）',     badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'threshold',label:'K值上限',default:30,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   kd_death_cross:           { label:'KD 死叉（退出警示）',     badge:'exit', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
+  // KDJ（J = 3K − 2D，比 K/D 更靈敏）
+  kdj_j_oversold:           { label:'KDJ J值超賣（起漲低接）',  badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'J值 <',default:20,type:'number'}] },
+  kdj_j_overbought:         { label:'KDJ J值超買（警示）',      badge:'exit', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'threshold',label:'J值 >',default:80,type:'number'}] },
+  kdj_golden_cross:         { label:'KDJ 金叉（K上穿D且J上揚）', badge:'tech', params:[{key:'kd_n',label:'KD週期(N)',default:9,type:'number'},{key:'kd_m1',label:'平滑m1',default:3,type:'number'},{key:'kd_m2',label:'平滑m2',default:3,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
   // MACD
   macd_bullish:             { label:'MACD DIF > DEA（多頭）',  badge:'tech', params:[{key:'fast',label:'快線EMA',default:12,type:'number'},{key:'slow',label:'慢線EMA',default:26,type:'number'},{key:'signal',label:'訊號線',default:9,type:'number'}] },
   macd_golden_cross:        { label:'MACD 金叉',              badge:'tech', params:[{key:'fast',label:'快線EMA',default:12,type:'number'},{key:'slow',label:'慢線EMA',default:26,type:'number'},{key:'signal',label:'訊號線',default:9,type:'number'},{key:'within_days',label:'最近N天內',default:3,type:'number'}] },
@@ -555,6 +559,7 @@ function clearAllTickers() {
 const COND_CATS = {
   '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_deduction_up','pullback_hold_ma','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_golden_cross','ma_death_cross','ma_convergence'],
   'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_low_golden_cross','kd_death_cross'],
+  'KDJ':    ['kdj_j_oversold','kdj_golden_cross','kdj_j_overbought'],
   'MACD':   ['macd_bullish','macd_golden_cross','macd_death_cross','macd_dif_cross_zero','macd_dea_cross_zero'],
   'RSI':    ['rsi_above','rsi_below','rsi_cross_above','rsi_cross_below'],
   '布林':   ['price_near_bb_lower','price_near_bb_upper','bb_squeeze','bb_breakout_up','bb_breakout_mid','bb_true_breakout','bb_oversold'],

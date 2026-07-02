@@ -3721,6 +3721,33 @@ def _eval_condition(hist, info, cond, extra=None):
                     passed = True; break
             return passed, f'KD({kn}) 近{within}天死叉'
 
+        # ── KDJ 指標（J = 3K − 2D，J 比 K/D 更靈敏，領先反應轉折）──────
+        elif ctype == 'kdj_j_oversold':
+            kn = int(params.get('kd_n', 9)); m1 = int(params.get('kd_m1', 3)); m2 = int(params.get('kd_m2', 3))
+            thr = float(params.get('threshold', 20))
+            k, d = calc_kd(high, low, close, kn, m1, m2)
+            jv = safe_float(3 * k.iloc[-1] - 2 * d.iloc[-1])
+            return jv < thr, f'KDJ({kn},{m1},{m2}) J={jv:.1f} < {thr}（超賣/低接）'
+
+        elif ctype == 'kdj_j_overbought':
+            kn = int(params.get('kd_n', 9)); m1 = int(params.get('kd_m1', 3)); m2 = int(params.get('kd_m2', 3))
+            thr = float(params.get('threshold', 80))
+            k, d = calc_kd(high, low, close, kn, m1, m2)
+            jv = safe_float(3 * k.iloc[-1] - 2 * d.iloc[-1])
+            return jv > thr, f'KDJ({kn},{m1},{m2}) J={jv:.1f} > {thr}（超買/警示）'
+
+        elif ctype == 'kdj_golden_cross':
+            kn = int(params.get('kd_n', 9)); m1 = int(params.get('kd_m1', 3)); m2 = int(params.get('kd_m2', 3))
+            within = int(params.get('within_days', 3))
+            k, d = calc_kd(high, low, close, kn, m1, m2)
+            j = 3 * k - 2 * d
+            passed = False
+            for i in range(-within, 0):
+                if (i-1) >= -n and k.iloc[i] > d.iloc[i] and k.iloc[i-1] <= d.iloc[i-1] and j.iloc[i] > j.iloc[i-1]:
+                    passed = True; break
+            jv = safe_float(j.iloc[-1])
+            return passed, f'KDJ({kn}) 近{within}天金叉（K上穿D且J上揚），J={jv:.1f}'
+
         # ── MACD 指標 ─────────────────────────────────────
         elif ctype == 'macd_bullish':
             f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
