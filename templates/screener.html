@@ -808,16 +808,19 @@ function renderResults(results) {
       <th>代號</th><th>名稱</th>
       <th>現價</th><th>漲跌</th>
       <th>MA5</th><th>MA20</th><th>MA60</th>
-      <th>RSI</th><th>MACD</th><th>量比</th>
+      <th>RSI</th><th title="此欄為『掃描當日』DIF 是否 > DEA 的當下狀態，和左側『最近N天內金叉』的符合條件是不同時間基準，可能一綠一紅屬正常">MACD<span style="font-weight:400;font-size:.62rem;opacity:.6">(當日)</span></th><th>量比</th>
       <th>機構%</th><th>符合條件</th><th></th>
     </tr></thead><tbody>`;
 
   results.forEach(r => {
     const updn  = r.changePct >= 0;
     const link  = r.isTw ? `/tw?ticker=${r.display}` : `/?ticker=${r.ticker}`;
-    const cTags = r.conditions.map(c =>
-      `<span class="cond-tag pass" title="${c.detail}">${c.label.slice(0,10)}…</span>`
-    ).join('');
+    const cTags = r.conditions.map(c => {
+      // 交叉類訊號附上新鮮度（當日／N天前），避免與右側「MACD(當日)」欄位混淆
+      const m = (c.detail||'').match(/（(當日|\d+天前)[^）]*）/);
+      const fresh = m ? `<span style="margin-left:4px;opacity:.7;font-size:.9em">(${m[1]})</span>` : '';
+      return `<span class="cond-tag pass" title="${c.detail}">${c.label.slice(0,10)}…${fresh}</span>`;
+    }).join('');
     html += `<tr>
       <td><span class="r-sym" onclick="openStockDetail('${r.display}', ${r.isTw})">${r.display}</span></td>
       <td><span class="r-name">${esc(r.name)}</span></td>
@@ -825,7 +828,7 @@ function renderResults(results) {
       <td class="${updn?'sig-up':'sig-dn'}">${updn?'▲':'▼'}${Math.abs(r.changePct).toFixed(2)}%</td>
       <td>${r.ma5||'--'}</td><td>${r.ma20||'--'}</td><td>${r.ma60||'--'}</td>
       <td>${r.rsi||'--'}</td>
-      <td class="${r.macdBull?'bool-yes':'bool-no'}">${r.macdBull?'金叉':'死叉'}</td>
+      <td class="${r.macdBull?'bool-yes':'bool-no'}" title="掃描當日 DIF 是否 > DEA 的狀態（與左側『最近N天內金叉』時間基準不同）">${r.macdBull?'金叉':'死叉'}</td>
       <td>${r.volRatio}x</td>
       <td>${r.instPct>0?r.instPct+'%':'--'}</td>
       <td>${cTags}</td>

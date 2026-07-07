@@ -3602,6 +3602,14 @@ def _get_tw_eps(code: str):
     return res
 
 
+def _fresh_tag(i):
+    """交叉類訊號新鮮度：i 為找到訊號的負索引（-1=最新一根）。
+    回『當日』或『N天前』，讓「符合條件」標籤能標出訊號是幾天前發生的
+    （避免與『當日 MACD 金叉/死叉』欄位混淆）。"""
+    days = (-i) - 1
+    return '當日' if days <= 0 else f'{days}天前'
+
+
 def _eval_condition(hist, info, cond, extra=None):
     """Evaluate a single condition. Returns (passed:bool, detail:str).
     extra = {'weekly': DataFrame, 'monthly': DataFrame, 'margin': dict}
@@ -3702,12 +3710,13 @@ def _eval_condition(hist, info, cond, extra=None):
             m2     = int(params.get('kd_m2', 3))
             within = int(params.get('within_days', 3))
             k, d   = calc_kd(high, low, close, kn, m1, m2)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and k.iloc[i] > d.iloc[i] and k.iloc[i-1] <= d.iloc[i-1]:
-                    passed = True; break
+                    hit = i; break
             kv = safe_float(k.iloc[-1])
-            return passed, f'KD({kn}) 近{within}天金叉，K={kv:.1f}'
+            return hit is not None, (f'KD({kn}) 金叉（{_fresh_tag(hit)}），K={kv:.1f}'
+                                     if hit is not None else f'KD({kn}) 近{within}天無金叉')
 
         elif ctype == 'kd_death_cross':
             kn     = int(params.get('kd_n', 9))
@@ -3715,11 +3724,12 @@ def _eval_condition(hist, info, cond, extra=None):
             m2     = int(params.get('kd_m2', 3))
             within = int(params.get('within_days', 3))
             k, d   = calc_kd(high, low, close, kn, m1, m2)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and k.iloc[i] < d.iloc[i] and k.iloc[i-1] >= d.iloc[i-1]:
-                    passed = True; break
-            return passed, f'KD({kn}) 近{within}天死叉'
+                    hit = i; break
+            return hit is not None, (f'KD({kn}) 死叉（{_fresh_tag(hit)}）'
+                                     if hit is not None else f'KD({kn}) 近{within}天無死叉')
 
         # ── KDJ 指標（J = 3K − 2D，J 比 K/D 更靈敏，領先反應轉折）──────
         elif ctype == 'kdj_j_oversold':
@@ -3741,12 +3751,13 @@ def _eval_condition(hist, info, cond, extra=None):
             within = int(params.get('within_days', 3))
             k, d = calc_kd(high, low, close, kn, m1, m2)
             j = 3 * k - 2 * d
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and k.iloc[i] > d.iloc[i] and k.iloc[i-1] <= d.iloc[i-1] and j.iloc[i] > j.iloc[i-1]:
-                    passed = True; break
+                    hit = i; break
             jv = safe_float(j.iloc[-1])
-            return passed, f'KDJ({kn}) 近{within}天金叉（K上穿D且J上揚），J={jv:.1f}'
+            return hit is not None, (f'KDJ({kn}) 金叉（{_fresh_tag(hit)}，K上穿D且J上揚），J={jv:.1f}'
+                                     if hit is not None else f'KDJ({kn}) 近{within}天無金叉')
 
         # ── MACD 指標 ─────────────────────────────────────
         elif ctype == 'macd_bullish':
@@ -3759,43 +3770,47 @@ def _eval_condition(hist, info, cond, extra=None):
             within = int(params.get('within_days', 3))
             f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
             macd_s, sig_s, _ = calc_macd(close, f, s, g)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and macd_s.iloc[i] > sig_s.iloc[i] and macd_s.iloc[i-1] <= sig_s.iloc[i-1]:
-                    passed = True; break
-            return passed, f'MACD({f},{s},{g}) 近{within}天金叉'
+                    hit = i; break
+            return hit is not None, (f'MACD({f},{s},{g}) 金叉（{_fresh_tag(hit)}）'
+                                     if hit is not None else f'MACD({f},{s},{g}) 近{within}天無金叉')
 
         elif ctype == 'macd_death_cross':
             within = int(params.get('within_days', 3))
             f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
             macd_s, sig_s, _ = calc_macd(close, f, s, g)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and macd_s.iloc[i] < sig_s.iloc[i] and macd_s.iloc[i-1] >= sig_s.iloc[i-1]:
-                    passed = True; break
-            return passed, f'MACD({f},{s},{g}) 近{within}天死叉'
+                    hit = i; break
+            return hit is not None, (f'MACD({f},{s},{g}) 死叉（{_fresh_tag(hit)}）'
+                                     if hit is not None else f'MACD({f},{s},{g}) 近{within}天無死叉')
 
         elif ctype == 'macd_dif_cross_zero':
             # 快線 DIF 由負翻正上穿零軸（水上金叉，趨勢由空翻多）
             within = int(params.get('within_days', 3))
             f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
             macd_s, sig_s, _ = calc_macd(close, f, s, g)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and macd_s.iloc[i] > 0 and macd_s.iloc[i-1] <= 0:
-                    passed = True; break
-            return passed, f'MACD({f},{s},{g}) 快線DIF 近{within}天上穿零軸（水上金叉）'
+                    hit = i; break
+            return hit is not None, (f'MACD({f},{s},{g}) 快線DIF 上穿零軸（{_fresh_tag(hit)}，水上金叉）'
+                                     if hit is not None else f'MACD({f},{s},{g}) 快線DIF 近{within}天未上穿零軸')
 
         elif ctype == 'macd_dea_cross_zero':
             # 慢線 DEA 由負翻正上穿零軸（中期動能確認轉多）
             within = int(params.get('within_days', 3))
             f = int(params.get('fast', 12)); s = int(params.get('slow', 26)); g = int(params.get('signal', 9))
             macd_s, sig_s, _ = calc_macd(close, f, s, g)
-            passed = False
+            hit = None
             for i in range(-within, 0):
                 if (i-1) >= -n and sig_s.iloc[i] > 0 and sig_s.iloc[i-1] <= 0:
-                    passed = True; break
-            return passed, f'MACD({f},{s},{g}) 慢線DEA 近{within}天上穿零軸'
+                    hit = i; break
+            return hit is not None, (f'MACD({f},{s},{g}) 慢線DEA 上穿零軸（{_fresh_tag(hit)}）'
+                                     if hit is not None else f'MACD({f},{s},{g}) 慢線DEA 近{within}天未上穿零軸')
 
         # ── RSI ────────────────────────────────────────────
         elif ctype == 'rsi_above':
