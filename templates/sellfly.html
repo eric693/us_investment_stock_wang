@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>賣飛回測</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.h-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.h-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.h-nav .brand span { color: var(--gold); }
+.h-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.h-nav a:hover { color: var(--text); background: #0d1628; }
+.h-nav a.active { color: #fff; background: var(--accent); }
+.h-nav a.home { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+
+.sf-wrap { max-width: 1240px; margin: 0 auto; padding: 22px 20px; }
+.sf-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.sf-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; line-height: 1.7; }
+
+.sf-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.sf-run { background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 9px 22px; font-size: 0.86rem; font-weight: 800; cursor: pointer; }
+.sf-run:hover { filter: brightness(1.15); }
+.sf-run:disabled { opacity: .5; cursor: wait; }
+.sf-time { font-size: 0.74rem; color: var(--text-dim); }
+
+.sf-summary { background: var(--card-bg); border: 1px solid var(--card-bd); border-left: 3px solid var(--gold);
+  border-radius: 10px; padding: 14px 18px; font-size: 0.86rem; line-height: 1.9; white-space: pre-wrap; margin-bottom: 16px; }
+
+.sf-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sf-card { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; padding: 14px 16px; }
+.sf-card .c-lbl { font-size: 0.7rem; color: var(--text-dim); margin-bottom: 6px; }
+.sf-card .c-val { font-size: 1.35rem; font-weight: 900; }
+.sf-card .c-note { font-size: 0.68rem; color: var(--text-dim); margin-top: 4px; }
+
+.sf-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.sf-group { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; padding: 14px 16px; }
+.sf-group h3 { margin: 0 0 8px; font-size: 0.88rem; }
+.sf-group .g-row { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 4px 0;
+  border-bottom: 1px dashed #0d1628; }
+.sf-group .g-row:last-child { border-bottom: none; }
+.sf-group .g-row span:first-child { color: var(--text-dim); }
+
+.sf-tblwrap { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; overflow-x: auto; }
+.sf-tbl { width: 100%; border-collapse: collapse; font-size: 0.78rem; min-width: 980px; }
+.sf-tbl th { text-align: right; padding: 9px 10px; font-size: 0.66rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--card-bd); background: #08101e; white-space: nowrap; position: sticky; top: 0; }
+.sf-tbl th:nth-child(-n+5), .sf-tbl td:nth-child(-n+5) { text-align: left; }
+.sf-tbl td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #0d1628; white-space: nowrap; }
+.sf-tbl tr:hover td { background: #0d1628; }
+.pos { color: #ff4e4e; } .neg { color: #26d96b; }
+.sf-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 800; }
+.chip-fly    { background: rgba(255,78,78,.14);  color: #ff7b7b; border: 1px solid rgba(255,78,78,.4); }
+.chip-dodge  { background: rgba(38,217,107,.12); color: #3fe084; border: 1px solid rgba(38,217,107,.35); }
+.chip-neutral{ background: #0d1628; color: var(--text-mid); border: 1px solid var(--card-bd); }
+.chip-pending{ background: rgba(26,111,212,.14); color: #6ea8e8; border: 1px solid rgba(26,111,212,.4); }
+.chip-repeat { background: transparent; color: var(--text-dim); border: 1px dashed var(--card-bd); }
+.sf-empty { text-align: center; padding: 50px 20px; color: var(--text-dim); font-size: 0.86rem; }
+
+.sf-note { font-size: 0.72rem; color: var(--text-dim); line-height: 1.8; margin-top: 14px; }
+@media (max-width: 760px) { .sf-groups { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<nav class="h-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/bluechip">績優股清單</a>
+  <a href="/perpetual">低位階永動機</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/sellfly" class="active">賣飛回測</a>
+  <a href="/goal">目標操盤</a>
+  <a href="/workbench">策略工作台</a>
+  <a href="/history">歷史紀錄</a>
+</nav>
+
+<div class="sf-wrap">
+  <h1 class="sf-title">賣飛回測</h1>
+  <div class="sf-sub">
+    把「今晚操盤總結」裡 AI 喊過的每一筆出清／減碼建議翻出來，對照建議日之後的實際股價：
+    賣掉後 20 個交易日內漲超過 5% 算「賣飛」、跌超過 5% 算「躲跌成功」。
+    用數據回答「AI 的紀律停利停損到底是保護還是賣飛」，不花任何 token。
+  </div>
+
+  <div class="sf-bar">
+    <button class="sf-run" id="runBtn" onclick="runBacktest()">重新回測</button>
+    <span class="sf-time" id="genTime"></span>
+  </div>
+
+  <div id="report"><div class="sf-empty">載入中…</div></div>
+
+  <div class="sf-note">
+    說明：出場價以「建議日的下一個交易日收盤價」估計（總結在盤後產生、隔日執行）。
+    同一檔 20 天內重複喊出場只計第一次進統計，其餘標示「重複」僅供對照。
+    建議未滿 5 個交易日者列為「觀察中」，不進統計。
+    +5／+10／+20 日欄位為出場後第 N 個交易日收盤相對出場價的報酬；最高／最低為出場後 20 個交易日內收盤價區間。
+    若停利單賣飛偏多、停損單躲跌偏多，合理的調整不是關掉紀律，而是把固定停利改成移動停利（跌破 MA5／前高回落再出）。
+  </div>
+</div>
+
+<script>
+function esc(s) { return (s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function fmtTime(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleString('zh-TW', {year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function pct(v) {
+  if (v === null || v === undefined) return '<span style="color:var(--text-dim)">-</span>';
+  const cls = v > 0 ? 'pos' : (v < 0 ? 'neg' : '');
+  return `<span class="${cls}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+}
+const CHIP = { '賣飛':'chip-fly', '躲跌成功':'chip-dodge', '中性':'chip-neutral', '觀察中':'chip-pending' };
+
+async function init() {
+  let d;
+  try { d = await (await fetch('/api/sellfly/last')).json(); } catch(e) { d = {found:false}; }
+  if (d.found) render(d);
+  else document.getElementById('report').innerHTML =
+    '<div class="sf-empty">尚未跑過賣飛回測，按上方「重新回測」開始（免費、約十幾秒）。</div>';
+}
+
+async function runBacktest() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '回測中…（抓歷史股價約十幾秒）';
+  try {
+    const d = await (await fetch('/api/sellfly/run', { method:'POST' })).json();
+    render(d);
+  } catch(e) {
+    document.getElementById('report').innerHTML = '<div class="sf-empty">回測失敗：' + esc(String(e)) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = '重新回測';
+}
+
+function groupBox(title, g, hint) {
+  if (!g || !g.n) return `<div class="sf-group"><h3>${title}</h3><div class="sf-empty" style="padding:14px">尚無可評估樣本</div></div>`;
+  return `<div class="sf-group">
+    <h3>${title}（${g.n} 筆）</h3>
+    <div class="g-row"><span>賣飛</span><span>${g.fly} 筆（${g.fly_pct}%）</span></div>
+    <div class="g-row"><span>躲跌成功</span><span>${g.dodge} 筆（${g.dodge_pct}%）</span></div>
+    <div class="g-row"><span>中性</span><span>${g.neutral} 筆</span></div>
+    <div class="g-row"><span>賣後20日平均最大漲幅</span><span>${pct(g.avg_max_up)}</span></div>
+    <div class="g-row"><span>賣後20日平均最大跌幅</span><span>${pct(g.avg_max_dn)}</span></div>
+    <div class="g-row"><span>若續抱20日平均報酬</span><span>${pct(g.avg_ret20)}${g.n_ret20 ? ' <span style="color:var(--text-dim)">(' + g.n_ret20 + '筆滿期)</span>' : ''}</span></div>
+    ${hint ? `<div style="font-size:.7rem;color:var(--text-dim);margin-top:8px;line-height:1.6">${hint}</div>` : ''}
+  </div>`;
+}
+
+function render(d) {
+  const s = d.stats || {}, a = s.all || {};
+  document.getElementById('genTime').textContent = d.generated ? ('上次回測：' + fmtTime(d.generated)) : '';
+  let h = '';
+  if (s.summary) h += `<div class="sf-summary">${esc(s.summary)}</div>`;
+  h += `<div class="sf-cards">
+    <div class="sf-card"><div class="c-lbl">出場建議總數</div><div class="c-val">${s.total_events ?? 0}</div>
+      <div class="c-note">首次 ${s.first_events ?? 0} 筆・觀察中 ${s.pending ?? 0} 筆</div></div>
+    <div class="sf-card"><div class="c-lbl">賣飛率</div><div class="c-val ${'pos'}">${a.fly_pct != null ? a.fly_pct + '%' : '-'}</div>
+      <div class="c-note">賣掉後 20 個交易日內漲逾 5%</div></div>
+    <div class="sf-card"><div class="c-lbl">躲跌成功率</div><div class="c-val ${'neg'}">${a.dodge_pct != null ? a.dodge_pct + '%' : '-'}</div>
+      <div class="c-note">賣掉後 20 個交易日內跌逾 5%</div></div>
+    <div class="sf-card"><div class="c-lbl">若不賣續抱 20 日</div><div class="c-val">${a.avg_ret20 != null ? (a.avg_ret20 > 0 ? '+' : '') + a.avg_ret20 + '%' : '-'}</div>
+      <div class="c-note">平均報酬（正值代表整體賣早了）</div></div>
+  </div>`;
+  h += `<div class="sf-groups">
+    ${groupBox('停利單', s.tp, '停利單賣飛偏多＝獲利的單子賣太早，考慮改移動停利。')}
+    ${groupBox('停損單', s.sl, '停損單躲跌偏多＝停損紀律有效，該留。')}
+  </div>`;
+
+  const evs = d.events || [];
+  if (evs.length) {
+    h += `<div class="sf-tblwrap"><table class="sf-tbl"><thead><tr>
+      <th>建議日</th><th>代號</th><th>名稱</th><th>動作</th><th>類型</th>
+      <th>建議時損益</th><th>出場日</th><th>出場價</th>
+      <th>+5日</th><th>+10日</th><th>+20日</th><th>20日最高</th><th>20日最低</th><th>判定</th></tr></thead><tbody>`;
+    for (const e of evs) {
+      const verdict = e.error
+        ? `<span class="sf-chip chip-neutral">${esc(e.error)}</span>`
+        : `<span class="sf-chip ${CHIP[e.verdict] || 'chip-neutral'}">${esc(e.verdict || '-')}</span>`;
+      h += `<tr title="${esc(e.excerpt || '')}">
+        <td>${esc(e.date)}</td>
+        <td>${esc(e.code)}</td>
+        <td>${esc(e.name)}${e.repeat ? ' <span class="sf-chip chip-repeat">重複</span>' : ''}</td>
+        <td>${e.action === 'exit' ? '出清' : '減碼'}</td>
+        <td>${esc(e.kind || '-')}</td>
+        <td>${pct(e.pnl_pct)}</td>
+        <td>${esc(e.exit_date || '-')}</td>
+        <td>${e.exit_price != null ? e.exit_price : '-'}</td>
+        <td>${pct(e.ret5)}</td><td>${pct(e.ret10)}</td><td>${pct(e.ret20)}</td>
+        <td>${pct(e.max_up)}</td><td>${pct(e.max_dn)}</td>
+        <td>${verdict}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  } else {
+    h += '<div class="sf-empty">今晚操盤總結裡還沒有可解析的出場建議。</div>';
+  }
+  document.getElementById('report').innerHTML = h;
+}
+
+init();
+</script>
+</body>
+</html>

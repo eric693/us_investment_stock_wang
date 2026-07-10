@@ -576,7 +576,7 @@ def _cache_set(key, val, ttl=300):
 _HISTORY_KEEP = {
     'ai_chat': 200, 'agent_chat': 200, 'goal_chat': 200, 'agent_analyze': 200, 'wb_strategy': 100,
     'evening': 365, 'goal_review': 365,
-    'screener': 60, 'bluechip': 60, 'perpetual': 60,
+    'screener': 60, 'bluechip': 60, 'perpetual': 60, 'sellfly': 60,
 }
 
 def _history_log(feature, title='', ref='', data=None, text=''):
@@ -10761,6 +10761,7 @@ _HISTORY_LABELS = {
     'agent_analyze': 'AI 單檔分析', 'wb_strategy': '工作台 AI 策略',
     'evening': '今晚操盤總結', 'goal_review': '目標回顧',
     'screener': '篩選器快照', 'bluechip': '績優股快照', 'perpetual': '永動機選股快照',
+    'sellfly': '賣飛回測',
 }
 
 @app.route('/api/history/labels')
@@ -10828,6 +10829,231 @@ def history_delete():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     return jsonify({'ok': True})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  賣飛回測：驗證 AI 出場建議事後對不對（零 token，純規則解析＋yfinance）
+# ═══════════════════════════════════════════════════════════════════════════
+# 從 history 的今晚操盤總結（feature='evening'）抽出每一筆「出清/減碼」建議，
+# 對照建議日之後的實際股價，統計「賣飛」（賣掉後續漲）與「躲跌成功」（賣掉後續跌）。
+# 治「AI 紀律停利停損到底是保護還是賣飛」這個只憑感覺吵不完的問題。
+
+import datetime as _dt
+
+# 「續抱無題材」是否定用法（沒理由續抱），不能當續抱；故用 (?!無) 排除
+_SF_HOLD_RE   = _re.compile(r'續抱(?!無)|暫不停損|無法判斷')
+_SF_FULL_KW   = ('全部出清', '全數出清', '全數出場', '賣出全部', '一次出清', '出清', '全出', '停損出場')
+_SF_REDUCE_KW = ('減碼', '先出', '再出', '先減')
+_SF_NAME_CODE = _re.compile(r'([^\s，、。：:；（）()]+)（(\d{4,6}[A-Z]?)）')
+_SF_TP_RE     = _re.compile(r'停利|鎖利|鎖獲利|落袋|獲利\s*\+')
+_SF_SL_RE     = _re.compile(r'停損|止損|控損|虧損|套牢')
+
+def _sf_extract_section(text):
+    """取出總結文字中「該賣出/減碼」段落（到下一個編號段或一句總結為止）。"""
+    lines = text.split('\n')
+    start = end = None
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if start is None:
+            if _re.search(r'該?賣出\s*[/／]?\s*減碼|該賣出', s) and len(s) < 60:
+                start = i + 1
+        elif _re.match(r'^\d[)）.]', s) or s.startswith('一句總結'):
+            end = i
+            break
+    if start is None:
+        return ''
+    return '\n'.join(lines[start:(end if end is not None else len(lines))])
+
+def _sf_parse_items(section):
+    """段落切成逐檔項目。空行或小節標題（如「續抱（…）：」）都會結束目前的 bullet，
+    否則 bullet 會把下一小節吸進來、讓「續抱」誤殺前一檔的出清建議。"""
+    items, cur = [], []
+    for ln in section.split('\n'):
+        s = ln.strip()
+        if s.startswith('-'):
+            if cur: items.append('\n'.join(cur))
+            cur = [ln]
+        elif not s:
+            if cur: items.append('\n'.join(cur))
+            cur = []
+        elif cur:
+            cur.append(ln)
+        else:
+            items.append(ln)
+    if cur: items.append('\n'.join(cur))
+    return items
+
+def _sf_classify(item):
+    """一個項目 → 'exit'（出清）/ 'reduce'（減碼）/ None（續抱或非建議）。"""
+    if _SF_HOLD_RE.search(item):
+        return None
+    if any(k in item for k in _SF_FULL_KW):
+        return 'exit'
+    if any(k in item for k in _SF_REDUCE_KW):
+        return 'reduce'
+    return None
+
+def _sf_collect_events():
+    """掃全部 evening 紀錄，回傳出場建議事件清單（依日期舊到新）。"""
+    rows = []
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=2)
+        rows = conn.execute("SELECT id, ref, text, data, created FROM history WHERE feature='evening' ORDER BY id").fetchall()
+        conn.close()
+    except Exception:
+        pass
+    events, last_seen = [], {}   # last_seen: code → 上次建議日（算重複用）
+    for rid, ref, text, data, created in rows:
+        date = (ref or '').strip() or time.strftime('%Y-%m-%d', time.localtime(created))
+        pnl = {}
+        try:
+            for r in (json.loads(data) or {}).get('status', {}).get('portfolio', {}).get('rows', []):
+                v = r.get('pnl_pct')
+                if v is not None and abs(float(v)) > 0.01:   # nan 快照會存成假 0，略過
+                    pnl[str(r.get('code'))] = round(float(v), 2)
+        except Exception:
+            pass
+        for item in _sf_parse_items(_sf_extract_section(text or '')):
+            action = _sf_classify(item)
+            if not action:
+                continue
+            kind = '停利' if _SF_TP_RE.search(item) else ('停損' if _SF_SL_RE.search(item) else '')
+            for name, code in _SF_NAME_CODE.findall(item):
+                p = pnl.get(code)
+                k = kind or ('停利' if (p or 0) > 0.5 else ('停損' if (p or 0) < -0.5 else '不明'))
+                repeat = code in last_seen and (_dt.date.fromisoformat(date) - _dt.date.fromisoformat(last_seen[code])).days <= 20
+                last_seen[code] = date
+                events.append({
+                    'rec_id': rid, 'date': date, 'code': code, 'name': name,
+                    'action': action, 'kind': k, 'pnl_pct': p, 'repeat': bool(repeat),
+                    'excerpt': _re.sub(r'\s+', ' ', item).strip()[:120],
+                })
+    return events
+
+def _sf_evaluate(events):
+    """對每筆事件補上事後走勢：以建議日的下一個交易日收盤當出場價，
+    看之後 5/10/20 個交易日報酬與期間最高/最低（收盤基準）。就地更新 events。"""
+    by_code = {}
+    for ev in events:
+        by_code.setdefault(ev['code'], []).append(ev)
+    for code, evs in by_code.items():
+        hist, _, _ = _bt_load_history(code, period='1y')
+        if hist is None:
+            for ev in evs:
+                ev['error'] = '無法取得股價'
+            continue
+        closes = hist['Close']
+        dates  = [d.date() for d in hist.index]
+        for ev in evs:
+            try:
+                adv = _dt.date.fromisoformat(ev['date'])
+            except Exception:
+                ev['error'] = '日期異常'; continue
+            i0 = next((i for i, d in enumerate(dates) if d > adv), None)
+            if i0 is None:
+                ev['error'] = '建議日後尚無交易日'; continue
+            exit_p = float(closes.iloc[i0])
+            ev['exit_date']  = dates[i0].isoformat()
+            ev['exit_price'] = round(exit_p, 2)
+            for n in (5, 10, 20):
+                j = i0 + n
+                ev[f'ret{n}'] = round((float(closes.iloc[j]) / exit_p - 1) * 100, 2) if j < len(closes) else None
+            tail = closes.iloc[i0 + 1: i0 + 21]
+            ev['bars_after'] = len(tail)
+            if len(tail):
+                ev['max_up'] = round((float(tail.max()) / exit_p - 1) * 100, 2)
+                ev['max_dn'] = round((float(tail.min()) / exit_p - 1) * 100, 2)
+            # 判定：賣掉後 20 個交易日內收盤漲逾 5% 算賣飛、跌逾 5% 算躲跌成功；
+            # 樣本未滿 5 個交易日先掛「觀察中」，避免太新的建議污染統計
+            if ev.get('bars_after', 0) < 5:
+                ev['verdict'] = '觀察中'
+            elif ev['max_up'] >= 5 and ev['max_up'] > abs(ev['max_dn']):
+                ev['verdict'] = '賣飛'
+            elif ev['max_dn'] <= -5:
+                ev['verdict'] = '躲跌成功'
+            else:
+                ev['verdict'] = '中性'
+    return events
+
+def _sf_stats(events):
+    """彙總統計。重複建議（同檔 20 天內再喊）不進頭條統計，避免同一檔灌水。"""
+    firsts  = [e for e in events if not e['repeat'] and not e.get('error')]
+    settled = [e for e in firsts if e.get('verdict') in ('賣飛', '躲跌成功', '中性')]
+
+    def _bucket(evs):
+        n = len(evs)
+        fly  = sum(1 for e in evs if e['verdict'] == '賣飛')
+        dodge = sum(1 for e in evs if e['verdict'] == '躲跌成功')
+        rets20 = [e['ret20'] for e in evs if e.get('ret20') is not None]
+        return {
+            'n': n, 'fly': fly, 'dodge': dodge, 'neutral': n - fly - dodge,
+            'fly_pct':   round(fly / n * 100, 1) if n else None,
+            'dodge_pct': round(dodge / n * 100, 1) if n else None,
+            'avg_max_up': round(sum(e['max_up'] for e in evs) / n, 2) if n else None,
+            'avg_max_dn': round(sum(e['max_dn'] for e in evs) / n, 2) if n else None,
+            'avg_ret20':  round(sum(rets20) / len(rets20), 2) if rets20 else None,
+            'n_ret20': len(rets20),
+        }
+
+    stats = {
+        'total_events': len(events),
+        'first_events': len(firsts),
+        'pending': sum(1 for e in firsts if e.get('verdict') == '觀察中'),
+        'errors':  sum(1 for e in events if e.get('error')),
+        'all': _bucket(settled),
+        'tp':  _bucket([e for e in settled if e['kind'] == '停利']),
+        'sl':  _bucket([e for e in settled if e['kind'] == '停損']),
+    }
+
+    a = stats['all']
+    parts = []
+    if a['n']:
+        parts.append(f"可評估的首次出場建議共 {a['n']} 筆：賣飛 {a['fly']} 筆（{a['fly_pct']}%）、"
+                     f"躲跌成功 {a['dodge']} 筆（{a['dodge_pct']}%）、中性 {a['neutral']} 筆。")
+        parts.append(f"賣出後 20 個交易日內平均最大漲幅 {a['avg_max_up']}%、平均最大跌幅 {a['avg_max_dn']}%"
+                     + (f"；若不賣續抱 20 個交易日平均報酬 {a['avg_ret20']}%（{a['n_ret20']} 筆已滿期）。" if a['avg_ret20'] is not None else '。'))
+        tp, sl = stats['tp'], stats['sl']
+        if tp['n'] and sl['n']:
+            parts.append(f"分組看：停利單 {tp['n']} 筆中賣飛 {tp['fly']} 筆、停損單 {sl['n']} 筆中躲跌成功 {sl['dodge']} 筆——"
+                         "若停利單賣飛偏多而停損單躲跌偏多，代表「停損紀律該留、停利方式該改成移動停利」。")
+        if stats['pending']:
+            parts.append(f"另有 {stats['pending']} 筆建議太新（未滿 5 個交易日）仍在觀察中。")
+    else:
+        parts.append('目前尚無可評估的出場建議（建議都太新或無資料），過幾個交易日再回來看。')
+    stats['summary'] = '\n'.join(parts)
+    return stats
+
+@app.route('/sellfly')
+def sellfly_page():
+    return render_template('sellfly.html')
+
+@app.route('/api/sellfly/run', methods=['POST'])
+def sellfly_run():
+    """跑一次賣飛回測：解析 evening 出場建議 → 抓事後股價 → 統計，並存進歷史紀錄。"""
+    events = _sf_evaluate(_sf_collect_events())
+    events.sort(key=lambda e: (e['date'], e['code']), reverse=True)
+    stats  = _sf_stats(events)
+    report = {'events': events, 'stats': stats, 'generated': time.time()}
+    if events:
+        a = stats['all']
+        title = (f"賣飛回測 {a['n']} 筆可評估：賣飛率 {a['fly_pct']}%、躲跌率 {a['dodge_pct']}%"
+                 if a['n'] else f"賣飛回測：{stats['total_events']} 筆建議尚在觀察中")
+        _history_log('sellfly', title=title, data=report, text=stats['summary'])
+    return jsonify(report)
+
+@app.route('/api/sellfly/last')
+def sellfly_last():
+    """回傳最近一次已存的賣飛回測報告（開頁先顯示上次結果，免重抓）。"""
+    try:
+        conn = _sqlite3.connect(_CACHE_DB, timeout=1)
+        row = conn.execute("SELECT data, created FROM history WHERE feature='sellfly' ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+    except Exception:
+        row = None
+    if not row or not row[0]:
+        return jsonify({'found': False})
+    out = json.loads(row[0]); out['found'] = True
+    return jsonify(out)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
