@@ -351,6 +351,7 @@ const COND_DEFS = {
   // ── 均線排列 ──
   ma_bull_alignment:        { label:'均線多頭排列（MA5>MA10>MA20>MA60）', badge:'tech', params:[] },
   ma_bear_alignment:        { label:'均線空頭排列（MA5<MA10<MA20<MA60）', badge:'exit', params:[] },
+  ma_short_above_long:      { label:'短均線高於長均線（MA5>MA20，狀態）', badge:'tech', params:[{key:'short_period',label:'短均線',default:5,type:'number'},{key:'long_period',label:'長均線',default:20,type:'number'}] },
   ma_golden_cross:          { label:'短均線金叉長均線',          badge:'tech', params:[{key:'short_period',label:'短均線',default:5,type:'number'},{key:'long_period',label:'長均線',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:5,type:'number'}] },
   ma_death_cross:           { label:'短均線死叉長均線（警示）',   badge:'exit', params:[{key:'short_period',label:'短均線',default:5,type:'number'},{key:'long_period',label:'長均線',default:20,type:'number'},{key:'within_days',label:'最近N天內',default:5,type:'number'}] },
   ma_trending_down:         { label:'N日均線呈下降趨勢',         badge:'exit', params:[{key:'period',label:'均線日數',default:20,type:'number'},{key:'trend_days',label:'比較天數',default:5,type:'number'}] },
@@ -558,7 +559,7 @@ function clearAllTickers() {
 // ═══════════════════════════════════════════════════════
 // ── 條件選擇面板 ──────────────────────────────────────
 const COND_CATS = {
-  '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_deduction_up','pullback_hold_ma','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_golden_cross','ma_death_cross','ma_convergence'],
+  '均線':   ['price_above_ma','price_below_ma','price_cross_above_ma','price_cross_below_ma','price_below_ma_for_months','ma_trending_up','ma_deduction_up','pullback_hold_ma','ma_trending_down','ma_bull_alignment','ma_bear_alignment','ma_short_above_long','ma_golden_cross','ma_death_cross','ma_convergence'],
   'KD':     ['kd_k_above','kd_k_below','kd_golden_cross','kd_low_golden_cross','kd_death_cross'],
   'KDJ':    ['kdj_j_oversold','kdj_golden_cross','kdj_j_overbought'],
   'MACD':   ['macd_bullish','macd_golden_cross','macd_death_cross','macd_dif_cross_zero','macd_dea_cross_zero'],

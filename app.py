@@ -3899,6 +3899,17 @@ def _eval_condition(hist, info, cond, extra=None):
             passed = ma5 < ma10 < ma20 < ma60
             return passed, f'MA5({ma5:.2f})<MA10({ma10:.2f})<MA20({ma20:.2f})<MA60({ma60:.2f})'
 
+        elif ctype == 'ma_short_above_long':
+            # 狀態（非事件）：短均線「持續」站在長均線之上，多頭結構還在就成立。
+            # 附乖離%，可看出短均線離長均線多近（靠近時常是回測支撐的觀察點）。
+            short_p = int(params.get('short_period', 5))
+            long_p  = int(params.get('long_period', 20))
+            ms = safe_float(_ma(short_p).iloc[-1])
+            ml = safe_float(_ma(long_p).iloc[-1])
+            gap = (ms / ml - 1) * 100 if ml else 0
+            return ms > ml, (f'MA{short_p}({ms:.2f}) {"＞" if ms > ml else "＜"} '
+                             f'MA{long_p}({ml:.2f})，乖離 {gap:+.2f}%')
+
         elif ctype == 'ma_golden_cross':
             short_p = int(params.get('short_period', 5))
             long_p  = int(params.get('long_period', 20))
