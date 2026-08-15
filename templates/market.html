@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大盤儀表板</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.h-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.h-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.h-nav .brand span { color: var(--gold); }
+.h-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.h-nav a:hover { color: var(--text); background: #0d1628; }
+.h-nav a.active { color: #fff; background: var(--accent); }
+.h-nav a.home { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+
+.mk-wrap { max-width: 1240px; margin: 0 auto; padding: 22px 20px 60px; }
+.mk-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.mk-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; line-height: 1.7; }
+
+.mk-regime { background: var(--card-bg); border: 1px solid var(--card-bd); border-left: 3px solid var(--gold);
+  border-radius: 10px; padding: 14px 18px; font-size: 0.88rem; line-height: 1.8; margin-bottom: 16px; }
+.mk-regime b { font-size: 1rem; }
+.mk-regime .tag { display: inline-block; padding: 2px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 800; margin-right: 8px; }
+.tag-bull { background: rgba(232,70,70,.16); color: var(--red, #e84646); }
+.tag-bear { background: rgba(0,214,143,.16); color: var(--green, #00d68f); }
+.tag-mid  { background: rgba(240,180,41,.16); color: var(--gold, #f0b429); }
+
+.mk-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.mk-card { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; padding: 12px 14px; }
+.mk-card .c-lbl { font-size: 0.7rem; color: var(--text-dim); margin-bottom: 5px; }
+.mk-card .c-val { font-size: 1.2rem; font-weight: 900; }
+.mk-card .c-pct { font-size: 0.8rem; font-weight: 800; margin-top: 3px; }
+
+.up { color: var(--red, #e84646); }      /* 台股習慣：紅漲 */
+.dn { color: var(--green, #00d68f); }    /* 綠跌 */
+.usup { color: var(--green, #00d68f); }  /* 美股習慣：綠漲 */
+.usdn { color: var(--red, #e84646); }
+
+.mk-sec { font-size: 0.95rem; font-weight: 900; margin: 22px 0 10px; }
+.mk-box { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; padding: 14px 16px; }
+.mk-note { font-size: 0.74rem; color: var(--text-dim); margin-top: 8px; line-height: 1.7; }
+
+.mk-tf { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.mk-tfbtn { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--card-bd2, #28384c); background: rgba(255,255,255,.04);
+  color: var(--text-dim); font-size: 0.76rem; font-weight: 700; cursor: pointer; }
+.mk-tfbtn.active { background: rgba(61,142,248,.16); border-color: transparent; color: var(--blue, #3d8ef8); }
+.mk-hover { font-size: 0.74rem; color: var(--text-mid); min-height: 18px; display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.mk-hover b { color: var(--text); }
+#twiiChart { display: block; width: 100%; cursor: crosshair; }
+
+table.mk-tbl { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+table.mk-tbl th { color: var(--text-dim); font-weight: 700; text-align: right; padding: 6px 8px;
+  border-bottom: 1px solid var(--card-bd); white-space: nowrap; }
+table.mk-tbl td { text-align: right; padding: 6px 8px; border-bottom: 1px solid rgba(27,40,56,.5);
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.mk-tbl th:first-child, table.mk-tbl td:first-child { text-align: left; }
+table.mk-tbl tr:hover td { background: rgba(255,255,255,.02); }
+
+.sec-bar { display: inline-block; height: 8px; border-radius: 3px; vertical-align: middle; }
+.lead { color: var(--text-dim); font-size: 0.72rem; }
+.lead b { color: var(--text-mid); font-weight: 700; cursor: pointer; }
+.lead b:hover { color: var(--blue, #3d8ef8); }
+.mk-loading { color: var(--text-dim); font-size: 0.85rem; padding: 20px; text-align: center; }
+.mk-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 860px) { .mk-grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<nav class="h-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/market" class="active">大盤儀表板</a>
+  <a href="/watch">自選報價</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/bluechip">績優股清單</a>
+  <a href="/perpetual">低位階永動機</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/sellfly">賣飛回測</a>
+  <a href="/goal">目標操盤</a>
+  <a href="/workbench">策略工作台</a>
+  <a href="/history">歷史紀錄</a>
+</nav>
+
+<div class="mk-wrap">
+  <h1 class="mk-title">大盤儀表板</h1>
+  <div class="mk-sub">
+    先看大盤、再看個股。這頁整合加權指數走勢、大盤體質濾網、三大法人對大盤的買賣超、外資台指期未平倉，以及類股族群漲跌排行，
+    用來判斷「今天適不適合進場」「錢流去哪個族群」。全頁純資料查詢，不呼叫 AI、不耗 Token。
+  </div>
+
+  <div id="regime" class="mk-regime">體質判讀載入中…</div>
+  <div id="cards" class="mk-cards"></div>
+
+  <div class="mk-sec">加權指數走勢</div>
+  <div class="mk-box">
+    <div class="mk-tf" id="twiiTf">
+      <button class="mk-tfbtn" data-p="3mo">近3月</button>
+      <button class="mk-tfbtn active" data-p="6mo">近6月</button>
+      <button class="mk-tfbtn" data-p="1y">近1年</button>
+    </div>
+    <div class="mk-hover" id="twiiHover"></div>
+    <canvas id="twiiChart"></canvas>
+    <div class="mk-note" id="twiiNote"></div>
+  </div>
+
+  <div class="mk-grid2">
+    <div>
+      <div class="mk-sec">三大法人買賣超（大盤，億元）</div>
+      <div class="mk-box"><div id="instBox" class="mk-loading">載入中…</div></div>
+    </div>
+    <div>
+      <div class="mk-sec">外資台指期未平倉（口）</div>
+      <div class="mk-box"><div id="futBox" class="mk-loading">載入中…</div></div>
+    </div>
+  </div>
+
+  <div class="mk-sec">類股族群漲跌排行</div>
+  <div class="mk-box"><div id="sectorBox" class="mk-loading">載入中（首次計算需數十秒）…</div></div>
+</div>
+
+<script src="/static/js/stock_detail.js"></script>
+<script>
+var BOARD = null, KLINE = null, KPERIOD = '6mo';
+
+function getJson(u) {
+  return fetch(u).then(function (r) { return r.text(); }).then(function (t) {
+    return JSON.parse(t.replace(/\bNaN\b/g, 'null').replace(/-?\bInfinity\b/g, 'null'));
+  });
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+  return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function fmt(v, n) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: n || 0, maximumFractionDigits: n || 0 }); }
+function sgn(v, n) { return (v > 0 ? '+' : '') + fmt(v, n); }
+
+// 台股紅漲綠跌；美股指數用綠漲紅跌（與各頁一致）
+function pctCls(v, isUs) { return v >= 0 ? (isUs ? 'usup' : 'up') : (isUs ? 'usdn' : 'dn'); }
+
+function load() {
+  getJson('/api/market/board?period=' + KPERIOD).then(function (b) {
+    BOARD = b; KLINE = b.kline;
+    renderRegime(b); renderCards(b); renderKline(); renderInst(b.inst); renderFut(b.fut_oi);
+  }).catch(function () {
+    document.getElementById('regime').textContent = '大盤資料載入失敗，請稍後重試。';
+  });
+  getJson('/api/market/sectors').then(function (r) { renderSectors(r.sectors || []); })
+    .catch(function () { document.getElementById('sectorBox').textContent = '類股資料載入失敗。'; });
+}
+
+function renderRegime(b) {
+  var r = b.regime || {}, o = b.overnight || {};
+  var cls = r.regime === '多頭' ? 'tag-bull' : (r.regime === '空頭' ? 'tag-bear' : 'tag-mid');
+  var h = '<span class="tag ' + cls + '">' + esc(r.regime || '—') + '</span>'
+    + '<b>' + (r.allow_buy ? '目前環境可以積極找買點' : '目前環境建議保守、減少接刀') + '</b>';
+  if (r.reason) h += '<div style="margin-top:6px;color:var(--text-mid)">' + esc(r.reason) + '</div>';
+  if (o.summary) h += '<div style="margin-top:4px;color:var(--text-mid)">' + esc(o.summary) + '</div>';
+  document.getElementById('regime').innerHTML = h;
+}
+
+function renderCards(b) {
+  var order = [['twii', 0], ['sox', 1], ['nasdaq', 1], ['sp500', 1], ['dow', 1], ['tsm_adr', 1], ['vix', 1], ['usdtwd', 1]];
+  var h = '';
+  order.forEach(function (o) {
+    var d = (b.indices || {})[o[0]]; if (!d) return;
+    h += '<div class="mk-card"><div class="c-lbl">' + esc(d.label) + '</div>'
+      + '<div class="c-val">' + fmt(d.v, 2) + '</div>'
+      + '<div class="c-pct ' + pctCls(d.pct, o[1]) + '">' + sgn(d.pct, 2) + '%</div></div>';
+  });
+  document.getElementById('cards').innerHTML = h;
+}
+
+// ── 加權指數 K 線（自繪，與個股詳情面板同一套視覺）──
+function renderKline() {
+  var k = KLINE || {}, cs = k.candles || [];
+  var note = document.getElementById('twiiNote');
+  if (!cs.length) { note.textContent = k.error || '暫無指數資料'; return; }
+  drawTwii(cs, null);
+  hoverTwii(cs, cs.length - 1);
+  var last = cs[cs.length - 1];
+  var seg = ['MA20 ' + fmt(last.m20, 0), 'MA60 ' + fmt(last.m60, 0)];
+  if (last.myear != null) seg.push((k.year_label || '年線') + ' ' + fmt(last.myear, 0));
+  seg.push('KD ' + fmt(last.k, 1) + '/' + fmt(last.d, 1));
+  seg.push('RSI ' + fmt(last.rsi, 1));
+  note.textContent = '最新：' + last.t + '　' + seg.join('　') + '。指數站上月線且月線走揚，才是順風環境。';
+
+  var cv = document.getElementById('twiiChart');
+  cv.onmousemove = function (e) {
+    var i = idxAt(e.clientX, cv, cs.length);
+    drawTwii(cs, i); hoverTwii(cs, i);
+  };
+  cv.onmouseleave = function () { drawTwii(cs, null); hoverTwii(cs, cs.length - 1); };
+}
+function idxAt(clientX, cv, n) {
+  var r = cv.getBoundingClientRect(), padL = 52, padR = 8;
+  var i = Math.floor((clientX - r.left - padL) / ((r.width - padL - padR) / n));
+  return Math.max(0, Math.min(n - 1, i));
+}
+function hoverTwii(cs, i) {
+  var c = cs[i]; if (!c) return;
+  var prev = i > 0 ? cs[i - 1] : null;
+  var chg = prev && prev.c ? (c.c - prev.c) / prev.c * 100 : null;
+  var h = '<span><b>' + esc(c.t) + '</b></span><span>開 <b>' + fmt(c.o, 0) + '</b></span>'
+    + '<span>高 <b>' + fmt(c.h, 0) + '</b></span><span>低 <b>' + fmt(c.l, 0) + '</b></span>'
+    + '<span>收 <b>' + fmt(c.c, 0) + '</b></span>';
+  if (chg != null) h += '<span class="' + pctCls(chg, 0) + '">' + sgn(chg, 2) + '%</span>';
+  h += '<span>MA20 ' + fmt(c.m20, 0) + '</span><span>MA60 ' + fmt(c.m60, 0) + '</span>';
+  document.getElementById('twiiHover').innerHTML = h;
+}
+function drawTwii(cs, hoverIdx) {
+  var cv = document.getElementById('twiiChart'), wrap = cv.parentNode;
+  var W = wrap.clientWidth - 32 || 600, H = 320, dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
+  var ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  var padL = 52, padR = 8, padT = 6, padB = 16, gap = 8, volH = Math.round(H * .18);
+  var priceH = H - volH - gap - padT - padB, priceTop = padT, volTop = padT + priceH + gap;
+  var plotW = W - padL - padR, n = cs.length, cw = plotW / n, bw = Math.max(1, cw * .62);
+  var hi = -Infinity, lo = Infinity;
+  cs.forEach(function (c) {
+    hi = Math.max(hi, c.h); lo = Math.min(lo, c.l);
+    ['m20', 'm60', 'myear'].forEach(function (m) { if (c[m] != null) { hi = Math.max(hi, c[m]); lo = Math.min(lo, c[m]); } });
+  });
+  var pad = (hi - lo) * .06 || 1; hi += pad; lo -= pad;
+  function y(p) { return priceTop + (hi - p) / (hi - lo) * priceH; }
+  ctx.font = '10px system-ui,sans-serif'; ctx.textBaseline = 'middle';
+  for (var i = 0; i <= 4; i++) {
+    var p = lo + (hi - lo) * i / 4, yy = y(p);
+    ctx.strokeStyle = 'rgba(125,141,163,.13)'; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.fillStyle = '#7d8da3'; ctx.fillText(Math.round(p).toLocaleString(), 4, yy);
+  }
+  cs.forEach(function (c, i) {
+    var cx = padL + cw * i + cw / 2, col = c.c >= c.o ? '#e84646' : '#00d68f';
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(cx, y(c.h)); ctx.lineTo(cx, y(c.l)); ctx.stroke();
+    var yo = y(c.o), yc = y(c.c);
+    ctx.fillRect(cx - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo)));
+  });
+  function line(key, color, w) {
+    ctx.strokeStyle = color; ctx.lineWidth = w || 1.2; ctx.beginPath(); var st = false;
+    cs.forEach(function (c, i) {
+      if (c[key] == null) return; var cx = padL + cw * i + cw / 2, yy = y(c[key]);
+      st ? ctx.lineTo(cx, yy) : (ctx.moveTo(cx, yy), st = true);
+    });
+    ctx.stroke();
+  }
+  line('myear', '#d7e2f0', 1.8); line('m20', '#3d8ef8'); line('m60', '#b06fe0');
+  var maxV = Math.max.apply(null, cs.map(function (c) { return c.v || 0; })) || 1;
+  ctx.globalAlpha = .5;
+  cs.forEach(function (c, i) {
+    var cx = padL + cw * i + cw / 2, vh = (c.v || 0) / maxV * volH;
+    ctx.fillStyle = c.c >= c.o ? '#e84646' : '#00d68f';
+    ctx.fillRect(cx - bw / 2, volTop + volH - vh, bw, vh);
+  });
+  ctx.globalAlpha = 1;
+  if (hoverIdx != null && cs[hoverIdx]) {
+    var hc = cs[hoverIdx], hx = padL + cw * hoverIdx + cw / 2, hy = y(hc.c);
+    ctx.save(); ctx.strokeStyle = 'rgba(180,200,225,.55)'; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(hx, padT); ctx.lineTo(hx, volTop + volH); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(padL, hy); ctx.lineTo(W - padR, hy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(20,30,44,.95)'; ctx.fillRect(0, hy - 8, padL - 4, 16);
+    ctx.fillStyle = '#e8eef6'; ctx.fillText(Math.round(hc.c).toLocaleString(), 4, hy);
+    ctx.restore();
+  }
+}
+
+function renderInst(rows) {
+  var box = document.getElementById('instBox');
+  if (!rows || !rows.length) { box.textContent = '暫無大盤法人資料（資料源限流或非交易日）。'; return; }
+  var h = '<table class="mk-tbl"><thead><tr><th>日期</th><th>外資</th><th>投信</th><th>自營</th><th>合計</th></tr></thead><tbody>';
+  rows.forEach(function (r) {
+    h += '<tr><td>' + esc(r.d.slice(5)) + '</td>'
+      + ['foreign', 'trust', 'dealer', 'total'].map(function (k) {
+          return '<td class="' + (r[k] > 0 ? 'up' : (r[k] < 0 ? 'dn' : '')) + '">' + sgn(r[k], 1) + '</td>';
+        }).join('') + '</tr>';
+  });
+  var sum5 = rows.slice(0, 5).reduce(function (a, r) { return a + r.foreign; }, 0);
+  h += '</tbody></table><div class="mk-note">單位：億元，紅買綠賣。近5日外資合計 '
+    + '<b class="' + (sum5 > 0 ? 'up' : 'dn') + '">' + sgn(sum5, 1) + ' 億</b>。'
+    + '外資連續買超通常對應指數走強，連續賣超要提高警覺。</div>';
+  box.innerHTML = h;
+}
+
+function renderFut(rows) {
+  var box = document.getElementById('futBox');
+  if (!rows || !rows.length) { box.textContent = '暫無台指期資料（資料源限流或非交易日）。'; return; }
+  var h = '<table class="mk-tbl"><thead><tr><th>日期</th><th>外資未平倉淨額</th><th>較前日增減</th></tr></thead><tbody>';
+  rows.forEach(function (r, i) {
+    var chg = i + 1 < rows.length ? r.net - rows[i + 1].net : null;
+    h += '<tr><td>' + esc(r.d.slice(5)) + '</td>'
+      + '<td class="' + (r.net > 0 ? 'up' : 'dn') + '">' + sgn(r.net) + '</td>'
+      + '<td class="' + (chg == null ? '' : (chg > 0 ? 'up' : 'dn')) + '">' + (chg == null ? '—' : sgn(chg)) + '</td></tr>';
+  });
+  h += '</tbody></table><div class="mk-note">正值＝外資期貨淨多單（偏多），負值＝淨空單（避險或看空）。'
+    + '重點看「方向變化」：淨空單持續加碼要保守，由空翻多常領先現貨轉強。</div>';
+  box.innerHTML = h;
+}
+
+function renderSectors(secs) {
+  var box = document.getElementById('sectorBox');
+  if (!secs.length) { box.textContent = '暫無類股資料。'; return; }
+  var maxAbs = Math.max.apply(null, secs.map(function (s) { return Math.abs(s.d1); })) || 1;
+  var h = '<table class="mk-tbl"><thead><tr><th>族群</th><th>今日平均</th><th></th><th>近5日</th><th>上漲家數</th><th>今日領漲（點擊看詳情）</th></tr></thead><tbody>';
+  secs.forEach(function (s) {
+    var w = Math.round(Math.abs(s.d1) / maxAbs * 90);
+    h += '<tr><td><b>' + esc(s.name) + '</b></td>'
+      + '<td class="' + (s.d1 >= 0 ? 'up' : 'dn') + '">' + sgn(s.d1, 2) + '%</td>'
+      + '<td style="text-align:left"><span class="sec-bar" style="width:' + w + 'px;background:'
+        + (s.d1 >= 0 ? '#e84646' : '#00d68f') + '"></span></td>'
+      + '<td class="' + (s.d5 >= 0 ? 'up' : 'dn') + '">' + (s.d5 == null ? '—' : sgn(s.d5, 2) + '%') + '</td>'
+      + '<td>' + s.up + '/' + s.n + '</td>'
+      + '<td style="text-align:left" class="lead">' + s.leaders.map(function (l) {
+          return '<b onclick="openStockDetail(\'' + l.code + '\',true)">' + esc(l.code) + ' ' + esc(l.name)
+            + '</b> <span class="' + (l.pct >= 0 ? 'up' : 'dn') + '">' + sgn(l.pct, 2) + '%</span>';
+        }).join('　') + '</td></tr>';
+  });
+  h += '</tbody></table><div class="mk-note">族群依選股宇宙分類，取成分股平均漲跌幅（非官方類股指數，用來看資金流向與相對強弱）。'
+    + '自己持股的族群若整體翻黑，通常是族群輪動而非個股問題。</div>';
+  box.innerHTML = h;
+}
+
+document.getElementById('twiiTf').onclick = function (e) {
+  var b = e.target.closest('.mk-tfbtn'); if (!b) return;
+  KPERIOD = b.dataset.p;
+  Array.prototype.forEach.call(this.querySelectorAll('.mk-tfbtn'), function (x) { x.classList.toggle('active', x === b); });
+  document.getElementById('twiiNote').textContent = '載入中…';
+  getJson('/api/market/board?period=' + KPERIOD).then(function (bd) { KLINE = bd.kline; renderKline(); });
+};
+window.addEventListener('resize', function () { if (KLINE && KLINE.candles) drawTwii(KLINE.candles, null); });
+load();
+</script>
+</body>
+</html>

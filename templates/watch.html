@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自選報價</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.h-nav { display: flex; align-items: center; gap: 4px; padding: 0 20px; height: 54px;
+  background: var(--card-bg); border-bottom: 1px solid var(--card-bd); position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.h-nav .brand { font-size: 1.05rem; font-weight: 900; margin-right: 18px; }
+.h-nav .brand span { color: var(--gold); }
+.h-nav a { color: var(--text-mid); text-decoration: none; font-size: 0.82rem; font-weight: 700;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s; }
+.h-nav a:hover { color: var(--text); background: #0d1628; }
+.h-nav a.active { color: #fff; background: var(--accent); }
+.h-nav a.home { background: linear-gradient(135deg, #2563a8, #173a6b); color: #fff; }
+
+.w-wrap { max-width: 1240px; margin: 0 auto; padding: 22px 20px 60px; }
+.w-title { font-size: 1.3rem; font-weight: 900; margin: 0 0 4px; }
+.w-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; line-height: 1.7; }
+
+.w-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.w-tab { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--card-bd2, #28384c);
+  background: rgba(255,255,255,.04); color: var(--text-dim); font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.w-tab.active { background: rgba(61,142,248,.16); border-color: transparent; color: var(--blue, #3d8ef8); }
+.w-btn { padding: 7px 14px; border-radius: 7px; border: none; background: var(--accent); color: #fff;
+  font-size: 0.8rem; font-weight: 800; cursor: pointer; }
+.w-btn.ghost { background: rgba(255,255,255,.06); color: var(--text-mid); }
+.w-btn:disabled { opacity: .5; cursor: wait; }
+.w-time { font-size: 0.72rem; color: var(--text-dim); margin-left: auto; }
+.w-input { padding: 7px 10px; border-radius: 7px; border: 1px solid var(--card-bd2, #28384c);
+  background: var(--bg2, #0a1320); color: var(--text); font-size: 0.82rem; width: 240px; }
+
+.w-box { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px; padding: 6px 14px 14px; overflow-x: auto; }
+table.w-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+table.w-tbl th { color: var(--text-dim); font-weight: 700; text-align: right; padding: 8px; white-space: nowrap;
+  border-bottom: 1px solid var(--card-bd); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--card-bg); }
+table.w-tbl th.asc::after { content: ' ▲'; } table.w-tbl th.desc::after { content: ' ▼'; }
+table.w-tbl td { text-align: right; padding: 8px; border-bottom: 1px solid rgba(27,40,56,.5);
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.w-tbl th:first-child, table.w-tbl td:first-child,
+table.w-tbl th:nth-child(2), table.w-tbl td:nth-child(2) { text-align: left; }
+table.w-tbl tbody tr { cursor: pointer; }
+table.w-tbl tbody tr:hover td { background: rgba(61,142,248,.07); }
+.up { color: var(--red, #e84646); } .dn { color: var(--green, #00d68f); }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 0.68rem; font-weight: 700;
+  background: rgba(125,141,163,.14); color: var(--text-dim); margin-left: 5px; }
+.pill.hold { background: rgba(240,180,41,.16); color: var(--gold, #f0b429); }
+.pill.mon  { background: rgba(61,142,248,.16); color: var(--blue, #3d8ef8); }
+.pill.inzone { background: rgba(0,214,143,.16); color: var(--green, #00d68f); }
+.w-note { font-size: 0.74rem; color: var(--text-dim); margin-top: 10px; line-height: 1.7; }
+.w-empty { color: var(--text-dim); text-align: center; padding: 30px; font-size: 0.85rem; }
+.w-edit { background: var(--card-bg); border: 1px solid var(--card-bd); border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 14px; display: none; }
+.w-edit.open { display: block; }
+.w-edit .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.w-edit .glabel { font-weight: 800; font-size: 0.82rem; min-width: 90px; }
+.w-edit .codes { flex: 1; min-width: 260px; }
+</style>
+</head>
+<body>
+
+<nav class="h-nav">
+  <div class="brand">AI<span>投資</span></div>
+  <a href="/ai" class="home">智能首頁</a>
+  <a href="/market">大盤儀表板</a>
+  <a href="/watch" class="active">自選報價</a>
+  <a href="/tw">台股</a>
+  <a href="/screener">篩選器</a>
+  <a href="/bluechip">績優股清單</a>
+  <a href="/perpetual">低位階永動機</a>
+  <a href="/agent">AI Agent</a>
+  <a href="/backtest">策略回測</a>
+  <a href="/sellfly">賣飛回測</a>
+  <a href="/goal">目標操盤</a>
+  <a href="/workbench">策略工作台</a>
+  <a href="/history">歷史紀錄</a>
+</nav>
+
+<div class="w-wrap">
+  <h1 class="w-title">自選報價</h1>
+  <div class="w-sub">
+    一頁掃完所有關注標的：現價、漲跌幅、持倉損益、明日買點區間與「距買點」百分比。點任一列可開啟詳情面板看 K 線與籌碼。
+    表頭可點擊排序；每 60 秒自動更新一次。此頁純行情查詢，不呼叫 AI、不耗 Token。
+  </div>
+
+  <div class="w-bar">
+    <div id="tabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <button class="w-btn ghost" onclick="toggleEdit()">編輯自選分組</button>
+    <button class="w-btn" id="refreshBtn" onclick="load(true)">立即更新</button>
+    <span class="w-time" id="time"></span>
+  </div>
+
+  <div class="w-edit" id="editBox">
+    <div id="groupRows"></div>
+    <div class="row">
+      <input class="w-input" id="newName" placeholder="新分組名稱，例如 主力觀察">
+      <input class="w-input codes" id="newCodes" placeholder="代號，逗號分隔，例如 2330,2317,AAPL">
+      <button class="w-btn ghost" onclick="addGroup()">新增分組</button>
+      <button class="w-btn" onclick="saveGroups()">儲存</button>
+    </div>
+    <div class="w-note">分組會存在伺服器設定檔，換裝置也看得到。代號直接輸入台股四位數字或美股代碼即可。</div>
+  </div>
+
+  <div class="w-box">
+    <div id="tblBox" class="w-empty">載入中…</div>
+  </div>
+  <div class="w-sec" style="font-size:0.95rem;font-weight:900;margin:24px 0 10px;">除權息與財報行事曆</div>
+  <div class="w-box"><div id="calBox" class="w-empty">載入中…</div></div>
+
+  <div class="w-note">
+    「距買點」＝現價相對 AI Agent 訂的買點區間上緣還差幾 %：正值代表還要再跌這麼多才進區間，
+    標示「在區間」代表現價已落入買點範圍。買點區間由 AI Agent 的明日進場計畫產生，沒有計畫的個股此欄為空白。
+  </div>
+</div>
+
+<script src="/static/js/stock_detail.js"></script>
+<script>
+var GROUPS = {}, ROWS = [], CUR = '', SORT = { key: 'pct', dir: -1 }, TIMER = null;
+
+function getJson(u, opt) {
+  return fetch(u, opt).then(function (r) { return r.text(); }).then(function (t) {
+    return JSON.parse(t.replace(/\bNaN\b/g, 'null').replace(/-?\bInfinity\b/g, 'null'));
+  });
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+  return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function fmt(v, n) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(n === undefined ? 2 : n); }
+function sgn(v, n) { return (v === null || v === undefined || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + fmt(v, n); }
+function cls(v) { return v > 0 ? 'up' : (v < 0 ? 'dn' : ''); }
+
+function renderTabs() {
+  var names = ['全部', '持倉', '監測中'].concat(Object.keys(GROUPS));
+  document.getElementById('tabs').innerHTML = names.map(function (n) {
+    var key = n === '全部' ? '' : n;
+    return '<button class="w-tab' + (CUR === key ? ' active' : '') + '" data-g="' + esc(key) + '">' + esc(n) + '</button>';
+  }).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('.w-tab'), function (b) {
+    b.onclick = function () { CUR = b.dataset.g; renderTabs(); load(true); };
+  });
+}
+
+function load(manual) {
+  var btn = document.getElementById('refreshBtn');
+  if (manual) btn.disabled = true;
+  getJson('/api/watch/quotes?group=' + encodeURIComponent(CUR)).then(function (r) {
+    ROWS = r.rows || [];
+    if (r.groups) { /* 分組名稱以 /api/watch/groups 為準，這裡僅同步新分組 */ }
+    render();
+    document.getElementById('time').textContent = '更新於 ' + new Date().toLocaleTimeString();
+  }).catch(function () {
+    document.getElementById('tblBox').innerHTML = '<div class="w-empty">報價載入失敗，請稍後重試。</div>';
+  }).then(function () { btn.disabled = false; });
+}
+
+function sortRows(rows) {
+  var k = SORT.key, d = SORT.dir;
+  return rows.slice().sort(function (a, b) {
+    var x = a[k], y = b[k];
+    if (k === 'code' || k === 'name') return String(x).localeCompare(String(y)) * d;
+    if (x === null || x === undefined || isNaN(x)) return 1;
+    if (y === null || y === undefined || isNaN(y)) return -1;
+    return (x - y) * d;
+  });
+}
+
+function render() {
+  var box = document.getElementById('tblBox');
+  if (!ROWS.length) {
+    box.innerHTML = '<div class="w-empty">這個分組還沒有標的。可用上方「編輯自選分組」新增，或到 AI Agent 加入監測 / 持倉。</div>';
+    return;
+  }
+  var cols = [['code', '代號'], ['name', '名稱'], ['price', '現價'], ['pct', '漲跌幅%'],
+              ['pl_pct', '持倉損益%'], ['cost', '成本'], ['to_buy', '距買點%'], ['buy_low', '買點區間']];
+  var h = '<table class="w-tbl"><thead><tr>' + cols.map(function (c) {
+    var s = SORT.key === c[0] ? (SORT.dir === 1 ? ' class="asc"' : ' class="desc"') : '';
+    return '<th data-k="' + c[0] + '"' + s + '>' + c[1] + '</th>';
+  }).join('') + '</tr></thead><tbody>';
+  sortRows(ROWS).forEach(function (r) {
+    var inzone = r.to_buy != null && r.to_buy <= 0;
+    h += '<tr data-code="' + esc(r.code) + '" data-tw="' + (r.is_tw ? 1 : 0) + '">'
+      + '<td><b>' + esc(r.code) + '</b></td>'
+      + '<td>' + esc(r.name)
+        + (r.cost ? '<span class="pill hold">持倉</span>' : '')
+        + (r.monitored ? '<span class="pill mon">監測</span>' : '')
+        + (inzone ? '<span class="pill inzone">在區間</span>' : '')
+      + '</td>'
+      + '<td>' + fmt(r.price) + '</td>'
+      + '<td class="' + cls(r.pct) + '">' + sgn(r.pct) + '</td>'
+      + '<td class="' + cls(r.pl_pct) + '">' + (r.pl_pct == null ? '—' : sgn(r.pl_pct)) + '</td>'
+      + '<td>' + (r.cost ? fmt(r.cost) : '—') + '</td>'
+      + '<td class="' + (r.to_buy == null ? '' : (r.to_buy <= 0 ? 'dn' : '')) + '">'
+        + (r.to_buy == null ? '—' : sgn(r.to_buy)) + '</td>'
+      + '<td>' + (r.buy_low ? fmt(r.buy_low) + '–' + fmt(r.buy_high) : '—') + '</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table>';
+  box.innerHTML = h;
+  Array.prototype.forEach.call(box.querySelectorAll('th'), function (th) {
+    th.onclick = function () {
+      var k = th.dataset.k;
+      SORT = { key: k, dir: SORT.key === k ? -SORT.dir : -1 };
+      render();
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('tbody tr'), function (tr) {
+    tr.onclick = function () { openStockDetail(tr.dataset.code, tr.dataset.tw === '1'); };
+  });
+}
+
+// ── 自選分組編輯 ──
+function loadGroups() {
+  getJson('/api/watch/groups').then(function (r) { GROUPS = r.groups || {}; renderTabs(); renderGroupRows(); });
+}
+function toggleEdit() { document.getElementById('editBox').classList.toggle('open'); }
+function renderGroupRows() {
+  document.getElementById('groupRows').innerHTML = Object.keys(GROUPS).map(function (g) {
+    return '<div class="row"><span class="glabel">' + esc(g) + '</span>'
+      + '<input class="w-input codes" data-g="' + esc(g) + '" value="' + esc(GROUPS[g].join(',')) + '">'
+      + '<button class="w-btn ghost" data-del="' + esc(g) + '">刪除</button></div>';
+  }).join('') || '<div class="w-note">尚未建立自選分組。</div>';
+  Array.prototype.forEach.call(document.querySelectorAll('[data-del]'), function (b) {
+    b.onclick = function () { delete GROUPS[b.dataset.del]; renderGroupRows(); };
+  });
+}
+function collect() {
+  Array.prototype.forEach.call(document.querySelectorAll('input.codes[data-g]'), function (inp) {
+    GROUPS[inp.dataset.g] = inp.value.split(/[,，\s]+/).filter(Boolean);
+  });
+}
+function addGroup() {
+  var n = document.getElementById('newName').value.trim();
+  if (!n) { alert('請輸入分組名稱'); return; }
+  collect();
+  GROUPS[n] = document.getElementById('newCodes').value.split(/[,，\s]+/).filter(Boolean);
+  document.getElementById('newName').value = ''; document.getElementById('newCodes').value = '';
+  renderGroupRows();
+}
+function saveGroups() {
+  collect();
+  getJson('/api/watch/groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups: GROUPS })
+  }).then(function (r) {
+    GROUPS = r.groups || GROUPS; renderTabs(); renderGroupRows(); load(true);
+  }).catch(function () { alert('儲存失敗'); });
+}
+
+// ── 除權息 / 財報行事曆 ──
+function loadCalendar() {
+  getJson('/api/watch/calendar').then(function (r) {
+    var box = document.getElementById('calBox');
+    var divs = r.dividends || [], dls = r.deadlines || [];
+    var h = '';
+    if (dls.length) {
+      h += '<div class="w-note" style="margin:0 0 10px">財報公告截止日（法定期限，非個股預告日）：'
+        + dls.map(function (d) { return esc(d.date) + ' ' + esc(d.label) + '（' + d.days + ' 天後）'; }).join('　')
+        + '</div>';
+    }
+    if (!divs.length) {
+      h += '<div class="w-empty">尚無關注個股的除權息資料。</div>';
+    } else {
+      h += '<table class="w-tbl"><thead><tr><th>代號</th><th>名稱</th><th>除息日</th><th>狀態</th>'
+        + '<th>現金股利</th><th>股票股利</th><th>現價殖利率</th><th>發放日</th></tr></thead><tbody>';
+      divs.forEach(function (d) {
+        h += '<tr data-code="' + esc(d.code) + '" data-tw="1"><td><b>' + esc(d.code) + '</b></td>'
+          + '<td>' + esc(d.name) + '</td><td>' + esc(d.ex_date || '—') + '</td>'
+          + '<td>' + (d.upcoming ? '<span class="pill inzone">尚未除息</span>' : '<span class="pill">已除息</span>') + '</td>'
+          + '<td>' + fmt(d.cash) + '</td><td>' + fmt(d.stock) + '</td>'
+          + '<td>' + (d.yield == null ? '—' : fmt(d.yield) + '%') + '</td>'
+          + '<td>' + esc(d.pay_date || '—') + '</td></tr>';
+      });
+      h += '</tbody></table>';
+    }
+    h += '<div class="w-note">殖利率以現價與最近一次現金股利估算（未除息者為預估殖利率）。'
+      + '除息日前後留意：參與除息要在除息前一日持有，填息與否才決定實質報酬。</div>';
+    box.innerHTML = h;
+    Array.prototype.forEach.call(box.querySelectorAll('tbody tr'), function (tr) {
+      tr.onclick = function () { openStockDetail(tr.dataset.code, true); };
+    });
+  }).catch(function () { document.getElementById('calBox').textContent = '行事曆載入失敗。'; });
+}
+
+loadGroups();
+load();
+loadCalendar();
+// 自動更新節奏：台股盤中 60 秒，盤後 / 週末 5 分鐘（收盤後價格不再變動，少打無謂請求）
+function inTwSession() {
+  var d = new Date(), day = d.getDay(), mins = d.getHours() * 60 + d.getMinutes();
+  return day >= 1 && day <= 5 && mins >= 9 * 60 && mins <= 13 * 60 + 35;
+}
+TIMER = setInterval(function () {
+  if (document.hidden) return;                       // 分頁在背景就不更新
+  var now = Date.now();
+  if (now - (window.__lastLoad || 0) < (inTwSession() ? 55000 : 295000)) return;
+  window.__lastLoad = now;
+  load();
+}, 30000);
+window.__lastLoad = Date.now();
+</script>
+</body>
+</html>

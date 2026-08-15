@@ -47,9 +47,9 @@ SITE_PASSWORD = os.environ.get('SITE_PASSWORD', '654321')
 @app.before_request
 def _require_login():
     # 放行登入頁與靜態資源，其餘一律需登入。
-    if request.endpoint in ('login', 'static'):
+    if request.endpoint in ('login', 'static', 'intro_page'):
         return None
-    if request.path == '/login':
+    if request.path in ('/login', '/intro'):
         return None
     if session.get('authed'):
         return None
@@ -2010,16 +2010,114 @@ def _quote_for_ticker(code):
     return res
 
 
+def _tw_suffix(code: str) -> str:
+    """記住台股代碼是上市(.TW)還是上櫃(.TWO)，避免每次都先打一次 .TW 吃 404。
+    快取 7 天（市場別幾乎不變），查不到時回 '' 表示未知（呼叫端兩個都試）。"""
+    return _cache_get(f'twsfx:{code}') or ''
+
+
+def _quotes_batch(codes: list) -> dict:
+    """批次報價：一次 yf.download 抓完所有代號的日線，取代逐檔 Ticker().info。
+    回 {code: {price, changePct, name}}。已在快取內的代號不重抓；
+    台股先用記住的市場別，未知者才 .TW / .TWO 各試一輪。"""
+    out, need = {}, []
+    for c in codes:
+        c = (c or '').strip().upper()
+        if not c:
+            continue
+        cached = _cache_get(f'pq:{c}')
+        if cached:
+            out[c] = cached
+        elif c not in need:
+            need.append(c)
+    if not need:
+        return out
+
+    def _pull(sym_map: dict):
+        """sym_map: {yahoo_symbol: code}；回傳成功取得報價的 code 集合。"""
+        got = set()
+        syms = list(sym_map)
+        if not syms:
+            return got
+        try:
+            df = yf.download(syms, period='5d', interval='1d', progress=False,
+                             group_by='ticker', threads=True, auto_adjust=False)
+        except Exception as e:
+            print(f'[QuotesBatch] download error: {e}')
+            return got
+        for sym, code in sym_map.items():
+            # yfinance 依版本/代號數量可能回 MultiIndex(ticker, 欄位) 或單層欄位，兩種都要能取
+            ser = None
+            for getter in (lambda: df[sym]['Close'], lambda: df['Close']):
+                try:
+                    s2 = getter().dropna()
+                    if len(s2):
+                        ser = s2
+                        break
+                except Exception:
+                    continue
+            if ser is None:
+                continue
+            if len(ser) < 1:
+                continue
+            price = float(ser.iloc[-1])
+            prev  = float(ser.iloc[-2]) if len(ser) >= 2 else None
+            if price <= 0:
+                continue
+            is_tw = sym.endswith('.TW') or sym.endswith('.TWO')
+            res = {'price': round(price, 2),
+                   'changePct': round((price - prev) / prev * 100, 2) if prev else None,
+                   'name': tw_cn_name(code, code) if is_tw else code}
+            out[code] = res
+            got.add(code)
+            _cache_set(f'pq:{code}', res, ttl=30)
+            if is_tw:
+                _cache_set(f'twsfx:{code}', '.TWO' if sym.endswith('.TWO') else '.TW', ttl=604800)
+        return got
+
+    tw   = [c for c in need if _re.match(r'^\d{4,6}[A-Z]?$', c)]
+    us   = [c for c in need if c not in tw]
+    first = {}
+    for c in tw:
+        first[c + (_tw_suffix(c) or '.TW')] = c
+    for c in us:
+        first[c] = c
+    done = _pull(first)
+    # 上市查不到的台股再試上櫃（只針對真的缺的，避免多打無謂請求）
+    retry = {c + '.TWO': c for c in tw if c not in done and (_tw_suffix(c) or '.TW') != '.TWO'}
+    if retry:
+        done |= _pull(retry)
+    for c in need:
+        if c not in out:
+            res = {'price': None, 'changePct': None, 'name': tw_cn_name(c, c)}
+            out[c] = res
+            _cache_set(f'pq:{c}', res, ttl=600)      # 負向快取，避免一直重抓查不到的代號
+
+    # 美股公司名批次下載拿不到，改用長效名稱快取（每個代號一生只查一次，之後都走快取）
+    unnamed = [c for c in us if out.get(c, {}).get('price') and out[c]['name'] == c and not _cache_get(f'nm:{c}')]
+    if unnamed:
+        def _name_of(code):
+            try:
+                return code, (yf.Ticker(code).info or {}).get('shortName') or code
+            except Exception:
+                return code, code
+        with ThreadPoolExecutor(max_workers=min(8, len(unnamed))) as ex:
+            for code, nm in ex.map(_name_of, unnamed[:20]):
+                _cache_set(f'nm:{code}', nm, ttl=2592000)     # 30 天
+    for c in us:
+        nm = _cache_get(f'nm:{c}')
+        if nm and c in out and out[c]['name'] == c:
+            out[c]['name'] = nm
+            _cache_set(f'pq:{c}', out[c], ttl=30)
+    return out
+
+
 @app.route('/api/portfolio/priced')
 def portfolio_priced_api():
     """一次回傳投資組合持倉＋即時報價（並行抓取），讓前端一次呼叫取代『清單＋逐檔報價』多次往返。"""
     holdings = _load_agent_cfg().get('holdings', [])
     codes    = [h.get('code', '') for h in holdings]
-    qmap     = {}
-    if codes:
-        with ThreadPoolExecutor(max_workers=min(12, len(codes))) as ex:
-            for code, q in zip(codes, ex.map(_quote_for_ticker, codes)):
-                qmap[code] = q
+    qmap     = _quotes_batch(codes) if codes else {}
     out = []
     for h in holdings:
         code = h.get('code', '')
@@ -6376,7 +6474,7 @@ def _fetch_kline(code: str, is_tw: bool = True, period: str = '6mo', interval: s
         view = period if period in ('3mo', '6mo', '1y') else '3mo'
         keep = {'3mo': 65, '6mo': 128, '1y': 252}[view]
         fetch_period = '2y'   # ≈500 根日K，足以算正確的 MA240 年線
-    ck = f'klinev2_{code}_{1 if is_tw else 0}_{view}'   # v2：加了 myear/year_ma 欄位，換鍵避免吃到舊格式快取
+    ck = f'klinev3_{code}_{1 if is_tw else 0}_{view}'   # v3：加了 MACD/KD/RSI 副圖欄位，換鍵避免吃到舊格式快取
     cached = _cache_get(ck)
     if cached is not None:
         return cached
@@ -6403,6 +6501,10 @@ def _fetch_kline(code: str, is_tw: bool = True, period: str = '6mo', interval: s
             ma_year = close.rolling(240, min_periods=240).mean() if len(close) >= 240 else None
         else:
             ma_year = close.rolling(52, min_periods=52).mean() if len(close) >= 52 else None
+        # 副圖指標（用完整歷史算、最後才裁切顯示窗，確保 EWM/RSI 暖機足夠，數值與技術分頁一致）
+        dif, dea, osc = calc_macd(close)
+        kk, dd        = calc_kd(hist['High'], hist['Low'], close)
+        rsi           = calc_rsi(close)
         idx = hist.index[-keep:]
         candles = []
         for t in idx:
@@ -6421,6 +6523,14 @@ def _fetch_kline(code: str, is_tw: bool = True, period: str = '6mo', interval: s
                 yv = safe_float(ma_year.loc[t])
                 if yv > 0:
                     row['myear'] = round(yv, 2)
+            for key, ser, nd in (('dif', dif, 3), ('dea', dea, 3), ('osc', osc, 3),
+                                 ('k', kk, 1), ('d', dd, 1), ('rsi', rsi, 1)):
+                try:
+                    v = safe_float(ser.loc[t])
+                except Exception:
+                    v = None
+                if v is not None and v == v:      # 排除 NaN（RSI 前 14 根為 NaN）
+                    row[key] = round(v, nd)
             candles.append(row)
         out['candles'] = candles
         out['is_tw'] = is_tw
@@ -6447,7 +6557,538 @@ def predict_kline(code):
         is_tw = is_tw_q in ('1', 'true', 'True')
     period   = request.args.get('period', '6mo')
     interval = request.args.get('interval', '1d')
-    return jsonify(_fetch_kline(code_c, is_tw, period, interval))
+    out = dict(_fetch_kline(code_c, is_tw, period, interval))   # 複製，避免把個人化標記寫進共用快取
+    out['marks'] = _trade_marks(code_c)
+    # 持倉成本線：畫一條水平線，一眼看出目前是賺是賠、離成本多遠
+    hold = next((h for h in (_load_agent_cfg().get('holdings') or [])
+                 if str(h.get('code', '')).strip().upper() == code_c), None)
+    if hold and safe_float(hold.get('buy_price', 0)) > 0:
+        out['cost_line'] = round(safe_float(hold['buy_price']), 2)
+    return jsonify(out)
+
+
+def _fetch_intraday(code: str, is_tw: bool = True) -> dict:
+    """分時走勢（今日 5 分 K；非交易時段自動退回最近一個交易日）。
+    回 {points:[{t,p,avg,v}], prev_close, date, is_last_session}；avg 為當日累計均價（VWAP）。
+    盤中快取 60 秒、盤後快取 10 分鐘（資料不會再變，避免無謂請求）。"""
+    code = code.strip().upper().replace('.TW', '').replace('.TWO', '')
+    ck   = f'intraday_{code}_{1 if is_tw else 0}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = {'code': code, 'points': [], 'prev_close': None, 'date': '', 'is_last_session': False, 'error': None}
+    try:
+        symbols = ([code + '.TW', code + '.TWO'] if is_tw else [code])
+        hist = None
+        for sym in symbols:
+            # 抓 5 天 5 分K：今天沒開盤時仍能顯示最近一個交易日，週末/盤後不會空白
+            h = yf.Ticker(sym).history(period='5d', interval='5m')
+            if not h.empty:
+                hist = h.dropna(subset=['Close'])
+                daily = yf.Ticker(sym).history(period='10d', interval='1d')['Close'].dropna()
+                break
+        if hist is None or hist.empty:
+            out['error'] = '查無分時資料'
+            _cache_set(ck, out, ttl=300)
+            return out
+
+        sess_days = sorted({t.strftime('%Y-%m-%d') for t in hist.index})
+        last_day  = sess_days[-1]
+        day_rows  = hist[[t.strftime('%Y-%m-%d') == last_day for t in hist.index]]
+        out['date'] = last_day
+        out['is_last_session'] = (last_day != _dt.date.today().strftime('%Y-%m-%d'))
+
+        # 昨收：日線中「該交易日之前」最後一筆收盤，用來畫平盤基準線
+        try:
+            prev = [safe_float(v) for t, v in daily.items() if t.strftime('%Y-%m-%d') < last_day]
+            if prev:
+                out['prev_close'] = round(prev[-1], 2)
+        except Exception:
+            pass
+
+        cum_pv = cum_v = 0.0
+        for t in day_rows.index:
+            price = safe_float(day_rows['Close'].loc[t])
+            vol   = safe_float(day_rows['Volume'].loc[t])
+            if price <= 0:
+                continue
+            cum_pv += price * vol
+            cum_v  += vol
+            out['points'].append({'t': t.strftime('%H:%M'), 'p': round(price, 2),
+                                  'avg': round(cum_pv / cum_v, 2) if cum_v > 0 else round(price, 2),
+                                  'v': int(vol)})
+        # 5 分 K 不含收盤集合競價，收盤價常與最後一根不同；補一根「收盤」點，
+        # 讓分時圖的最後價格與各頁顯示的收盤價一致（避免同一檔兩個價格造成誤判）。
+        try:
+            dclose = next((safe_float(v) for t, v in daily.items()
+                           if t.strftime('%Y-%m-%d') == last_day), None)
+            if out['points'] and dclose and abs(dclose - out['points'][-1]['p']) > 0.005:
+                out['points'].append({'t': '收盤', 'p': round(dclose, 2),
+                                      'avg': out['points'][-1]['avg'], 'v': 0})
+        except Exception:
+            pass
+
+        if out['points']:
+            last = out['points'][-1]['p']
+            if out['prev_close']:
+                out['change']     = round(last - out['prev_close'], 2)
+                out['change_pct'] = round((last / out['prev_close'] - 1) * 100, 2)
+            out['last'] = last
+            out['high'] = max(p['p'] for p in out['points'])
+            out['low']  = min(p['p'] for p in out['points'])
+            out['vol']  = sum(p['v'] for p in out['points'])
+    except Exception as e:
+        out['error'] = str(e)
+    _cache_set(ck, out, ttl=60 if not out['is_last_session'] else 600)
+    return out
+
+
+@app.route('/api/predict/intraday/<code>')
+def predict_intraday(code):
+    """分時走勢（JSON）：供詳情面板「分時」分頁畫今日走勢與均價線。純行情，不耗 Token。"""
+    code_c  = code.strip().upper().replace('.TW', '').replace('.TWO', '')
+    is_tw_q = request.args.get('tw')
+    if is_tw_q is None:
+        is_tw = bool(_re.match(r'^\d{4,6}[A-Z]?$', code_c))
+    else:
+        is_tw = is_tw_q in ('1', 'true', 'True')
+    return jsonify(_fetch_intraday(code_c, is_tw))
+
+
+def _trade_marks(code: str) -> list:
+    """自己的買賣點：持倉的買進日/價，以及已實現的賣出日/價，標在 K 線上。
+    用途：回頭檢討「我當時買在哪根、賣在哪根」，賣飛與追高一目了然。"""
+    code = str(code).strip().upper()
+    cfg  = _load_agent_cfg()
+    marks = []
+    for h in (cfg.get('holdings') or []):
+        if str(h.get('code', '')).strip().upper() == code and h.get('date'):
+            marks.append({'t': str(h['date'])[:10], 'p': safe_float(h.get('buy_price', 0)),
+                          'side': 'buy', 'label': f"買進 {safe_float(h.get('buy_price', 0)):g}"})
+    for s in (cfg.get('sells') or []):
+        if str(s.get('code', '')).strip().upper() == code and s.get('date'):
+            pct = safe_float(s.get('realized_pct', 0))
+            marks.append({'t': str(s['date'])[:10], 'p': safe_float(s.get('sell_price', 0)),
+                          'side': 'sell', 'label': f"賣出 {safe_float(s.get('sell_price', 0)):g}（{pct:+.1f}%）"})
+    return [m for m in marks if m['p'] > 0]
+
+
+def _fetch_chip_history(code: str, days: int = 10) -> dict:
+    """台股逐日籌碼表（三竹「籌碼」頁的基本盤）：近 N 個交易日三大法人買賣超（股）、
+    融資融券餘額與增減、借券賣出餘額，全部帶日期對齊成一張表，另附 5/10 日累計。
+    資料源 FinMind（與 _get_tw_inst / _get_tw_margin 同源），快取 1 小時、不耗 token。"""
+    code = str(code).strip().upper().replace('.TW', '').replace('.TWO', '')
+    days = max(3, min(int(days or 10), 20))
+    ck   = f'chiphist_{code}_{days}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = {'code': code, 'rows': [], 'sum5': None, 'sum10': None, 'error': None}
+    try:
+        span = days * 2 + 10          # 交易日 → 日曆日，抓寬一點
+        inst_rows = _finmind_fetch('TaiwanStockInstitutionalInvestorsBuySell', code, days=span)
+        mg_rows   = _finmind_fetch('TaiwanStockMarginPurchaseShortSale', code, days=span)
+        sbl_rows  = _finmind_fetch('TaiwanDailyShortSaleBalances', code, days=span)
+
+        by_date = {}
+        for r in inst_rows:
+            by_date.setdefault(r.get('date', ''), []).append(r)
+        mg_by  = {r.get('date', ''): r for r in mg_rows}
+        sbl_by = {r.get('date', ''): r for r in sbl_rows}
+
+        dates = sorted(set(list(by_date) + list(mg_by)), reverse=True)[:days]   # 最新在前
+        for d in dates:
+            agg = _inst_net_by_category(by_date.get(d, [])) if by_date.get(d) else None
+            mg  = mg_by.get(d)
+            row = {'d': d}
+            if agg:
+                row.update({'foreign': agg['foreign_net'], 'trust': agg['trust_net'],
+                            'dealer':  agg['dealer_net'],  'total': agg['total_net']})
+            if mg:
+                mt = safe_float(mg.get('MarginPurchaseTodayBalance', 0))
+                mp = safe_float(mg.get('MarginPurchaseYesterdayBalance', 0))
+                st = safe_float(mg.get('ShortSaleTodayBalance', 0))
+                sp = safe_float(mg.get('ShortSaleYesterdayBalance', 0))
+                row.update({'margin': mt, 'margin_chg': mt - mp,
+                            'short':  st, 'short_chg':  st - sp})
+            sbl = sbl_by.get(d)
+            if sbl:
+                row['lending'] = safe_float(sbl.get('SBLShortSalesCurrentDayBalance', 0))
+            out['rows'].append(row)
+
+        def _sum(n):
+            sel = [r for r in out['rows'][:n] if r.get('total') is not None]
+            if not sel:
+                return None
+            s = {k: sum(r.get(k, 0) for r in sel) for k in ('foreign', 'trust', 'dealer', 'total')}
+            s['days'] = len(sel)
+            s['up']   = sum(1 for r in sel if (r.get('total') or 0) > 0)   # 買超天數
+            return s
+        out['sum5'], out['sum10'] = _sum(5), _sum(10)
+        if not out['rows']:
+            out['error'] = '暫無籌碼資料（非台股、或資料源限流）'
+    except Exception as e:
+        out['error'] = str(e)
+    _cache_set(ck, out, ttl=3600 if out['rows'] else 600)
+    return out
+
+
+@app.route('/api/predict/chips/<code>')
+def predict_chips(code):
+    """逐日籌碼表（JSON）：台股限定，供詳情面板籌碼分頁顯示近 N 日法人／資券／借券趨勢。"""
+    return jsonify(_fetch_chip_history(code, request.args.get('days', 10, type=int)))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  大盤儀表板：判斷「今天該不該進場」的系統性訊號（純資料，不呼叫 AI）
+# ════════════════════════════════════════════════════════════════════════════
+
+def _twii_kline(period: str = '6mo') -> dict:
+    """加權指數 K 線（沿用個股 K 線繪圖器，代碼固定 ^TWII）。"""
+    ck = f'twii_kline_{period}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = {'candles': [], 'error': None, 'interval': '1d', 'period': period}
+    try:
+        h = yf.Ticker('^TWII').history(period='2y', interval='1d').dropna(subset=['Close'])
+        close = h['Close']
+        ma5, ma20, ma60 = (close.rolling(n, min_periods=1).mean() for n in (5, 20, 60))
+        ma_year = close.rolling(240, min_periods=240).mean() if len(close) >= 240 else None
+        dif, dea, osc = calc_macd(close)
+        kk, dd = calc_kd(h['High'], h['Low'], close)
+        rsi = calc_rsi(close)
+        keep = {'3mo': 65, '6mo': 128, '1y': 252}.get(period, 128)
+        for t in h.index[-keep:]:
+            row = {'t': t.strftime('%Y-%m-%d'),
+                   'o': round(safe_float(h['Open'].loc[t]), 2), 'h': round(safe_float(h['High'].loc[t]), 2),
+                   'l': round(safe_float(h['Low'].loc[t]), 2),  'c': round(safe_float(close.loc[t]), 2),
+                   'v': int(safe_float(h['Volume'].loc[t])),
+                   'm5': round(safe_float(ma5.loc[t]), 2), 'm20': round(safe_float(ma20.loc[t]), 2),
+                   'm60': round(safe_float(ma60.loc[t]), 2)}
+            if ma_year is not None:
+                yv = safe_float(ma_year.loc[t])
+                if yv > 0:
+                    row['myear'] = round(yv, 2)
+            for key, ser, nd in (('dif', dif, 2), ('dea', dea, 2), ('osc', osc, 2),
+                                 ('k', kk, 1), ('d', dd, 1), ('rsi', rsi, 1)):
+                v = safe_float(ser.loc[t])
+                if v == v:
+                    row[key] = round(v, nd)
+            out['candles'].append(row)
+        last_year = next((c['myear'] for c in reversed(out['candles']) if c.get('myear') is not None), None)
+        if last_year is not None:
+            out['year_ma'] = last_year
+            out['year_label'] = '年線(MA240)'
+    except Exception as e:
+        out['error'] = str(e)
+    _cache_set(ck, out, ttl=900)
+    return out
+
+
+def _tw_total_inst(days: int = 12) -> list:
+    """大盤三大法人買賣超（金額，億元；最新在前）。FinMind 全市場合計，不需 data_id。"""
+    ck = f'tw_total_inst_{days}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    rows = _finmind_fetch('TaiwanStockTotalInstitutionalInvestors', '', days=days * 2 + 10)
+    by_date = {}
+    for r in rows:
+        by_date.setdefault(r.get('date', ''), []).append(r)
+    out = []
+    for d in sorted(by_date, reverse=True)[:days]:
+        agg = _inst_net_by_category(by_date[d])          # 金額（元）
+        out.append({'d': d,
+                    'foreign': round(agg['foreign_net'] / 1e8, 1),
+                    'trust':   round(agg['trust_net']   / 1e8, 1),
+                    'dealer':  round(agg['dealer_net']  / 1e8, 1),
+                    'total':   round(agg['total_net']   / 1e8, 1)})
+    _cache_set(ck, out, ttl=3600 if out else 600)
+    return out
+
+
+def _tw_futures_oi(days: int = 12) -> list:
+    """外資台指期未平倉淨口數（多單-空單，最新在前）。正＝外資期貨偏多，負＝避險/看空。"""
+    ck = f'tw_fut_oi_{days}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    rows = _finmind_fetch('TaiwanFuturesInstitutionalInvestors', 'TX', days=days * 2 + 10)
+    by_date = {}
+    for r in rows:
+        if '外資' in str(r.get('institutional_investors', '')):
+            net = safe_float(r.get('long_open_interest_balance_volume', 0)) - \
+                  safe_float(r.get('short_open_interest_balance_volume', 0))
+            by_date[r.get('date', '')] = round(net)
+    out = [{'d': d, 'net': by_date[d]} for d in sorted(by_date, reverse=True)[:days]]
+    _cache_set(ck, out, ttl=3600 if out else 600)
+    return out
+
+
+def _tw_sector_ranking() -> list:
+    """類股／族群漲跌排行：以選股宇宙的分類為族群，取成分股當日與近5日平均漲跌幅。
+    用來看「錢流去哪個族群」，判斷今天是不是自己持股的族群在領漲。快取 10 分鐘。"""
+    cached = _cache_get('tw_sector_rank')
+    if cached is not None:
+        return cached
+    codes = sorted({c for lst in TW_SCREENER_UNIVERSE.values() for c in lst})
+    syms  = [c + '.TW' for c in codes]
+    px = {}
+    try:
+        df = yf.download(syms, period='1mo', interval='1d', progress=False,
+                         group_by='ticker', threads=True, auto_adjust=False)
+        for c, s in zip(codes, syms):
+            try:
+                ser = df[s]['Close'].dropna()
+            except Exception:
+                continue
+            if len(ser) >= 2:
+                px[c] = {'d1': (float(ser.iloc[-1]) / float(ser.iloc[-2]) - 1) * 100,
+                         'd5': (float(ser.iloc[-1]) / float(ser.iloc[-6]) - 1) * 100 if len(ser) >= 6 else None,
+                         'price': round(float(ser.iloc[-1]), 2)}
+    except Exception as e:
+        print(f'[Sector] download error: {e}')
+    # 上櫃股在 .TW 抓不到，缺的再用 .TWO 補一輪（否則上櫃族群會整段沒資料）
+    missing = [c for c in codes if c not in px]
+    if missing:
+        try:
+            df2 = yf.download([c + '.TWO' for c in missing], period='1mo', interval='1d',
+                              progress=False, group_by='ticker', threads=True, auto_adjust=False)
+            for c in missing:
+                try:
+                    ser = df2[c + '.TWO']['Close'].dropna()
+                except Exception:
+                    continue
+                if len(ser) >= 2:
+                    px[c] = {'d1': (float(ser.iloc[-1]) / float(ser.iloc[-2]) - 1) * 100,
+                             'd5': (float(ser.iloc[-1]) / float(ser.iloc[-6]) - 1) * 100 if len(ser) >= 6 else None,
+                             'price': round(float(ser.iloc[-1]), 2)}
+        except Exception as e:
+            print(f'[Sector] TWO download error: {e}')
+    out = []
+    for name, lst in TW_SCREENER_UNIVERSE.items():
+        got = [px[c] for c in lst if c in px]
+        if not got:
+            continue
+        d5 = [g['d5'] for g in got if g['d5'] is not None]
+        ranked = sorted([(c, px[c]['d1']) for c in lst if c in px], key=lambda x: -x[1])
+        out.append({
+            'name': name, 'n': len(got),
+            'd1': round(sum(g['d1'] for g in got) / len(got), 2),
+            'd5': round(sum(d5) / len(d5), 2) if d5 else None,
+            'up': sum(1 for g in got if g['d1'] > 0),
+            'leaders': [{'code': c, 'name': tw_cn_name(c, c), 'pct': round(p, 2)} for c, p in ranked[:3]],
+        })
+    out.sort(key=lambda x: -x['d1'])
+    _cache_set('tw_sector_rank', out, ttl=600)
+    return out
+
+
+@app.route('/market')
+def market_board_page():
+    return render_template('market.html')
+
+
+@app.route('/api/market/board')
+def api_market_board():
+    """大盤儀表板資料：指數行情＋體質濾網＋大盤法人＋外資期貨未平倉＋加權K線。純資料，不耗 Token。"""
+    idx = {}
+    for key, sym, label in [('twii', '^TWII', '加權指數')] + _US_INDEX_SET:
+        try:
+            c = yf.Ticker(sym).history(period='5d')['Close'].dropna()
+            if len(c) >= 2:
+                idx[key] = {'label': label, 'v': round(float(c.iloc[-1]), 2),
+                            'pct': round((float(c.iloc[-1]) / float(c.iloc[-2]) - 1) * 100, 2)}
+        except Exception:
+            pass
+    return jsonify({
+        'indices':  idx,
+        'regime':   _market_regime(),
+        'overnight': _us_overnight_snapshot(),
+        'inst':     _tw_total_inst(12),
+        'fut_oi':   _tw_futures_oi(12),
+        'kline':    _twii_kline(request.args.get('period', '6mo')),
+    })
+
+
+@app.route('/watch')
+def watchlist_page():
+    return render_template('watch.html')
+
+
+@app.route('/api/watch/groups', methods=['GET', 'POST'])
+def api_watch_groups():
+    """自選股分組（存在 agent_config.json 的 watchlists）：{群組名: [代號,...]}。"""
+    cfg = _load_agent_cfg()
+    if request.method == 'POST':
+        body   = request.get_json(force=True) or {}
+        groups = body.get('groups')
+        if not isinstance(groups, dict):
+            return jsonify({'error': 'groups 需為物件'}), 400
+        clean = {}
+        for name, lst in list(groups.items())[:20]:
+            name = str(name).strip()[:20]
+            if not name:
+                continue
+            codes, seen = [], set()
+            for c in (lst or [])[:80]:
+                c = str(c).strip().upper().replace('.TW', '').replace('.TWO', '')
+                if c and c not in seen:
+                    seen.add(c); codes.append(c)
+            clean[name] = codes
+        cfg['watchlists'] = clean
+        _save_agent_cfg(cfg)
+        return jsonify({'ok': True, 'groups': clean})
+    return jsonify({'groups': cfg.get('watchlists') or {}})
+
+
+@app.route('/api/watch/quotes')
+def api_watch_quotes():
+    """自選報價表：一頁掃完所有關注個股（自選分組＋持倉＋監測清單）。
+    每列含現價、漲跌幅、持倉損益、明日買點區間與距買點百分比。純行情，不耗 Token。"""
+    cfg      = _load_agent_cfg()
+    holdings = {str(h.get('code', '')).strip().upper(): h for h in (cfg.get('holdings') or []) if h.get('code')}
+    plans    = {str(k).strip().upper(): v for k, v in (cfg.get('entry_plans') or {}).items()}
+    groups   = cfg.get('watchlists') or {}
+    with _monitor_lock:
+        mon = (_load_monitor_cfg().get('tickers') or {})
+    mon_codes = {str(c).strip().upper(): v for c, v in mon.items()}
+
+    src = request.args.get('group', '')          # 指定分組；空＝全部關注標的
+    if src and src in groups:
+        codes = list(groups[src])
+    elif src == '持倉':
+        codes = list(holdings)
+    elif src == '監測中':
+        codes = list(mon_codes)
+    else:
+        codes, seen = [], set()
+        for lst in list(groups.values()) + [list(holdings), list(mon_codes)]:
+            for c in lst:
+                if c not in seen:
+                    seen.add(c); codes.append(c)
+    codes = codes[:120]
+
+    qmap = _quotes_batch(codes) if codes else {}
+    rows = []
+    for c in codes:
+        q = qmap.get(c) or {}
+        price = q.get('price')
+        h     = holdings.get(c)
+        p     = plans.get(c)
+        row = {'code': c, 'name': q.get('name') or c, 'price': price, 'pct': q.get('changePct'),
+               'monitored': c in mon_codes,
+               'monitor_on': bool((mon_codes.get(c) or {}).get('enabled', True)) if isinstance(mon_codes.get(c), dict) else (c in mon_codes),
+               'is_tw': bool(_re.match(r'^\d{4,6}[A-Z]?$', c))}
+        if h:
+            cost = safe_float(h.get('buy_price', 0))
+            row['cost']   = cost or None
+            row['shares'] = h.get('shares', 0)
+            if cost and price:
+                row['pl_pct'] = round((price - cost) / cost * 100, 2)
+        if p:
+            lo, hi = safe_float(p.get('buy_low', 0)), safe_float(p.get('buy_high', 0))
+            if lo or hi:
+                row['buy_low'], row['buy_high'] = lo or None, hi or None
+                if price and hi:
+                    # 距買點：正＝還要跌多少%才進區間；負＝已在區間內或更低
+                    row['to_buy'] = round((price - hi) / hi * 100, 2)
+            row['plan_conf'] = p.get('confidence', '')
+        # 群組標籤，方便前端分類顯示
+        row['groups'] = [g for g, lst in groups.items() if c in lst]
+        rows.append(row)
+    return jsonify({'rows': rows, 'groups': list(groups.keys()),
+                    'counts': {'holdings': len(holdings), 'monitored': len(mon_codes), 'total': len(rows)}})
+
+
+_TW_FIN_DEADLINES = [   # 台股財報法定公告截止日（一般公司），用來提醒「財報空窗/密集期」
+    ('03-31', '前一年度年報'), ('05-15', '第一季財報'), ('08-14', '第二季財報'), ('11-14', '第三季財報'),
+]
+
+
+def _stock_dividend_info(code: str) -> dict:
+    """單檔除權息資訊（FinMind TaiwanStockDividend，逐檔快取 24 小時）。
+    回 {ex_date, cash, stock, pay_date, upcoming}：upcoming=True 表示除息日還沒到。"""
+    code = str(code).strip().upper()
+    ck = f'divinfo_{code}'
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    out = {}
+    rows = _finmind_fetch('TaiwanStockDividend', code, days=420)
+    if rows:
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        recs = []
+        for r in rows:
+            ex = (r.get('CashExDividendTradingDate') or r.get('StockExDividendTradingDate') or '').strip()
+            if not ex:
+                continue
+            recs.append({'ex_date': ex,
+                         'cash':  round(safe_float(r.get('CashEarningsDistribution', 0)), 2),
+                         'stock': round(safe_float(r.get('StockEarningsDistribution', 0)), 2),
+                         'pay_date': (r.get('CashDividendPaymentDate') or '').strip()})
+        future = sorted([r for r in recs if r['ex_date'] >= today], key=lambda r: r['ex_date'])
+        past   = sorted([r for r in recs if r['ex_date'] <  today], key=lambda r: r['ex_date'])
+        if future:
+            out = dict(future[0]); out['upcoming'] = True
+        elif past:
+            out = dict(past[-1]);  out['upcoming'] = False
+    _cache_set(ck, out, ttl=86400 if out else 3600)
+    return out
+
+
+@app.route('/api/watch/calendar')
+def api_watch_calendar():
+    """關注標的的除權息行事曆＋財報公告期程提醒（台股）。純資料，不耗 Token。"""
+    cfg    = _load_agent_cfg()
+    groups = cfg.get('watchlists') or {}
+    codes, seen = [], set()
+    for lst in ([str(h.get('code', '')).strip().upper() for h in (cfg.get('holdings') or [])]
+                + list(groups and set(c for l in groups.values() for c in l) or [])):
+        if lst and lst not in seen and _re.match(r'^\d{4,6}[A-Z]?$', lst):
+            seen.add(lst); codes.append(lst)
+    with _monitor_lock:
+        for c in (_load_monitor_cfg().get('tickers') or {}):
+            c = str(c).strip().upper()
+            if c not in seen and _re.match(r'^\d{4,6}[A-Z]?$', c):
+                seen.add(c); codes.append(c)
+    codes = codes[:40]
+
+    qmap  = _quotes_batch(codes) if codes else {}
+    items = []
+    for c in codes:
+        info = _stock_dividend_info(c)
+        if not info:
+            continue
+        q = qmap.get(c) or {}
+        yld = None
+        if q.get('price') and info.get('cash'):
+            yld = round(info['cash'] / q['price'] * 100, 2)
+        items.append({'code': c, 'name': q.get('name') or c, 'price': q.get('price'),
+                      'ex_date': info.get('ex_date'), 'cash': info.get('cash'), 'stock': info.get('stock'),
+                      'pay_date': info.get('pay_date'), 'upcoming': info.get('upcoming', False), 'yield': yld})
+    items.sort(key=lambda x: (not x['upcoming'], x['ex_date'] or ''))
+
+    from datetime import datetime
+    today = datetime.now()
+    deadlines = []
+    for md, label in _TW_FIN_DEADLINES:
+        for yr in (today.year, today.year + 1):
+            d = f'{yr}-{md}'
+            if d >= today.strftime('%Y-%m-%d'):
+                deadlines.append({'date': d, 'label': label,
+                                  'days': (datetime.strptime(d, '%Y-%m-%d') - today).days + 1})
+                break
+    deadlines.sort(key=lambda x: x['date'])
+    return jsonify({'dividends': items, 'deadlines': deadlines[:4], 'count': len(items)})
+
+
+@app.route('/api/market/sectors')
+def api_market_sectors():
+    """類股／族群漲跌排行（台股）。"""
+    return jsonify({'sectors': _tw_sector_ranking()})
 
 
 @app.route('/api/predict/chat', methods=['POST'])
@@ -10595,6 +11236,12 @@ def backtest_page():
 @app.route('/goal')
 def goal_page():
     return render_template('goal.html')
+
+
+@app.route('/intro')
+def intro_page():
+    """系統介紹手冊（免登入，可直接分享給他人看）。"""
+    return render_template('intro.html')
 
 
 @app.route('/manual')

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>智能投資分析平台 — 系統介紹</title>
+<style>
+  :root{
+    --ink:#141b22; --muted:#5f6d78; --line:#dde4e9;
+    --bg:#ffffff; --surface:#f5f8fa;
+    --navy:#13324f; --navy-d:#0c2138; --navy-l:#eef3f8; --navy-b:#c6d7e6;
+    --amber:#9a5b06; --amber-l:#fdf5ea; --amber-b:#ecd3ae;
+    --up:#a32c2c; --down:#12694f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e6ecf1; --muted:#95a4b0; --line:#26333f;
+      --bg:#0d141b; --surface:#131d26;
+      --navy:#7fb2e0; --navy-d:#a9cdf0; --navy-l:#15222f; --navy-b:#26404f;
+      --amber:#d99a4e; --amber-l:#231a0f; --amber-b:#4a361d;
+      --up:#e57373; --down:#4db69a;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e6ecf1; --muted:#95a4b0; --line:#26333f;
+    --bg:#0d141b; --surface:#131d26;
+    --navy:#7fb2e0; --navy-d:#a9cdf0; --navy-l:#15222f; --navy-b:#26404f;
+    --amber:#d99a4e; --amber-l:#231a0f; --amber-b:#4a361d;
+    --up:#e57373; --down:#4db69a;
+  }
+
+  *{ box-sizing:border-box; }
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+    font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+    padding:40px 22px 64px;
+  }
+  .wrap{ max-width:920px; margin:0 auto; display:flex; flex-direction:column; gap:0; }
+  p{ margin:0; }
+
+  .label{ font-size:12px; letter-spacing:.24em; color:var(--navy); font-weight:700; }
+  h1{ font-size:36px; line-height:1.2; font-weight:800; letter-spacing:-.02em; margin:10px 0 0; text-wrap:balance; }
+  h1 .k{ color:var(--navy); }
+  .lede{ color:var(--muted); margin-top:14px; max-width:62ch; }
+
+  .stats{ display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--line);
+          border-radius:10px; overflow:hidden; margin:26px 0 0; background:var(--surface); }
+  .stat{ padding:14px 16px; border-right:1px solid var(--line); }
+  .stat:last-child{ border-right:0; }
+  .stat b{ display:block; font-size:24px; color:var(--navy); line-height:1.25; font-weight:800;
+           font-variant-numeric:tabular-nums; }
+  .stat span{ font-size:12.5px; color:var(--muted); }
+
+  .try{ margin-top:22px; border:1.5px solid var(--navy-b); background:var(--navy-l);
+        border-radius:10px; padding:18px 20px; }
+  .try h3{ font-size:16px; color:var(--navy-d); margin:0 0 6px; }
+  .try p{ font-size:13.5px; color:var(--muted); }
+  .try a{ color:var(--navy); font-weight:700; text-decoration:none; border-bottom:1px solid var(--navy-b); word-break:break-all; }
+
+  .sec{ display:flex; align-items:baseline; gap:12px; margin:44px 0 6px; flex-wrap:wrap; }
+  .sec h2{ font-size:21px; font-weight:800; margin:0; letter-spacing:-.01em; }
+  .sec .note{ font-size:13px; color:var(--muted); margin-left:auto; }
+  .rule{ height:3px; background:var(--navy); border-radius:2px; }
+  .rule.o{ background:var(--amber); }
+  .grp{ font-size:13px; color:var(--muted); font-weight:700; margin:22px 0 8px; letter-spacing:.06em; }
+
+  .cards{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+  @media (max-width:680px){ .cards{ grid-template-columns:1fr; } .stats{ grid-template-columns:1fr 1fr; } }
+  .card{ border:1px solid var(--line); border-radius:8px; padding:14px 16px; background:var(--surface); }
+  .card.o{ border-left:3px solid var(--amber); }
+  .card h4{ font-size:15.5px; font-weight:700; margin:0 0 4px; }
+  .card .path{ font-size:12px; color:var(--navy); font-weight:700; letter-spacing:.04em; margin-bottom:6px; }
+  .card p{ font-size:13.8px; color:var(--muted); line-height:1.7; }
+  .card strong{ color:var(--ink); }
+  .tag{ display:inline-block; font-size:11px; font-weight:700; padding:1px 6px; border-radius:4px;
+        background:var(--amber-l); color:var(--amber); border:1px solid var(--amber-b);
+        vertical-align:2px; margin-left:6px; }
+
+  .tablewrap{ overflow-x:auto; margin-top:14px; }
+  table{ width:100%; border-collapse:collapse; min-width:560px; }
+  th{ text-align:left; font-size:12.5px; color:var(--navy-d); font-weight:700;
+      background:var(--navy-l); padding:9px 12px; border-bottom:1px solid var(--navy-b); white-space:nowrap; }
+  td{ font-size:13.6px; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--muted); }
+  td:first-child{ font-weight:700; color:var(--ink); width:26%; }
+
+  .qa{ display:flex; flex-direction:column; gap:14px; margin-top:14px; }
+  .qa div{ border-left:2px solid var(--line); padding-left:14px; }
+  .qa .q{ font-weight:700; color:var(--ink); }
+  .qa .a{ font-size:14px; color:var(--muted); }
+
+  .note-s{ font-size:12.5px; color:var(--muted); margin-top:12px; }
+  .foot{ margin-top:46px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
+  .foot b{ color:var(--ink); }
+  .foot a{ color:var(--navy); text-decoration:none; }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+<div class="label">智能投資分析平台 · 系統介紹</div>
+<h1><span class="k">台股 / 美股</span> 雙市場 AI 操盤平台</h1>
+<p class="lede">一套以網頁操作的個人投資決策系統：從選股、明日預測、自動化盯盤，到收盤後的操盤總結與績效檢討，串成一條完整工作流。行情取自 yfinance，籌碼與財報取自 FinMind，AI 研判由 Claude 執行——所有數字都餵給 AI 之後才下判斷，不憑空生成。</p>
+
+<div class="stats">
+  <div class="stat"><b>12</b><span>功能模組</span></div>
+  <div class="stat"><b>10</b><span>操盤強化層機制</span></div>
+  <div class="stat"><b>2 市場</b><span>台股與美股</span></div>
+  <div class="stat"><b>逐檔</b><span>AI 開關控管 Token 成本</span></div>
+</div>
+
+<div class="try">
+  <h3>線上使用</h3>
+  <p>本頁免登入可直接分享；平台網址 <a href="/">http://2.24.66.65/</a>　·　需登入後使用；行情為近即時資料，部分結果會短暫快取以加速並節省資源。</p>
+</div>
+
+<div class="sec"><h2>先讀這段：全站共通操作</h2><div class="note">三件事學會，其餘頁面都通</div></div>
+<div class="rule"></div>
+<div class="cards">
+  <div class="card"><h4>個股詳情面板</h4><p>任何清單頁點擊某一列，右側滑出詳情抽屜：自繪 K 線（MA5／MA20／MA60 與<strong>年線 MA240</strong>）、日K 三月／日K 六月／週K 切換、明日傾向逐條列出（站上月線、MACD、KD、RSI、均線多排）並標示年線位階。台股附法人與借券，美股附基本面與新聞。面板內按「AI 明日預測」即帶代號跳轉分析。</p></div>
+  <div class="card"><h4>股票代號輸入</h4><p>美股直接輸入代號，例如 AAPL、NVDA、TSLA。台股輸入四位數字即可，例如 2330、2317，系統自動補上市場後綴並顯示中文名稱。</p></div>
+  <div class="card o"><h4>省 Token 的監測開關<span class="tag">重要</span></h4><p>AI 分析會消耗額度，因此開關做到<strong>逐檔</strong>：監測清單每檔都有啟用／停用，停用者掃描直接跳過、不呼叫 AI；可一鍵「全部暫停」；持倉表另有「AI 監測」欄，關閉後該檔在晨報、盤中、盤後全程不再被 AI 分析。</p></div>
+  <div class="card o"><h4>結果會留著</h4><p>選股結果、AI 分析、目標頁對話都會保存，跳頁或重開分頁仍在；預測報告另存資料庫，重查同一份不重打 AI，直接省下成本。</p></div>
+</div>
+
+<div class="sec"><h2>市場儀表</h2><div class="note">每天開盤先看的三頁</div></div>
+<div class="rule"></div>
+<div class="cards">
+  <div class="card"><div class="path">/</div><h4>美股儀表板</h4><p>美股大盤指數、熱門個股與市場概況；輸入任一代號快速查詢報價與走勢，清單列可點開詳情面板。</p></div>
+  <div class="card"><div class="path">/tw</div><h4>台股儀表板</h4><p>台股大盤與個股即時報價、中文名稱顯示，整合法人與借券籌碼。此頁同時是<strong>監測中樞</strong>：維護監測清單、逐檔開關 AI、全部暫停都在這裡。</p></div>
+  <div class="card"><div class="path">/portfolio</div><h4>投資組合管理</h4><p>登錄代號、股數與買進成本，自動以最新報價計算未實現損益與配置比例；持股列同樣可點開詳情面板。</p></div>
+</div>
+
+<div class="sec"><h2>選股工具</h2><div class="note">三套邏輯不同的選股法，各挑各的</div></div>
+<div class="rule"></div>
+<div class="cards">
+  <div class="card"><div class="path">/screener</div><h4>策略選股</h4><p>設定技術與價量條件，一鍵跑出符合清單，台股美股皆可切換。結果自動保存，關掉分頁再回來仍在。</p></div>
+  <div class="card"><div class="path">/bluechip</div><h4>績優股清單</h4><p>財報狗式多因子選出「被低估的績優股」：先剔除自由現金流報酬率衰退的公司，再以三年平均自由現金流報酬率、本益比、股價淨值比、殖利率綜合排名，<strong>分數越小代表越被低估</strong>。單檔結果快取六小時，第二次執行更快。</p></div>
+  <div class="card"><div class="path">/perpetual</div><h4>低位階永動機</h4><p>依「春燕來了」低位階長期投資法：位階 =（現價 − 五年低點）/（五年高點 − 五年低點），數值越低越靠近底部；再看是否在年線之下、週 KD 是否低檔，給出進場／續抱／減碼／出場訊號。停損紀律為 <strong>-10% 可接受、-20% 為極限</strong>，跌破觸發硬停損提醒。</p></div>
+</div>
+<p class="note-s">注意：選股頁的「低位階起漲」看的是動能（是否已轉強），AI 操盤用的「五大起漲」看的是防禦條件（是否夠低夠安全）。兩者同名但定義不同，同一檔股票在兩處講法不一致屬正常，不是矛盾。</p>
+
+<div class="sec"><h2>AI 操盤</h2><div class="note">每一次判斷都先餵入當下行情、籌碼與新聞</div></div>
+<div class="rule o"></div>
+<div class="cards">
+  <div class="card o"><div class="path">/predict</div><h4>AI 明日預測分析師</h4><p>結合技術面（均線／MACD／KD／RSI）、起漲評分與年線位階，並同時參考<strong>隔夜美股</strong>（費半、那指、標普、台積電 ADR）、美元台幣、個股新聞、借券與法人連續、月營收 YoY-MoM 與 EPS。會區分「系統性下殺」與「個股基本面轉壞」，並針對所屬產業評估衝擊。</p></div>
+  <div class="card o"><div class="path">/agent</div><h4>AI 自動化投資 Agent</h4><p>盤前晨報、盤中提醒、盤後彙整自動產生；13:45–14:15 推送「請登錄今日買賣」收盤提醒。操盤建議綜合技術＋基本（營收／EPS）＋籌碼（法人連續／借券）＋消息＋前夜美股。持倉表逐檔 AI 開關是控制成本的主力。</p></div>
+  <div class="card o"><div class="path">/ai</div><h4>AI 智能投資中心</h4><p>AI 功能的統一入口與綜合建議頁，可由此快速進入預測、Agent 與目標導向操盤。</p></div>
+  <div class="card o"><div class="path">/goal</div><h4>目標導向操盤</h4><p>設定並啟用獲利目標後，AI 圍繞目標檢討進度。收盤後按「產生今晚操盤總結」，一次彙整當日最佳策略、工作台結果與目標檢討；睡前若美股仍在盤中，標頭會標示「今夜美股（盤中）」。對話保存，重開仍在。</p></div>
+</div>
+
+<div class="sec"><h2>進階與紀錄</h2><div class="note">驗證策略、回頭檢查自己</div></div>
+<div class="rule"></div>
+<div class="cards">
+  <div class="card"><div class="path">/backtest</div><h4>策略回測</h4><p>把選股或操盤策略套用到過去區間，檢視報酬與表現，先驗證再上場。</p></div>
+  <div class="card"><div class="path">/workbench</div><h4>策略工作台</h4><p>自由組合技術與基本面條件，打造個人化策略；結果可被「今晚操盤總結」整併引用。</p></div>
+  <div class="card"><div class="path">/market</div><h4>大盤儀表板</h4><p>先看大盤再看個股：加權指數 K 線、大盤體質濾網（多頭／震盪／空頭）、三大法人對大盤買賣超、外資台指期未平倉，以及<strong>類股族群漲跌排行</strong>（看資金流向哪個族群）。純資料頁，不花 Token。</p></div>
+  <div class="card"><div class="path">/watch</div><h4>自選報價</h4><p>三竹式看盤清單：一頁列出所有關注標的的現價、漲跌幅、持倉損益、買點區間與<strong>距買點％</strong>，表頭可排序、每分鐘自動更新，點任一列開啟 K 線與籌碼詳情。自選分組存在伺服器，換裝置也在。</p></div>
+  <div class="card"><div class="path">/history</div><h4>全站歷史紀錄</h4><p>所有 AI 產出與清單快照統一留存，可回查某天推了什麼、當時的理由是什麼。</p></div>
+  <div class="card"><div class="path">/sellfly</div><h4>賣飛回測</h4><p>把盤後的出場建議對照事後股價，統計<strong>賣飛率</strong>（賣掉後續漲）與<strong>躲跌率</strong>（賣掉後續跌），檢驗系統的出場判斷到底準不準。此頁純計算，不花 Token。</p></div>
+</div>
+
+<div class="sec"><h2>操盤強化層</h2><div class="note">十項機制，多數在 Agent 與目標頁自動運作</div></div>
+<div class="rule o"></div>
+<p class="note-s">這是疊在十二個模組之上的一層，專攻三件事：<strong>什麼時候進場、什麼時候該賣、以及越用越懂你</strong>。</p>
+<div class="cards">
+  <div class="card o"><h4>大盤體質濾網</h4><p>以加權指數位置（站上或跌破月線 MA20、季線 MA60、月線方向）加上隔夜美股偏向，判定多頭／震盪／空頭。大盤偏空時自動把買進訊號靜音或降級，少在下跌段接刀；賣出與轉弱警示不受影響照常推送。</p></div>
+  <div class="card o"><h4>進場品質把關</h4><p>每次分析判斷此價位是否過熱（乖離、自低點反彈幅度、RSI、KD 高檔）。偏熱時 AI 不叫你追高，改給明確的「等回到 X 元再分批進場」與停損價。</p></div>
+  <div class="card o"><h4>進場守門員</h4><p>起漲掃描頁輸入代碼，一鍵回答「現在是不是好買點、該等什麼價、停損設哪」，結合大盤體質、過熱程度、當日 K 線型態與主力出貨偵測。</p></div>
+  <div class="card o"><h4>K 線型態自動辨識</h4><p>自動標出當日觸發的買方型態：鎚子線、多頭吞噬、紅三兵、帶量突破新高、布林真突破、KD 低檔黃金交叉、月線翻揚等，並要求 AI 據此說明「為何是買點」，不必自己盯圖。</p></div>
+  <div class="card o"><h4>主力出貨偵測</h4><p>綜合爆量收黑、跌破月線下彎、外資連續或雙賣超、當沖比飆高、融資增但法人賣、借券賣出大增、外資持股比例下降，分 high／med 兩級。持倉盤中偵測到 high 升級為賣出、med 為減碼並主動推播；要買進時偵測到 high 直接不建議。</p></div>
+  <div class="card o"><h4>移動停利追蹤</h4><p>記住買進後的波段最高點，獲利部位從高點回落過深或跌破五日線時主動提醒鎖利，賺越多停利越收緊。</p></div>
+  <div class="card o"><h4>每日進場計畫與到價通知</h4><p>盤後（15:00 後每日一次，或手動立即產生）對「監測中但未持有」的個股研判明日是否進場，用技術面定出買點區間、停損、停利與信心度。隔日盤中即時價一進入買點區間就通知一次，已到價不重複、已持有不再喊進。</p></div>
+  <div class="card o"><h4>回測驗證勝率</h4><p>選股候選會用代表性起漲訊號回測並附上歷史勝率；樣本足夠但勝率太低者直接淘汰，落實「只推回測證明有效的」。</p></div>
+  <div class="card o"><h4>個人化檢討</h4><p>用你的實際已實現帳本算勝率、賺賠比與獲利因子，抓出賺小賠大、勝率偏低、未停損大賠等壞習慣，併入盤後總結；同時統計 AI 過去買進建議之後的方向命中率，幫你校準該信多少。</p></div>
+  <div class="card o"><h4>籌碼結構判讀</h4><p>以外資持股比例趨勢當法人與散戶結構的代理指標（比例升代表散戶相對減少、偏多；降代表散戶接手、偏空），搭配融資餘額一起判讀。</p></div>
+</div>
+<p class="note-s">更精細的集保大戶散戶分級需 FinMind 付費級資料源，免費版以外資持股比例加融資結構替代。</p>
+
+<div class="sec"><h2>資料來源與準確度</h2><div class="note">知道數字打哪來，才知道能信到哪</div></div>
+<div class="rule"></div>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>項目</th><th>來源與處理</th><th>限制</th></tr></thead>
+  <tbody>
+    <tr><td>股價與技術指標</td><td>yfinance，免金鑰；52 週位階以兩年資料計算，永動機位階以五年區間計算</td><td>近即時，非逐筆；非交易時段部分數值可能缺漏</td></tr>
+    <tr><td>法人、融資、借券、月營收、EPS</td><td>FinMind</td><td>免費額度有限，用罄時優雅降級顯示「未取得」，不影響技術面與型態判斷，額度恢復後自動補回</td></tr>
+    <tr><td>新聞與消息面</td><td>個股新聞標題餵入 AI 一併研判</td><td>僅供傾向參考</td></tr>
+    <tr><td>AI 研判</td><td>Claude，所有行情與籌碼數字先餵入再判斷，並加上禁止編造數字的護欄</td><td>不保證準確，屬機率性判斷</td></tr>
+    <tr><td>報告與快照</td><td>存入資料庫，可於歷史紀錄頁回查</td><td>重查已存報告不重打 AI，可省 Token</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note-s">同一檔股票在不同頁面可能出現不同說法，原因是評分制度不同：台股頁採估值制，操盤層採十五因子門檻制。兩者各有用途，判讀時請看清楚是哪一套。本平台為個人投資決策輔助工具，不構成投資建議，所有進出決策與風險由使用者自負。</p>
+
+<div class="sec"><h2>常見問題</h2><div class="note"></div></div>
+<div class="rule"></div>
+<div class="qa">
+  <div><p class="q">資料是即時的嗎？</p><p class="a">行情來自 yfinance，為近即時資料；部分結果會短暫快取以加速並節省資源。</p></div>
+  <div><p class="q">如何降低 AI 花費？</p><p class="a">用監測清單與持倉表的逐檔開關，只對重點股票開啟 AI，其餘停用或一鍵全部暫停。已產生的報告會存檔，重看不重打。</p></div>
+  <div><p class="q">台股代號怎麼輸入？</p><p class="a">直接輸入四位數字，例如 2330，系統會自動補後綴並顯示中文名稱。</p></div>
+  <div><p class="q">停損該怎麼抓？</p><p class="a">低位階永動機法建議 -10% 可接受、-20% 為極限，跌破 -20% 系統會提示硬停損。</p></div>
+  <div><p class="q">到價通知怎麼運作？</p><p class="a">盤後系統對監測中且未持有的個股訂好明日買點區間，隔日盤中即時價一進入區間就通知一次。前提是 Agent 開關要開、推播與監測清單要設好。</p></div>
+  <div><p class="q">為什麼籌碼資料有時顯示「未取得」？</p><p class="a">法人、融資、借券、月營收來自 FinMind 免費額度，自動分析量大時可能暫時用罄，系統會降級但不影響技術面判斷，額度恢復後自動補回。要完整穩定的籌碼資料可升級付費 token。</p></div>
+  <div><p class="q">一買就隔天跌怎麼辦？</p><p class="a">沒有系統能準測明天。重點是用大盤濾網、進場守門員與移動停利把勝率往自己這邊偏，並嚴設停損，長期靠紀律取勝。</p></div>
+  <div><p class="q">怎麼知道系統的建議準不準？</p><p class="a">看賣飛回測頁的賣飛率與躲跌率，以及盤後總結裡的 AI 建議命中率統計，兩者都是用事後股價回頭驗證，不是自說自話。</p></div>
+</div>
+
+<div class="foot">
+  <b>技術架構</b>：Python + Flask 單一應用，SQLite 儲存報告、歷史與監測設定；前端原生 JS 無框架、無編譯步驟，K 線圖自繪。<br>
+  <b>資料層</b>：yfinance 行情、FinMind 籌碼與財報、Claude AI 研判。<br>
+  <b>部署</b>：nginx 反向代理至本機 6001 埠，一台入門等級主機即可運行。<br>
+  <b>平台網址</b>：<a href="/">http://2.24.66.65/</a>
+</div>
+
+</div>
+
+</body>
+</html>
