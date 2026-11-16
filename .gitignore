@@ -16,3 +16,6 @@ tw_names.json
 *.lock
 agent_config.json.bak.*
 .claude/
+
+# 部署用密鑰（session 金鑰等），不進版控
+.env.secret
